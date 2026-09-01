@@ -445,11 +445,15 @@ begin
       detail = 'customer name and a valid email are required';
   end if;
 
+  -- Anonymous callers may create a customer but MUST NOT be able to overwrite
+  -- an existing customer's identity: tenant_id + email are publicly guessable,
+  -- so a blind upsert would let anon tamper with another party's stored name /
+  -- phone. On conflict we keep the existing identity and only backfill a phone
+  -- that is currently absent. The trusted runtime reconciles later corrections.
   insert into public.customers as c (tenant_id, name, email, phone)
   values (p_tenant_id, v_name, v_email, v_phone)
   on conflict (tenant_id, email) do update
-    set name  = excluded.name,
-        phone = coalesce(excluded.phone, c.phone)
+    set phone = coalesce(c.phone, excluded.phone)
   returning c.id into v_customer_id;
 
   -- Insert the draft; regenerate the reference on the rare collision.

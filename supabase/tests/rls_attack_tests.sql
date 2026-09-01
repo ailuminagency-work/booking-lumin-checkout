@@ -164,8 +164,10 @@ update public.services set active = true
   where id = 'a0000000-0000-0000-0000-000000000001';
 
 -- ============================================================================
--- ATTACK 2 — Tenant B's owner forges tenant_id = A on an INSERT into
--- bookings. Expect the WITH CHECK to reject it (SQLSTATE 42501).
+-- ATTACK 2 — Tenant B's owner forges tenant_id = A on an INSERT into a
+-- member-writable table (services). Expect the WITH CHECK to reject it
+-- (SQLSTATE 42501). (Bookings are separately INSERT-blocked for all members
+-- by the server-authoritative guard — see ATTACK 10a.)
 -- ============================================================================
 select set_config('request.jwt.claims',
   '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated","email":"owner-b@example.test"}',
@@ -175,12 +177,8 @@ set local role authenticated;
 do $t$
 begin
   begin
-    insert into public.bookings
-      (tenant_id, reference, state, selection, pricing, slot_start, slot_end, idempotency_key)
-    values
-      ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'LMN-FORGED', 'draft', '{}', '{}',
-       now() + interval '1 day', now() + interval '1 day 1 hour',
-       'forged-idem-key-000001');
+    insert into public.services (tenant_id, archetype, name, currency, base_price)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'simple', 'Forged Service', 'USD', 100);
     raise exception 'FAIL 2: forged tenant_id INSERT was accepted';
   exception
     when insufficient_privilege then
@@ -496,6 +494,118 @@ end;
 $t$;
 
 reset role;
+
+-- ============================================================================
+-- ATTACK 10 — a tenant MEMBER (here STAFF) tries to fabricate financial state
+-- directly on bookings, bypassing the server runtime. The guard trigger
+-- lumin.guard_booking_client_write must forbid client INSERTs and freeze every
+-- financial/identity column on UPDATE, while still permitting a legal
+-- state-only transition. (SI-1 / SI-2)
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated","email":"staff-a@example.test"}',
+  true);
+set local role authenticated;
+
+-- 10a: direct INSERT of a fabricated confirmed booking → FORBIDDEN.
+do $t$
+begin
+  begin
+    insert into public.bookings
+      (tenant_id, reference, state, selection, pricing, slot_start, slot_end,
+       customer_id, idempotency_key)
+    values
+      ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'LMN-FORGE1', 'confirmed',
+       '{"serviceId":"a0000000-0000-0000-0000-000000000001"}',
+       '{"total":{"amount":99999999,"currency":"USD"}}',
+       now() + interval '5 days', now() + interval '5 days 2 hours',
+       'a0000000-0000-0000-0000-00000000c001', 'idem-forge-0001');
+    raise exception 'FAIL 10a: member INSERT of a booking was accepted';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm not like '%FORBIDDEN%' and sqlerrm not like '%server runtime%' then raise; end if;
+      raise notice 'PASS 10a: member direct booking INSERT forbidden';
+    when insufficient_privilege then
+      raise notice 'PASS 10a: member direct booking INSERT denied by RLS';
+  end;
+end;
+$t$;
+
+-- 10b: UPDATE the pricing of an existing booking without a state change → FORBIDDEN.
+do $t$
+begin
+  begin
+    update public.bookings
+      set pricing = '{"total":{"amount":1,"currency":"USD"}}'
+      where id = 'a0000000-0000-0000-0000-00000000b001';
+    raise exception 'FAIL 10b: member repriced a booking';
+  exception when sqlstate 'P0001' then
+    if sqlerrm not like '%FORBIDDEN%' and sqlerrm not like '%server-authoritative%' then raise; end if;
+    raise notice 'PASS 10b: member reprice of a booking forbidden';
+  end;
+end;
+$t$;
+
+-- 10c: positive control — a member MAY advance state (confirmed → completed)
+--      and edit notes; the guard leaves those columns free.
+do $t$
+declare
+  v_state text;
+begin
+  update public.bookings
+    set state = 'completed', notes = 'done on site'
+    where id = 'a0000000-0000-0000-0000-00000000b001';
+  select state into v_state from public.bookings
+    where id = 'a0000000-0000-0000-0000-00000000b001';
+  if v_state <> 'completed' then
+    raise exception 'FAIL 10c: legal member transition did not apply (state=%)', v_state;
+  end if;
+  raise notice 'PASS 10c: member may still advance booking state (confirmed -> completed)';
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 11 — anonymous customer-identity tampering via create_booking_draft.
+-- The tenant_id + a victim email are publicly guessable; the RPC must NOT let
+-- anon overwrite an existing customer's stored name or phone. (SI-1)
+-- ============================================================================
+-- Seed a real customer with a phone (as the privileged fixture role).
+insert into public.customers (id, tenant_id, name, email, phone) values
+  ('a0000000-0000-0000-0000-00000000c777', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'Victim Real Name', 'victim@example.test', '+15551234567');
+
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+set local role anon;
+
+-- anon fires the tampering attempt through the public RPC.
+select public.create_booking_draft(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'anon-tamper-idem-key-0001',
+  '{"serviceId":"a0000000-0000-0000-0000-000000000001"}'::jsonb,
+  now() + interval '6 days', now() + interval '6 days 2 hours',
+  '{"name":"ATTACKER OVERWRITE","email":"victim@example.test","phone":"+19999999999"}'::jsonb,
+  null, null);
+
+reset role;  -- read back as the privileged fixture role (RLS bypassed)
+
+do $t$
+declare
+  v_name  text;
+  v_phone text;
+begin
+  select name, phone into v_name, v_phone from public.customers
+    where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and email = 'victim@example.test';
+  if v_name <> 'Victim Real Name' then
+    raise exception 'FAIL 11a: anon overwrote customer name to %', v_name;
+  end if;
+  if v_phone <> '+15551234567' then
+    raise exception 'FAIL 11b: anon overwrote customer phone to %', v_phone;
+  end if;
+  raise notice 'PASS 11: anon draft cannot overwrite an existing customer identity';
+end;
+$t$;
 
 do $t$
 begin

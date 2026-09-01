@@ -204,8 +204,64 @@ begin
 end;
 $fn$;
 
+-- ----------------------------------------------------------------------------
+-- lumin.guard_booking_client_write — server-authoritative write guard (SI-1/SI-2).
+-- Row-level policies scope bookings to the tenant, but a tenant MEMBER (incl.
+-- BUSINESS_STAFF) must not be able to fabricate financial state: the pricing /
+-- selection / slot / payment linkage are set only by the trusted server runtime
+-- (service_role) or the SECURITY DEFINER draft RPC. Portal users may advance
+-- STATE (the transition trigger validates the edge) and edit notes only.
+--
+-- Trust is decided by the effective role: PostgREST runs member requests as
+-- `authenticated`; the trusted runtime uses `service_role`; the draft RPC runs
+-- SECURITY DEFINER as its owner (postgres). Only `authenticated` is constrained.
+-- ----------------------------------------------------------------------------
+create or replace function lumin.guard_booking_client_write()
+returns trigger
+language plpgsql
+as $fn$
+begin
+  if current_user <> 'authenticated' then
+    return new;  -- service_role / definer-owned RPC: trusted server runtime
+  end if;
+
+  if tg_op = 'INSERT' then
+    raise exception 'FORBIDDEN'
+      using errcode = 'P0001',
+            detail  = 'bookings are created by the server runtime, not by portal clients';
+  end if;
+
+  -- UPDATE by a portal user: freeze every financial / identity column.
+  if new.tenant_id       is distinct from old.tenant_id
+     or new.reference       is distinct from old.reference
+     or new.idempotency_key is distinct from old.idempotency_key
+     or new.selection       is distinct from old.selection
+     or new.pricing         is distinct from old.pricing
+     or new.slot_start      is distinct from old.slot_start
+     or new.slot_end        is distinct from old.slot_end
+     or new.customer_id     is distinct from old.customer_id
+     or new.payment_id      is distinct from old.payment_id
+     or new.address         is distinct from old.address then
+    raise exception 'FORBIDDEN'
+      using errcode = 'P0001',
+            detail  = 'portal users may change booking state and notes only; '
+                      || 'pricing, selection, slot, customer and payment are server-authoritative';
+  end if;
+
+  return new;
+end;
+$fn$;
+
 revoke all on function lumin.enforce_booking_transition() from public, anon, authenticated;
 revoke all on function lumin.log_booking_state()          from public, anon, authenticated;
+revoke all on function lumin.guard_booking_client_write() from public, anon, authenticated;
+
+-- Both this guard and the transition guard are BEFORE row triggers that only
+-- validate (they raise or pass; neither mutates a column the other inspects),
+-- so their relative firing order does not affect the outcome.
+create trigger bookings_guard_client_write
+  before insert or update on public.bookings
+  for each row execute function lumin.guard_booking_client_write();
 
 create trigger bookings_enforce_transition
   before update on public.bookings
