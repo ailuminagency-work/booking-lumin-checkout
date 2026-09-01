@@ -1,0 +1,13 @@
+{
+  "name": "booking-lumin-checkout",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Booking Lumin Checkout — multi-tenant booking & checkout platform (clean-room)",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": { "node": ">=20" }
+}
