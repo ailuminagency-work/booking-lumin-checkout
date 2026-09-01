@@ -125,7 +125,7 @@ interface TenantSpec {
 const TENANT_SPECS: TenantSpec[] = [
   { name: "Aurora Cleaning Co", join: 0, churn: null },
   { name: "Northlake Detailing", join: 0, churn: null },
-  { name: "Cedar & Pine Junk Removal", join: 0, churn: null },
+  { name: "Cedar & Pine Hauling Co", join: 0, churn: null },
   { name: "Bluebird Pet Grooming", join: 1, churn: null },
   { name: "Harborline Boat Care", join: 0, churn: 9 },
   { name: "Summit Lawn Services", join: 2, churn: null },
