@@ -66,32 +66,47 @@ describe("mock payment: refunds", () => {
 });
 
 describe("mock payment: webhook verification (SI-10)", () => {
+  const SECRET = "whsec_adapters_test_0001";
   const payload = JSON.stringify({ kind: "payment_succeeded", intentId: "mpi_1_x" });
 
   it("parses a correctly signed payload", async () => {
-    const provider = createMockPaymentProvider();
-    const event = await provider.parseWebhook(payload, signMockWebhook(payload));
+    const provider = createMockPaymentProvider({ webhookSecret: SECRET });
+    const event = await provider.parseWebhook(payload, signMockWebhook(payload, SECRET));
     expect(event).toMatchObject({ kind: "payment_succeeded", intentId: "mpi_1_x" });
   });
 
   it("throws WEBHOOK_UNVERIFIED for a bad or missing signature", async () => {
-    const provider = createMockPaymentProvider();
+    const provider = createMockPaymentProvider({ webhookSecret: SECRET });
     await expect(provider.parseWebhook(payload, "mock-sig-deadbeef")).rejects.toMatchObject({
       code: "WEBHOOK_UNVERIFIED",
     });
     await expect(provider.parseWebhook(payload, null)).rejects.toMatchObject({ code: "WEBHOOK_UNVERIFIED" });
     // signature of DIFFERENT content must not verify this payload
     const other = JSON.stringify({ kind: "payment_failed", intentId: "mpi_1_x" });
-    await expect(provider.parseWebhook(payload, signMockWebhook(other))).rejects.toMatchObject({
+    await expect(provider.parseWebhook(payload, signMockWebhook(other, SECRET))).rejects.toMatchObject({
       code: "WEBHOOK_UNVERIFIED",
     });
   });
 
   it("normalizes unknown kinds as unrecognized (still only when verified)", async () => {
-    const provider = createMockPaymentProvider();
+    const provider = createMockPaymentProvider({ webhookSecret: SECRET });
     const weird = JSON.stringify({ kind: "mystery", intentId: 42 });
-    const event = await provider.parseWebhook(weird, signMockWebhook(weird));
+    const event = await provider.parseWebhook(weird, signMockWebhook(weird, SECRET));
     expect(event).toMatchObject({ kind: "unrecognized", intentId: null });
+  });
+
+  it("D4: rejects a signature forged without the secret, accepts a keyed one once, and rejects replays", async () => {
+    const provider = createMockPaymentProvider({ webhookSecret: SECRET });
+    // Forged: signed with the WRONG secret (attacker doesn't know the real one).
+    await expect(provider.parseWebhook(payload, signMockWebhook(payload, "wrong-secret"))).rejects.toMatchObject({
+      code: "WEBHOOK_UNVERIFIED",
+    });
+    // Valid keyed signature is accepted once.
+    const sig = signMockWebhook(payload, SECRET);
+    const event = await provider.parseWebhook(payload, sig);
+    expect(event).toMatchObject({ kind: "payment_succeeded", intentId: "mpi_1_x" });
+    // Replay of the exact same (verified) event is rejected.
+    await expect(provider.parseWebhook(payload, sig)).rejects.toMatchObject({ code: "WEBHOOK_UNVERIFIED" });
   });
 });
 

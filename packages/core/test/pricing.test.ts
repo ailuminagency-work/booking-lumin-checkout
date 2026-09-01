@@ -171,6 +171,80 @@ describe("pricing: rental archetype", () => {
   });
 });
 
+describe("pricing: non-negative floor (D2)", () => {
+  const service = makeService({
+    id: uuid(20),
+    archetype: "configurable",
+    basePrice: 0,
+    questions: [
+      {
+        id: "coupon",
+        prompt: "Coupon",
+        kind: "single_choice",
+        required: true,
+        choices: [{ id: "over", label: "Over-generous coupon", priceDelta: -5_000, priceMultiplierBp: 10_000 }],
+      },
+    ],
+  });
+
+  it("rejects a selection whose discounts drive the price below zero (no negative charge)", () => {
+    expectInvalid(() =>
+      engine.price(service, sel(service, { answers: { coupon: { choiceIds: ["over"] } } })),
+    );
+  });
+});
+
+describe("pricing: integer-overflow guard (D3)", () => {
+  it("rejects a quantity that multiplies past MAX_SAFE_INTEGER instead of returning an unsafe number", () => {
+    const service = makeService({
+      id: uuid(21),
+      archetype: "configurable",
+      basePrice: 0,
+      questions: [
+        {
+          id: "units",
+          prompt: "Units",
+          kind: "quantity",
+          required: true,
+          choices: [],
+          unitPrice: 1_000,
+          minQty: 1,
+          maxQty: Number.MAX_SAFE_INTEGER,
+        },
+      ],
+    });
+    expectInvalid(() =>
+      engine.price(
+        service,
+        sel(service, { answers: { units: { choiceIds: [], quantity: Number.MAX_SAFE_INTEGER } } }),
+      ),
+    );
+  });
+
+  it("caps an unset quantity maxQty at a sane default during validation", () => {
+    const service = makeService({
+      id: uuid(22),
+      archetype: "configurable",
+      basePrice: 0,
+      questions: [
+        {
+          id: "units",
+          prompt: "Units",
+          kind: "quantity",
+          required: true,
+          choices: [],
+          unitPrice: 1_000,
+          minQty: 1,
+          // maxQty deliberately unset — must not behave as effectively unbounded.
+        },
+      ],
+    });
+    expectInvalid(() =>
+      engine.price(service, sel(service, { answers: { units: { choiceIds: [], quantity: 1_000_000 } } })),
+    );
+  });
+});
+
 describe("pricing: zero-decimal currency", () => {
   it("prices JPY in whole minor units", () => {
     const service = makeService({ id: uuid(14), currency: "JPY", basePrice: 5_000, taxRateBp: 1_000 });

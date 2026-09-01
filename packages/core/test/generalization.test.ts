@@ -156,7 +156,7 @@ describe("generalization: one booking engine, three verticals end-to-end", () =>
       const intent = payments.listIntents()[0]!;
       expect(intent.amount.amount).toBe(c.expectedCharge);
       payments.completePayment(intent.intentId, "succeeded");
-      expect(engine.confirmFromPayment(intent.intentId).state).toBe("confirmed");
+      expect((await engine.confirmFromPayment(intent.intentId)).state).toBe("confirmed");
     });
   }
 });

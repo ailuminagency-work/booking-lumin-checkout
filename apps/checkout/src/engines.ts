@@ -38,32 +38,16 @@ export async function listExistingHolds(): Promise<CapacityHold[]> {
 }
 
 /**
- * Drive the booking to `confirmed` after the mock provider reports success.
- * Prefers `confirmFromPayment(intentId)`; a retried payment uses an intent
- * the engine didn't create itself, so we fall back to the contract-guaranteed
- * `transition()`. If the booking somehow got confirmed already (idempotent
- * webhook-style handling), getBooking detects that instead of erroring.
+ * Drive the booking to `confirmed` after payment — the ONLY confirmation path.
+ *
+ * Confirmation flows exclusively through the payment-verifying
+ * `confirmFromPayment(intentId)`: the engine re-checks with the provider that
+ * the intent actually succeeded before transitioning. There is deliberately NO
+ * unconditional `transition(..., "confirmed")` fallback — that was a
+ * free-confirmation hole (a booking could reach `confirmed` with no successful
+ * payment). If verification fails, the error propagates and the caller surfaces
+ * it as a payment failure; the booking is NEVER confirmed on error.
  */
-export async function confirmBookingAfterPayment(
-  bookingId: string,
-  intentId: string,
-): Promise<BookingRecord> {
-  try {
-    return await Promise.resolve(bookingEngine.confirmFromPayment(intentId));
-  } catch {
-    // Intent unknown to the engine (retry intent) — use the state machine.
-  }
-  try {
-    return await bookingEngine.transition(bookingId, "confirmed", "mock payment succeeded");
-  } catch (err) {
-    try {
-      const booking = (await Promise.resolve(
-        bookingEngine.getBooking(bookingId),
-      )) as BookingRecord | null;
-      if (booking && booking.state === "confirmed") return booking;
-    } catch {
-      // fall through to the original error
-    }
-    throw err;
-  }
+export async function confirmBookingAfterPayment(intentId: string): Promise<BookingRecord> {
+  return bookingEngine.confirmFromPayment(intentId);
 }

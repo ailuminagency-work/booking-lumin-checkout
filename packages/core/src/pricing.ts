@@ -28,8 +28,20 @@ export function createPricingEngine(): PricingEngine {
   return { price };
 }
 
+/**
+ * Sane upper bound for quantity-kind questions whose config leaves maxQty
+ * unset. Without this, an unset maxQty behaved as an effectively unbounded
+ * cap, letting unitPrice × quantity blow past Number.MAX_SAFE_INTEGER (D3).
+ */
+const DEFAULT_QUANTITY_MAX = 10_000;
+
 function invalid(reason: string): never {
   throw new PricingError("INVALID_SELECTION", reason);
+}
+
+/** D3: every monetary result must stay an exact (safe) integer. */
+function assertSafe(n: number): void {
+  if (!Number.isSafeInteger(n)) invalid("amount exceeds safe integer range");
 }
 
 function price(service: Service, selection: Selection): PriceBreakdown {
@@ -105,7 +117,10 @@ function price(service: Service, selection: Selection): PriceBreakdown {
       }
       if (!Number.isInteger(qty) || qty < 0) invalid(`invalid quantity for question ${question.id}`);
       const min = question.minQty ?? 0;
-      const max = question.maxQty ?? Number.MAX_SAFE_INTEGER;
+      // D3: an unset maxQty must not default to a value that lets quantities
+      // multiply past the safe-integer range. Cap it at a sane bound during
+      // validation; the hard guard is still the safe-integer check below.
+      const max = question.maxQty ?? DEFAULT_QUANTITY_MAX;
       if (qty < min || qty > max) {
         invalid(`quantity ${qty} out of range [${min}, ${max}] for question ${question.id}`);
       }
@@ -170,9 +185,17 @@ function price(service: Service, selection: Selection): PriceBreakdown {
   }
 
   // ---- subtotal + multipliers ---------------------------------------------
-  let subtotal = lines.reduce((sum, line) => sum + line.amount.amount * line.quantity, 0);
+  // D3: guard every product and running sum against integer overflow.
+  let subtotal = 0;
+  for (const line of lines) {
+    const product = line.amount.amount * line.quantity;
+    assertSafe(product);
+    subtotal += product;
+    assertSafe(subtotal);
+  }
   for (const mul of multipliers) {
     const next = Math.round((subtotal * mul.bp) / 10000);
+    assertSafe(next);
     const delta = next - subtotal;
     if (delta !== 0) {
       lines.push({
@@ -185,13 +208,21 @@ function price(service: Service, selection: Selection): PriceBreakdown {
     subtotal = next;
   }
 
+  // D2: discounts must never drive the price below zero — that is a mispriced
+  // selection, not a negative charge. Reject rather than silently clamp.
+  if (subtotal < 0) invalid("selection subtotal is negative");
+
   const tax = Math.round((subtotal * service.taxRateBp) / 10000);
+  assertSafe(tax);
+  const total = subtotal + tax;
+  assertSafe(total);
+  if (total < 0) invalid("selection total is negative");
 
   return {
     lines,
     subtotal: m(subtotal),
     tax: m(tax),
     deposit: m(deposit),
-    total: m(subtotal + tax),
+    total: m(total),
   };
 }

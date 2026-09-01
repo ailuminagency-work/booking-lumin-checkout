@@ -1,3 +1,4 @@
+import { constantTimeEqual, hmacSha256Hex, randomHex } from "./webhookCrypto";
 import {
   CreateIntentInput,
   Money,
@@ -10,14 +11,26 @@ import {
 
 /**
  * MockPaymentProvider — SI-12: full development flow with zero external
- * credentials. In-memory intents, idempotent creation, deterministic
- * webhook "signatures".
+ * credentials. In-memory intents, idempotent creation.
+ *
+ * DEV MOCK ONLY. Webhook authenticity here uses an HMAC-SHA256 over the raw
+ * payload keyed by a per-provider `webhookSecret`, with a constant-time
+ * comparison and a replay guard. This mirrors the SHAPE of real verification
+ * but is NOT a substitute for it: real providers (Stripe, Mercado Pago, …)
+ * MUST implement their own provider-native signature verification and replay
+ * protection inside their own PaymentProviderContract adapter.
  */
 
 export interface MockPaymentProviderOptions {
   now?: () => string;
   /** When true, the next createIntent call fails (then the flag resets). */
   failNextIntent?: boolean;
+  /**
+   * Secret keying webhook HMAC signatures. Supply the SAME secret to
+   * signMockWebhook to produce a verifiable delivery. Defaults to a random
+   * per-instance secret, which makes unsigned/forged deliveries unverifiable.
+   */
+  webhookSecret?: string;
 }
 
 export interface MockPaymentProvider extends PaymentProvider {
@@ -31,16 +44,25 @@ export interface MockPaymentProvider extends PaymentProvider {
   listRefunds(intentId: string): { refundId: string; amount: Money }[];
 }
 
-/** Trivial deterministic hash (djb2) — mock signatures only, NOT crypto. */
+/** Trivial deterministic hash (djb2) — opaque intent ids only, NOT crypto. */
 export function mockHash(s: string): string {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) + s.charCodeAt(i)) >>> 0;
   return h.toString(16).padStart(8, "0");
 }
 
-/** Signature a legitimate mock webhook delivery carries for `payload`. */
-export function signMockWebhook(payload: string): string {
-  return `mock-sig-${mockHash(payload)}`;
+/**
+ * Signature a legitimate mock webhook delivery carries for `payload`.
+ * Keyed HMAC-SHA256 — the caller MUST know the provider's `webhookSecret`;
+ * a keyless hash (as before) was trivially forgeable.
+ */
+export function signMockWebhook(payload: string, secret: string): string {
+  return `mock-sig-${hmacSha256Hex(secret, payload)}`;
+}
+
+/** Constant-time string equality (length-safe). */
+function safeEqual(a: string, b: string): boolean {
+  return constantTimeEqual(a, b);
 }
 
 interface IntentState {
@@ -54,6 +76,8 @@ interface IntentState {
 export function createMockPaymentProvider(opts: MockPaymentProviderOptions = {}): MockPaymentProvider {
   const intents = new Map<string, IntentState>(); // intentId → state
   const byIdempotencyKey = new Map<string, string>(); // key → intentId
+  const seenWebhookEvents = new Set<string>(); // replay guard (verified events)
+  const webhookSecret = opts.webhookSecret ?? randomHex(32);
   let failNext = opts.failNextIntent ?? false;
   let counter = 0;
 
@@ -129,8 +153,9 @@ export function createMockPaymentProvider(opts: MockPaymentProviderOptions = {})
     },
 
     async parseWebhook(payload: string, signatureHeader: string | null): Promise<WebhookEvent> {
-      // SI-10: never process an unverified payload.
-      if (signatureHeader === null || signatureHeader !== signMockWebhook(payload)) {
+      // SI-10: never process an unverified payload. HMAC keyed by the
+      // provider secret, compared in constant time.
+      if (signatureHeader === null || !safeEqual(signatureHeader, signMockWebhook(payload, webhookSecret))) {
         throw new PaymentError("WEBHOOK_UNVERIFIED");
       }
       let parsed: unknown;
@@ -139,7 +164,16 @@ export function createMockPaymentProvider(opts: MockPaymentProviderOptions = {})
       } catch {
         return { kind: "unrecognized", intentId: null, raw: payload };
       }
-      const body = parsed as { kind?: unknown; intentId?: unknown };
+      const body = parsed as { kind?: unknown; intentId?: unknown; id?: unknown };
+      // Replay guard: a verified event is processed at most once. Key on the
+      // event id when present, else the exact payload (a re-delivered identical
+      // event is a replay). Only verified events are recorded, so rejected
+      // signatures never poison the set.
+      const eventKey = typeof body.id === "string" ? `id:${body.id}` : `payload:${payload}`;
+      if (seenWebhookEvents.has(eventKey)) {
+        throw new PaymentError("WEBHOOK_UNVERIFIED", "replayed webhook event");
+      }
+      seenWebhookEvents.add(eventKey);
       const kinds = ["payment_succeeded", "payment_failed", "refund_completed"] as const;
       const kind = kinds.find((k) => k === body.kind) ?? "unrecognized";
       const intentId = typeof body.intentId === "string" ? body.intentId : null;

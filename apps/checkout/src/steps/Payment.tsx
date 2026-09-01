@@ -6,7 +6,6 @@ import {
   PaymentError,
   type BookingRecord,
   type CreateBookingRequest,
-  type PaymentIntentRef,
 } from "@lumin/contracts";
 import { getService, TENANT_ID } from "../config/demoTenant";
 import { bookingEngine, confirmBookingAfterPayment, paymentProvider } from "../engines";
@@ -24,8 +23,6 @@ export function Payment() {
   const { state, dispatch } = useCheckout();
   const service = getService(state.selection?.serviceId);
   const startedRef = useRef(false);
-  /** Counts fresh intents needed after terminal provider failures. */
-  const retrySeq = useRef(0);
   const [working, setWorking] = useState(false);
 
   const handleEngineError = useCallback(
@@ -57,69 +54,72 @@ export function Payment() {
   );
 
   /**
-   * Get an intent that can still be completed. The mock provider is
-   * idempotent per key AND treats a failed intent as terminal, so the first
-   * call reuses this session's key; after a declined attempt we derive a new
-   * attempt-scoped key (`<sessionKey>:retryN`). The BOOKING idempotency key
-   * never changes, and the dead intent can never charge — one charge max.
+   * Create (or idempotently reuse) the booking and return the exact intent id
+   * the engine minted for it. Payment must complete only intents the engine
+   * knows about, so confirmation can be verified against the provider — the
+   * app never mints its own intents on the side.
+   *
+   * A prior booking left terminally `failed` (declined payment) is superseded
+   * by the engine on this same key (D5): a fresh booking + fresh intent.
    */
-  const obtainUsableIntent = useCallback(
-    async (booking: BookingRecord): Promise<PaymentIntentRef> => {
-      const amount = addMoney(booking.pricing.total, booking.pricing.deposit);
-      const create = (key: string) =>
-        paymentProvider.createIntent({
-          tenantId: TENANT_ID,
-          bookingId: booking.id,
-          amount,
-          idempotencyKey: key,
-        });
-      let intent = await create(state.idempotencyKey);
-      let guard = 0;
-      while (intent.state === "failed" && guard < 25) {
-        retrySeq.current += 1;
-        guard += 1;
-        intent = await create(`${state.idempotencyKey}:retry${retrySeq.current}`);
-      }
-      if (intent.state === "failed") {
-        throw new PaymentError("PAYMENT_FAILED", "no usable payment intent");
-      }
-      return intent;
-    },
-    [state.idempotencyKey],
-  );
+  const createBookingAndIntent = useCallback(async (): Promise<{
+    booking: BookingRecord;
+    intentId: string;
+  } | null> => {
+    if (!state.selection || !state.slot || !state.customer) return null;
+    const request: CreateBookingRequest = {
+      tenantId: TENANT_ID,
+      idempotencyKey: state.idempotencyKey,
+      selection: state.selection,
+      slotStart: state.slot.start,
+      customer: state.customer,
+      ...(state.address ? { address: state.address } : {}),
+    };
+    const booking = await bookingEngine.createBooking(request);
+    dispatch({ type: "BOOKING_CREATED", booking });
+    if (booking.state === "failed") {
+      dispatch({
+        type: "PAYMENT_FAILED",
+        message: "The payment provider is unavailable right now. Please try again later.",
+      });
+      return null;
+    }
+    const intentId = bookingEngine.intentIdForBooking(booking.id);
+    if (!intentId) {
+      dispatch({
+        type: "PAYMENT_FAILED",
+        message: "We couldn't start the payment. Please try again.",
+      });
+      return null;
+    }
+    dispatch({ type: "SET_INTENT", intentId });
+    return { booking, intentId };
+  }, [dispatch, state.address, state.customer, state.idempotencyKey, state.selection, state.slot]);
 
-  /**
-   * Idempotent setup: createBooking reuses this session's idempotencyKey, so
-   * refreshes and duplicate submits always land on the same booking.
-   */
+  /** A live pending booking with a still-completable engine intent, or a fresh one. */
+  const ensureUsable = useCallback(async (): Promise<{
+    booking: BookingRecord;
+    intentId: string;
+  } | null> => {
+    if (state.booking && state.booking.state === "pending_payment" && state.intentId) {
+      const existing = await paymentProvider.getIntent(state.intentId);
+      if (existing && existing.state !== "failed") {
+        return { booking: state.booking, intentId: state.intentId };
+      }
+    }
+    return createBookingAndIntent();
+  }, [createBookingAndIntent, state.booking, state.intentId]);
+
   const ensureBookingAndIntent = useCallback(async () => {
     if (!state.selection || !state.slot || !state.customer) return;
     dispatch({ type: "PAYMENT_STATUS", status: "working" });
     try {
-      const request: CreateBookingRequest = {
-        tenantId: TENANT_ID,
-        idempotencyKey: state.idempotencyKey,
-        selection: state.selection,
-        slotStart: state.slot.start,
-        customer: state.customer,
-        ...(state.address ? { address: state.address } : {}),
-      };
-      const booking = await bookingEngine.createBooking(request);
-      dispatch({ type: "BOOKING_CREATED", booking });
-      if (booking.state === "failed") {
-        dispatch({
-          type: "PAYMENT_FAILED",
-          message: "The payment provider is unavailable right now. Please try again later.",
-        });
-        return;
-      }
-      const intent = await obtainUsableIntent(booking);
-      dispatch({ type: "SET_INTENT", intentId: intent.intentId });
-      dispatch({ type: "PAYMENT_STATUS", status: "idle" });
+      const ready = await createBookingAndIntent();
+      if (ready) dispatch({ type: "PAYMENT_STATUS", status: "idle" });
     } catch (err) {
       handleEngineError(err);
     }
-  }, [dispatch, handleEngineError, obtainUsableIntent, state.address, state.customer, state.idempotencyKey, state.selection, state.slot]);
+  }, [createBookingAndIntent, dispatch, handleEngineError, state.customer, state.selection, state.slot]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -133,20 +133,29 @@ export function Payment() {
   const chargeAmount = booking ? addMoney(booking.pricing.total, booking.pricing.deposit) : null;
 
   async function pay(outcome: "succeeded" | "failed") {
-    if (!booking || working) return;
+    if (working) return;
     setWorking(true);
     try {
-      // Reuse the live intent; replace it only if it's gone or terminally failed.
-      let intent = state.intentId ? await paymentProvider.getIntent(state.intentId) : null;
-      if (!intent || intent.state === "failed") {
-        intent = await obtainUsableIntent(booking);
-        dispatch({ type: "SET_INTENT", intentId: intent.intentId });
-      }
+      const usable = await ensureUsable();
+      if (!usable) return; // failure/error already dispatched
+      let intent = await paymentProvider.getIntent(usable.intentId);
+      if (!intent) throw new PaymentError("PAYMENT_FAILED", "payment intent is no longer available");
       if (intent.state === "requires_payment" || intent.state === "processing") {
         intent = await Promise.resolve(paymentProvider.completePayment(intent.intentId, outcome));
       }
 
-      if (outcome === "failed") {
+      if (outcome === "failed" || intent.state === "failed") {
+        // Verify-and-fail: this drives the engine booking to terminal `failed`,
+        // so the next attempt supersedes it under the same key. NEVER confirm.
+        try {
+          await confirmBookingAfterPayment(intent.intentId);
+        } catch {
+          // Expected: confirmFromPayment throws PAYMENT_FAILED for a failed intent.
+        }
+        dispatch({
+          type: "BOOKING_CREATED",
+          booking: bookingEngine.getBooking(usable.booking.id) ?? usable.booking,
+        });
         dispatch({
           type: "PAYMENT_FAILED",
           message: "Your payment was declined (simulated). You have not been charged — try again.",
@@ -154,7 +163,8 @@ export function Payment() {
         return;
       }
 
-      const confirmed = await confirmBookingAfterPayment(booking.id, intent.intentId);
+      // Confirmation is verified against the provider inside the engine.
+      const confirmed = await confirmBookingAfterPayment(intent.intentId);
       dispatch({ type: "PAYMENT_SUCCEEDED", booking: confirmed });
     } catch (err) {
       handleEngineError(err);
