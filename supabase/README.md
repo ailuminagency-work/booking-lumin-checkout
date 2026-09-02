@@ -22,7 +22,8 @@ a convenience layer on top of what these files enforce.
 |---|---|
 | `migrations/0001_extensions_and_helpers.sql` | pgcrypto, `lumin` schema, SECURITY DEFINER helpers (`is_platform_admin`, `is_tenant_member`, `tenant_role`, `tenant_is_active`, `touch_updated_at`) |
 | `migrations/0002_tenants_and_identity.sql` | `tenants`, `tenant_members`, `platform_admins` (separate trust level, SI-9), `tenant_invitations` |
-| `migrations/0003_services.sql` | Generalized catalog: `services` + items/addons/questions, `resources`, `locations`, `service_areas` |
+| `migrations/0003_services.sql` | Generalized catalog: `services` + items/addons/questions |
+| `migrations/_deferred/` | **Not applied.** Designed-but-unwired tables (`resources`, `locations`, `service_areas`) held out of the RC-1 set until a reader/writer exists (acceptance finding DEF-1) |
 | `migrations/0004_availability.sql` | `availability_rules`, `availability_overrides`, `scheduling_policies` |
 | `migrations/0005_customers_bookings_payments.sql` | `customers`, `bookings` (+ state-machine triggers per `BOOKING_TRANSITIONS`), `booking_state_history`, `payments`, `refunds` |
 | `migrations/0006_integrations_and_settings.sql` | `*_connections` (secret-free) + `*_connection_secrets` (service_role only), `checkout_settings`, `tenant_settings`, `audit_events` (append-only) |
@@ -108,8 +109,6 @@ runtime) bypasses RLS by design; `postgres` is the migration/dashboard role.
 | `tenant_invitations` | — | SELECT own tenant | INSERT/UPDATE/DELETE | SELECT all | owner only |
 | `services` | SELECT active (active tenant) | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
 | `service_items` / `service_addons` / `service_questions` | SELECT (of active services) | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
-| `resources`, `locations` | — | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
-| `service_areas` | SELECT (active tenant/service) | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
 | `availability_rules` / `availability_overrides` / `scheduling_policies` | SELECT (active tenant/service) | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
 | `customers` | — | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
 | `bookings` | — (drafts via RPC only) | SELECT/INSERT/UPDATE own tenant (state machine trigger-enforced) | DELETE | SELECT all | member |
