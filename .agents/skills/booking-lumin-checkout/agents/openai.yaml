@@ -1,0 +1,6 @@
+interface:
+  display_name: "Booking Lumin Checkout"
+  short_description: "Repo-specific patterns and workflows for booking-lumin-checkout"
+  default_prompt: "Use the booking-lumin-checkout repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
