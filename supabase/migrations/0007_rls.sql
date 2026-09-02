@@ -31,7 +31,6 @@ begin
   foreach t in array array[
     'tenants', 'tenant_members', 'platform_admins', 'tenant_invitations',
     'services', 'service_items', 'service_addons', 'service_questions',
-    'resources', 'locations', 'service_areas',
     'availability_rules', 'availability_overrides', 'scheduling_policies',
     'customers', 'bookings', 'booking_state_history', 'payments', 'refunds',
     'payment_connections', 'calendar_connections',
@@ -61,8 +60,7 @@ grant usage on all sequences in schema public to service_role;
 -- Tenant-member managed tables: members read/write (policies scope rows).
 grant select, insert, update, delete on
   public.services, public.service_items, public.service_addons,
-  public.service_questions, public.resources, public.locations,
-  public.service_areas, public.availability_rules,
+  public.service_questions, public.availability_rules,
   public.availability_overrides, public.scheduling_policies,
   public.customers, public.bookings,
   public.tenant_members, public.tenant_invitations,
@@ -80,7 +78,7 @@ to authenticated;
 -- Public checkout catalog (anon): read-only, rows scoped by policies below.
 grant select on
   public.services, public.service_items, public.service_addons,
-  public.service_questions, public.service_areas,
+  public.service_questions,
   public.availability_rules, public.availability_overrides,
   public.scheduling_policies, public.checkout_settings
 to anon;
@@ -150,7 +148,6 @@ declare
 begin
   foreach t in array array[
     'services', 'service_items', 'service_addons', 'service_questions',
-    'resources', 'locations', 'service_areas',
     'availability_rules', 'availability_overrides', 'scheduling_policies',
     'customers', 'bookings'
   ]
@@ -301,15 +298,6 @@ create policy "public_catalog_select" on public.service_questions
       select 1 from public.services s
       where s.id = service_id and s.active and lumin.tenant_is_active(s.tenant_id)
     )
-  );
-
-create policy "public_catalog_select" on public.service_areas
-  for select to anon, authenticated
-  using (
-    lumin.tenant_is_active(tenant_id)
-    and (service_id is null or exists (
-      select 1 from public.services s where s.id = service_id and s.active
-    ))
   );
 
 create policy "public_catalog_select" on public.availability_rules

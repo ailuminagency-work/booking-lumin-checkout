@@ -111,50 +111,7 @@ create table public.service_questions (
 create index service_questions_tenant_id_idx  on public.service_questions (tenant_id);
 create index service_questions_service_id_idx on public.service_questions (service_id);
 
--- ----------------------------------------------------------------------------
--- resources — capacity carriers (crew, bays, rooms, vehicles…).
--- ----------------------------------------------------------------------------
-create table public.resources (
-  id         uuid primary key default gen_random_uuid(),
-  tenant_id  uuid not null references public.tenants (id) on delete cascade,
-  name       text not null check (length(name) >= 1),
-  kind       text not null default 'generic',
-  capacity   integer not null default 1 check (capacity >= 1),
-  active     boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create index resources_tenant_id_idx on public.resources (tenant_id);
-
--- ----------------------------------------------------------------------------
--- locations — business locations. address: Address-shaped jsonb
--- {line1, line2?, city, region?, postalCode?, country}.
--- ----------------------------------------------------------------------------
-create table public.locations (
-  id         uuid primary key default gen_random_uuid(),
-  tenant_id  uuid not null references public.tenants (id) on delete cascade,
-  name       text not null check (length(name) >= 1),
-  address    jsonb not null default '{}'::jsonb check (jsonb_typeof(address) = 'object'),
-  created_at timestamptz not null default now()
-);
-
-create index locations_tenant_id_idx on public.locations (tenant_id);
-
--- ----------------------------------------------------------------------------
--- service_areas — where a mobile service operates. service_id NULL means the
--- area applies tenant-wide. definition depends on kind:
---   postal_prefix: {"prefixes": ["606", "607"]}
---   radius:        {"center": {"lat": .., "lng": ..}, "radiusKm": ..}
---   polygon:       {"points": [{"lat": .., "lng": ..}, ...]}
--- ----------------------------------------------------------------------------
-create table public.service_areas (
-  id         uuid primary key default gen_random_uuid(),
-  tenant_id  uuid not null references public.tenants (id) on delete cascade,
-  service_id uuid references public.services (id) on delete cascade,
-  kind       text not null check (kind in ('postal_prefix', 'radius', 'polygon')),
-  definition jsonb not null check (jsonb_typeof(definition) = 'object'),
-  created_at timestamptz not null default now()
-);
-
-create index service_areas_tenant_id_idx  on public.service_areas (tenant_id);
-create index service_areas_service_id_idx on public.service_areas (service_id);
+-- Note: resources, locations, and service_areas are deferred domain surface —
+-- see supabase/migrations/_deferred/0001_resources_locations_service_areas.sql.
+-- They are not part of the RC-1 applied set because nothing reads or writes
+-- them yet (RC-1 acceptance finding DEF-1).
