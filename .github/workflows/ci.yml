@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: verify (typecheck, test, build, contamination)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+      - run: bash scripts/contamination-check.sh
+
+  database:
+    name: database (migrations + RLS attack suite)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: lumin_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create test database
+        run: psql -h localhost -U postgres -d postgres -c 'create database lumin_test;'
+      - name: Apply local harness
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/local_harness.sql
+      - name: Apply migrations 0001..0009 in order (excluding _deferred)
+        run: |
+          for f in supabase/migrations/0*.sql; do
+            echo "applying $f"
+            psql -v ON_ERROR_STOP=1 -d lumin_test -f "$f"
+          done
+      - name: Run RLS attack suite (fails on any FAIL)
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql

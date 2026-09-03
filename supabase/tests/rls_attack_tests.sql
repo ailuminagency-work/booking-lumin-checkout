@@ -95,6 +95,33 @@ insert into public.payment_connection_secrets (connection_id, tenant_id, credent
   ('a0000000-0000-0000-0000-00000000e001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '\x6465616462656566'),
   ('b0000000-0000-0000-0000-00000000e001', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '\x6465616462656566');
 
+-- RC-2 (RISK-1) fixtures for ATTACK 12: a Tenant-A booking parked in
+-- pending_payment (the state a member must NOT be able to push to confirmed),
+-- plus two confirmed Tenant-A bookings used as positive controls (a member MAY
+-- still complete or cancel). Pricing is left empty so these rows contribute 0
+-- to platform_economics GMV — ATTACK 9d's exact USD total (16200 from A1) is
+-- preserved. Inserted directly by the privileged fixture role (the INSERT-time
+-- guard bypasses for non-authenticated; the transition trigger is UPDATE-only).
+insert into public.bookings
+  (id, tenant_id, reference, state, selection, pricing, slot_start, slot_end,
+   customer_id, idempotency_key)
+values
+  ('a0000000-0000-0000-0000-00000000b0aa', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'LMN-APP001', 'pending_payment',
+   '{"serviceId":"a0000000-0000-0000-0000-000000000001"}', '{}',
+   now() + interval '7 days', now() + interval '7 days 2 hours',
+   'a0000000-0000-0000-0000-00000000c001', 'idem-key-tenant-a-pp01'),
+  ('a0000000-0000-0000-0000-00000000b0bb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'LMN-ACF001', 'confirmed',
+   '{"serviceId":"a0000000-0000-0000-0000-000000000001"}', '{}',
+   now() + interval '8 days', now() + interval '8 days 2 hours',
+   'a0000000-0000-0000-0000-00000000c001', 'idem-key-tenant-a-cf01'),
+  ('a0000000-0000-0000-0000-00000000b0cc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'LMN-ACF002', 'confirmed',
+   '{"serviceId":"a0000000-0000-0000-0000-000000000001"}', '{}',
+   now() + interval '9 days', now() + interval '9 days 2 hours',
+   'a0000000-0000-0000-0000-00000000c001', 'idem-key-tenant-a-cf02');
+
 -- ============================================================================
 -- ATTACK 1 — Tenant B's owner tries to read Tenant A's data. Expect 0 rows
 -- everywhere, while B's own rows stay visible (positive control).
@@ -606,6 +633,133 @@ begin
   raise notice 'PASS 11: anon draft cannot overwrite an existing customer identity';
 end;
 $t$;
+
+-- ============================================================================
+-- ATTACK 12 (RC-2 / RISK-1) — a tenant MEMBER (STAFF) tries to push a
+-- pending_payment booking straight to 'confirmed' via a plain authenticated
+-- UPDATE, fabricating a payment-confirmed booking with no payment. The guard
+-- lumin.guard_booking_client_write must FORBID it (P0001): confirmation /
+-- refund / payment states are server-authoritative. Positive controls: a member
+-- MAY still complete (confirmed -> completed) and cancel (confirmed ->
+-- cancelled) — the manual operational outcomes. (SI-1 / SI-2)
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated","email":"staff-a@example.test"}',
+  true);
+set local role authenticated;
+
+-- 12a: pending_payment -> confirmed by a member → FORBIDDEN, state unchanged.
+do $t$
+declare
+  v_state text;
+begin
+  begin
+    update public.bookings set state = 'confirmed'
+      where id = 'a0000000-0000-0000-0000-00000000b0aa';  -- currently pending_payment
+    raise exception 'FAIL 12a: member drove pending_payment -> confirmed';
+  exception when sqlstate 'P0001' then
+    if sqlerrm not like '%FORBIDDEN%' and sqlerrm not like '%server-authoritative%' then raise; end if;
+    raise notice 'PASS 12a: member pending_payment -> confirmed forbidden';
+  end;
+
+  select state into v_state from public.bookings
+    where id = 'a0000000-0000-0000-0000-00000000b0aa';
+  if v_state <> 'pending_payment' then
+    raise exception 'FAIL 12b: booking state changed to % after forbidden update', v_state;
+  end if;
+  raise notice 'PASS 12b: booking remains pending_payment after forbidden confirm';
+end;
+$t$;
+
+-- 12c: positive control — a member MAY complete a confirmed booking.
+do $t$
+declare
+  v_state text;
+begin
+  update public.bookings set state = 'completed'
+    where id = 'a0000000-0000-0000-0000-00000000b0bb';  -- confirmed -> completed
+  select state into v_state from public.bookings
+    where id = 'a0000000-0000-0000-0000-00000000b0bb';
+  if v_state <> 'completed' then
+    raise exception 'FAIL 12c: member could not complete a confirmed booking (state=%)', v_state;
+  end if;
+  raise notice 'PASS 12c: member may complete (confirmed -> completed)';
+end;
+$t$;
+
+-- 12d: positive control — a member MAY cancel a confirmed booking.
+do $t$
+declare
+  v_state text;
+begin
+  update public.bookings set state = 'cancelled'
+    where id = 'a0000000-0000-0000-0000-00000000b0cc';  -- confirmed -> cancelled
+  select state into v_state from public.bookings
+    where id = 'a0000000-0000-0000-0000-00000000b0cc';
+  if v_state <> 'cancelled' then
+    raise exception 'FAIL 12d: member could not cancel a confirmed booking (state=%)', v_state;
+  end if;
+  raise notice 'PASS 12d: member may cancel (confirmed -> cancelled)';
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 13 (RC-2 / RISK-2) — a PLATFORM_ADMIN no longer has routine raw-PII
+-- access: SELECT on the base customers / bookings tables must return ZERO rows
+-- (the SELECT policies are now member-only, and an admin is not a tenant
+-- member). Command Center analytics still work: the SECURITY DEFINER aggregate
+-- views return rows for the admin (>0) and ZERO rows for a non-admin.
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated","email":"platform-admin@example.test"}',
+  true);
+set local role authenticated;
+
+do $t$
+declare
+  n bigint;
+begin
+  -- No raw PII: base tables return zero rows for the platform admin.
+  select count(*) into n from public.customers;
+  if n <> 0 then raise exception 'FAIL 13a: platform admin read % raw customer row(s)', n; end if;
+  raise notice 'PASS 13a: platform admin has no raw-PII access to customers (0 rows)';
+
+  select count(*) into n from public.bookings;
+  if n <> 0 then raise exception 'FAIL 13b: platform admin read % raw booking row(s)', n; end if;
+  raise notice 'PASS 13b: platform admin has no raw-PII access to bookings (0 rows)';
+
+  -- Aggregates still flow to the admin via the definer views.
+  select count(*) into n from public.platform_booking_stats;
+  if n < 1 then raise exception 'FAIL 13c: platform admin saw no platform_booking_stats rows'; end if;
+  select count(*) into n from public.platform_economics;
+  if n < 1 then raise exception 'FAIL 13d: platform admin saw no platform_economics rows'; end if;
+  raise notice 'PASS 13c: platform admin still sees aggregate analytics (definer views)';
+end;
+$t$;
+
+reset role;
+
+-- Non-admin (Tenant B owner) still sees zero aggregate rows (gate preserved).
+select set_config('request.jwt.claims',
+  '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated","email":"owner-b@example.test"}',
+  true);
+set local role authenticated;
+
+do $t$
+declare
+  n bigint;
+begin
+  select count(*) into n from public.platform_booking_stats;
+  if n <> 0 then raise exception 'FAIL 13e: non-admin saw % platform_booking_stats rows', n; end if;
+  select count(*) into n from public.platform_economics;
+  if n <> 0 then raise exception 'FAIL 13f: non-admin saw % platform_economics rows', n; end if;
+  raise notice 'PASS 13e: definer aggregate views remain empty for non-admins';
+end;
+$t$;
+
+reset role;
 
 do $t$
 begin

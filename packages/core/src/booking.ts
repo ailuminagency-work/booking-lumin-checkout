@@ -294,6 +294,17 @@ export function createBookingEngine(opts: BookingEngineOptions): BookingStore {
     async transition(bookingId: string, to: BookingState, reason?: string): Promise<BookingRecord> {
       const record = bookings.get(bookingId);
       if (!record) throw new BookingError("BOOKING_NOT_FOUND");
+      // Defense-in-depth (RC-2 / RISK-1): confirmation is payment-authoritative.
+      // The generic transition path must NEVER mint a `confirmed` booking — that
+      // can only happen through confirmFromPayment, which verifies the payment
+      // intent with the provider first. Refusing here mirrors the DB guard that
+      // forbids portal clients from driving a booking into `confirmed`.
+      if (to === "confirmed") {
+        throw new BookingError(
+          "ILLEGAL_TRANSITION",
+          "confirmation is payment-authoritative; confirm only via confirmFromPayment (which verifies the payment)",
+        );
+      }
       return applyTransition(record, to, reason);
     },
 
