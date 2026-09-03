@@ -11,7 +11,7 @@ except to remediate independently-reproduced defects (merged via PR #3).
 |---|-------|---------|----------|
 | 1 | Clean clone install / build / test | PASS | install clean; typecheck 0; 107 tests; 3 apps build |
 | 2 | 107 tests & honest coverage | PASS | exact 107; hand-computed assertions; no tautologies / skips / hidden excludes |
-| 3 | Contamination (independent of repo script) | PASS | only `Bison` hit is the ledger doc; PII on reserved domains/555; no real secrets |
+| 3 | Contamination (independent of repo script) | PASS | only the legacy-client-name hit is the ledger doc; PII on reserved domains/555; no real secrets |
 | 4 | Git history for secrets / legacy identifiers | PASS | all commits/blobs scanned; nothing leaked, nothing scrubbed |
 | 5 | Architecture boundaries | PASS | import matrix clean & acyclic; contracts depend on nothing internal; engines pure |
 | 6 | No vertical-specific logic in core | PASS | zero vertical branches; conditionals key only on `archetype`; 3 proofs, one engine |

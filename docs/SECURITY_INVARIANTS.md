@@ -17,6 +17,8 @@ Owner: Security Governor. These override delivery speed. A violating merge is bl
 | SI-11 | Sensitive values never appear in logs. | `AuditEvent.data` is redacted/PII-minimized; log lint in review gates. |
 | SI-12 | Mocks support development without external credentials. | `@lumin/adapters` mock providers; all integrations start `not_connected`. |
 | SI-13 | Production integrations connect only after security gates pass. | Release Governor gate G6; `RELEASE_LEDGER.md`. |
+| SI-14 | Portal members cannot reach financial booking states. | `lumin.guard_booking_client_write` (0009): an `authenticated` UPDATE may drive `state` only into `completed`/`cancelled`; `confirmed`/`refunded`/`pending_payment`/`failed`/`draft` are server-authoritative (FORBIDDEN P0001). Engine `transition()` mirror-refuses `confirmed` (only `confirmFromPayment` confirms). RLS attack ATTACK 12. |
+| SI-15 | Platform analytics is PII-minimized; admins have no routine raw-PII access. | 0009: SELECT policies on `customers`/`bookings` are member-only (no `is_platform_admin()`); Command Center reads only the SECURITY DEFINER aggregate views (`platform_booking_stats`, `platform_economics`), which expose aggregates (no PII) and gate on `is_platform_admin()`. Any future raw-PII platform access must be a separate, explicit, audited path (SECURITY DEFINER RPC writing `audit_events`), never a base-table policy. RLS attack ATTACK 13. |
 
 ## Clean environment requirements (verified at bootstrap)
 

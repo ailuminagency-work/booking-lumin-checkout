@@ -288,4 +288,25 @@ describe("booking: state machine", () => {
     await expectCode(engine.transition(record.id, "confirmed"), "ILLEGAL_TRANSITION"); // refunded is terminal
     expect(engine.getBooking(record.id)?.state).toBe("refunded");
   });
+
+  it("(RISK-1) transition() refuses to reach 'confirmed'; only confirmFromPayment confirms", async () => {
+    const { engine, payments } = makeEngine();
+    const record = await engine.createBooking(request());
+    expect(record.state).toBe("pending_payment");
+
+    // Defense-in-depth: the generic transition path cannot fabricate a
+    // confirmed (payment-authoritative) booking, even on the otherwise-legal
+    // pending_payment -> confirmed edge.
+    await expectCode(engine.transition(record.id, "confirmed"), "ILLEGAL_TRANSITION");
+    expect(engine.getBooking(record.id)?.state).toBe("pending_payment");
+    expect(engine.getHistory(record.id).some((h) => h.to === "confirmed")).toBe(false);
+
+    // The sanctioned path still confirms after a verified, succeeded payment.
+    const intent = payments.listIntents()[0]!;
+    payments.completePayment(intent.intentId, "succeeded");
+    const confirmed = await engine.confirmFromPayment(intent.intentId);
+    expect(confirmed.id).toBe(record.id);
+    expect(confirmed.state).toBe("confirmed");
+    expect(confirmed.paymentId).not.toBeNull();
+  });
 });
