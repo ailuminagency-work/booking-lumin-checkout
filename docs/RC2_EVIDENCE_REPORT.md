@@ -5,7 +5,7 @@ Runtime Baseline.* **Date:** 2026-09-03.
 
 **Live project:** "Booking Lumin Checkout" — ref `pplwyfbxrnodimhzlvdl`, org `esqxhonfprdoonvnwsmh`
 ("ailuminagency-work's Org"), region `us-east-1`, Postgres 17.6. Brand-new; no relationship to
-`embed-checkout`, the Bison project, `leadgate`, or `card-craft-embed` (all left untouched).
+`embed-checkout`, the prior-client project, `leadgate`, or `card-craft-embed` (all left untouched).
 
 **Method note (important):** the session's egress policy blocks direct HTTPS to the project host
 (`pplwyfbxrnodimhzlvdl.supabase.co`, 403 at the proxy). The Supabase management/SQL channel is
