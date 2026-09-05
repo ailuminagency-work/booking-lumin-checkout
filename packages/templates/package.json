@@ -1,0 +1,23 @@
+{
+  "name": "@lumin/templates",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lumin/contracts": "*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@lumin/core": "*",
+    "@lumin/adapters": "*",
+    "@types/node": "^20.14.0",
+    "typescript": "~5.6.3",
+    "vitest": "^3.2.4"
+  }
+}
