@@ -182,6 +182,29 @@ export function createStripeClient(opts: StripeClientOptions) {
     },
 
     /**
+     * Issue a refund against a PaymentIntent (F1 compensation / F4). Passing an
+     * explicit `amount` (minor units) makes a partial refund when it is less
+     * than the captured total and a full refund when it equals it; Stripe
+     * rejects an amount above the captured total (over-refund).
+     */
+    async refund(intentId: string, amount: Money): Promise<{ refundId: string }> {
+      if (!Number.isSafeInteger(amount.amount) || amount.amount <= 0) {
+        throw new PaymentError("INVALID_REQUEST", "refund amount must be a positive integer (minor units)");
+      }
+      const body = new URLSearchParams();
+      body.set("payment_intent", intentId);
+      body.set("amount", String(amount.amount));
+      const res = await doFetch(`${apiBase}/v1/refunds`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: body.toString(),
+      });
+      if (!res.ok) throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe refund failed");
+      const refund = (await readJson(res)) as { id: string };
+      return { refundId: refund.id };
+    },
+
+    /**
      * Verify + normalize a Stripe webhook. Throws PaymentError("WEBHOOK_UNVERIFIED")
      * on any signature/timestamp failure (SI-10). Stateless: replay dedup is the
      * DB's job via unique (provider, provider_intent_id) + idempotent confirm.
@@ -247,4 +270,49 @@ export function webhookIntentAmount(raw: unknown): number | null {
   const obj = ev?.data?.object ?? {};
   const amount = (obj as { amount_received?: unknown }).amount_received ?? (obj as { amount?: unknown }).amount;
   return typeof amount === "number" && Number.isInteger(amount) ? amount : null;
+}
+
+function intOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) ? v : null;
+}
+
+/**
+ * F4 refund accounting — interpret a verified refund event (charge.refunded /
+ * refund.created / refund.updated) against the SERVER-authoritative payment
+ * amount. Mirror of packages/adapters/src/stripePayment.ts#interpretRefundEvent.
+ *
+ *  - `refundedTotal` — cumulative amount refunded so far, in minor units:
+ *    a Charge object carries `amount_refunded`; a bare Refund object carries
+ *    only its own `amount` (best-effort cumulative).
+ *  - `isFullyRefunded` — true ONLY when refundedTotal ≥ the server amount. A
+ *    partial refund is NOT full, so the booking must NOT be driven to refunded.
+ *  - `refundId` — the Stripe refund id (re_…) used as the DEDUPE key. A charge
+ *    carries it under refunds.data[]; a bare refund object is its own id. A
+ *    replayed identical event yields the SAME id ⇒ the unique insert is a no-op.
+ */
+export interface RefundOutcome {
+  refundId: string | null;
+  refundedTotal: number | null;
+  isFullyRefunded: boolean;
+}
+
+export function interpretRefundEvent(raw: unknown, serverAmount: number): RefundOutcome {
+  const ev = raw as { data?: { object?: Record<string, unknown> } };
+  const obj = (ev?.data?.object ?? {}) as Record<string, unknown>;
+
+  let refundedTotal = intOrNull(obj.amount_refunded);
+  let refundId: string | null = null;
+
+  const refunds = (obj.refunds as { data?: unknown } | undefined)?.data;
+  if (Array.isArray(refunds) && refunds.length > 0) {
+    const last = refunds[refunds.length - 1] as { id?: unknown };
+    if (typeof last.id === "string") refundId = last.id;
+  }
+  if (obj.object === "refund") {
+    if (typeof obj.id === "string") refundId = obj.id;
+    if (refundedTotal === null) refundedTotal = intOrNull(obj.amount);
+  }
+
+  const isFullyRefunded = refundedTotal !== null && refundedTotal >= serverAmount;
+  return { refundId, refundedTotal, isFullyRefunded };
 }

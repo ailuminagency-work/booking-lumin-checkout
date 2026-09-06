@@ -285,6 +285,54 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
   };
 }
 
+function intOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) ? v : null;
+}
+
+/**
+ * F4 refund accounting — interpret a verified refund event (charge.refunded /
+ * refund.created / refund.updated) against the SERVER-authoritative payment
+ * amount. This is the pure decision the webhook handler applies; it is exported
+ * (and mirrored in supabase/functions/_shared/stripe.ts) so the partial-vs-full
+ * and dedupe-key behavior is unit-tested offline.
+ *
+ *  - `refundedTotal` — cumulative amount refunded so far (minor units). A Charge
+ *    object carries `amount_refunded`; a bare Refund object carries only its own
+ *    `amount` (best-effort cumulative).
+ *  - `isFullyRefunded` — true ONLY when refundedTotal ≥ the server amount. A
+ *    PARTIAL refund is NOT full, so the booking must NOT be driven to `refunded`
+ *    (payments.state → partially_refunded; the booking stays confirmed/completed).
+ *  - `refundId` — the Stripe refund id (re_…) used as the DEDUPE key: a charge
+ *    carries it under refunds.data[], a bare refund object is its own id. A
+ *    replayed identical event yields the SAME id ⇒ the unique insert is a no-op.
+ */
+export interface RefundOutcome {
+  refundId: string | null;
+  refundedTotal: number | null;
+  isFullyRefunded: boolean;
+}
+
+export function interpretRefundEvent(raw: unknown, serverAmount: number): RefundOutcome {
+  const ev = raw as { data?: { object?: Record<string, unknown> } };
+  const obj = (ev?.data?.object ?? {}) as Record<string, unknown>;
+
+  let refundedTotal = intOrNull(obj.amount_refunded);
+  let refundId: string | null = null;
+
+  const refunds = (obj.refunds as { data?: unknown } | undefined)?.data;
+  if (Array.isArray(refunds) && refunds.length > 0) {
+    const last = refunds[refunds.length - 1] as { id?: unknown };
+    if (typeof last.id === "string") refundId = last.id;
+  }
+  if (obj.object === "refund") {
+    if (typeof obj.id === "string") refundId = obj.id;
+    if (refundedTotal === null) refundedTotal = intOrNull(obj.amount);
+  }
+
+  const isFullyRefunded = refundedTotal !== null && refundedTotal >= serverAmount;
+  return { refundId, refundedTotal, isFullyRefunded };
+}
+
 /** metadata[key]=value form fields from an optional metadata bag. */
 function encodeMetadata(metadata?: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};

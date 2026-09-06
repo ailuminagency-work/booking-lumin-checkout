@@ -15,5 +15,5 @@ export type { MockWebhookProvider } from "./mockWebhook";
 // Real Stripe TEST-mode adapter (RC-3). Server-side only — the secret key is
 // never bundled to the browser; all Stripe calls originate in the edge
 // functions / trusted runtime. Behind the same PaymentProvider contract.
-export { createStripePaymentProvider, signStripeTestWebhook } from "./stripePayment";
-export type { StripePaymentProviderOptions } from "./stripePayment";
+export { createStripePaymentProvider, signStripeTestWebhook, interpretRefundEvent } from "./stripePayment";
+export type { StripePaymentProviderOptions, RefundOutcome } from "./stripePayment";

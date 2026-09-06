@@ -142,26 +142,24 @@ function windowsForDate(query: AvailabilityQuery, y: number, m: number, d: numbe
     .map((r) => ({ startMinute: r.startMinute, endMinute: r.endMinute, capacity: r.capacity }));
 }
 
-function computeSlots(query: AvailabilityQuery): Slot[] {
+/** The raw grid capacity (before holds) for each slot start in the window. */
+function capacityByStartMap(query: AvailabilityQuery): Map<number, number> | null {
   const { tenantTimezone, durationMinutes, policy } = query;
 
-  if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) return [];
-  if (policy.slotIntervalMinutes < 5) return [];
+  if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) return null;
+  if (policy.slotIntervalMinutes < 5) return null;
   formatterFor(tenantTimezone);
 
   const nowMs = new Date(query.now).getTime();
   const fromMs = new Date(query.from).getTime();
   const toMs = new Date(query.to).getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) return [];
+  if (!Number.isFinite(nowMs) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
 
   const effFrom = Math.max(fromMs, nowMs + policy.leadTimeMinutes * 60_000);
   const effTo = Math.min(toMs, nowMs + policy.horizonDays * 86_400_000);
-  if (effFrom > effTo) return [];
+  if (effFrom > effTo) return new Map();
 
-  if (query.rules.length === 0 && !query.overrides.some((o) => o.kind === "open")) return [];
-
-  const holds = query.existing.map((h) => ({ start: new Date(h.start).getTime(), end: new Date(h.end).getTime() }));
-  if (holds.some((h) => !Number.isFinite(h.start) || !Number.isFinite(h.end))) return [];
+  if (query.rules.length === 0 && !query.overrides.some((o) => o.kind === "open")) return new Map();
 
   const first = localDateOfInstant(tenantTimezone, effFrom);
   let cursor = Date.UTC(first.y, first.m - 1, first.d) - 86_400_000;
@@ -189,8 +187,17 @@ function computeSlots(query: AvailabilityQuery): Slot[] {
       }
     }
   }
+  return capacityByStart;
+}
 
-  const durationMs = durationMinutes * 60_000;
+function computeSlots(query: AvailabilityQuery): Slot[] {
+  const capacityByStart = capacityByStartMap(query);
+  if (capacityByStart === null) return [];
+
+  const holds = query.existing.map((h) => ({ start: new Date(h.start).getTime(), end: new Date(h.end).getTime() }));
+  if (holds.some((h) => !Number.isFinite(h.start) || !Number.isFinite(h.end))) return [];
+
+  const durationMs = query.durationMinutes * 60_000;
   const slots: Slot[] = [];
   for (const [startMs, capacity] of [...capacityByStart.entries()].sort((a, b) => a[0] - b[0])) {
     const endMs = startMs + durationMs;
@@ -211,5 +218,23 @@ export function isSlotAvailable(query: AvailabilityQuery, start: string): boolea
     return computeSlots(query).some((s) => new Date(s.start).getTime() === target);
   } catch {
     return false;
+  }
+}
+
+/**
+ * The AUTHORITATIVE grid capacity for the exact slot start (before any holds) —
+ * the summed capacity of the availability windows covering that instant. This
+ * is the `p_capacity` handed to the DB-authoritative reserve_capacity RPC (F1).
+ * Returns 0 when the slot is not on the grid at all (fail-closed).
+ */
+export function slotCapacityAt(query: AvailabilityQuery, start: string): number {
+  try {
+    const target = new Date(start).getTime();
+    if (!Number.isFinite(target)) return 0;
+    const capacityByStart = capacityByStartMap(query);
+    if (capacityByStart === null) return 0;
+    return capacityByStart.get(target) ?? 0;
+  } catch {
+    return 0;
   }
 }
