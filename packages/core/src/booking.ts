@@ -334,6 +334,18 @@ export function createBookingEngine(opts: BookingEngineOptions): BookingStore {
         throw new PaymentError("PAYMENT_FAILED", `payment not settled (state=${intent.state})`);
       }
 
+      // F6 (defense-in-depth): the provider-verified intent amount MUST equal the
+      // booking's AUTHORITATIVE charge (server total + deposit) in the same
+      // currency. A succeeded intent for a different amount (tampered create,
+      // repriced booking, provider desync) must NEVER confirm the booking.
+      const authoritative = addMoney(record.pricing.total, record.pricing.deposit);
+      if (intent.amount.amount !== authoritative.amount || intent.amount.currency !== authoritative.currency) {
+        throw new PaymentError(
+          "PAYMENT_AMOUNT_MISMATCH",
+          `intent amount ${intent.amount.amount} ${intent.amount.currency} != authoritative charge ${authoritative.amount} ${authoritative.currency}`,
+        );
+      }
+
       if (record.state !== "pending_payment") {
         throw new BookingError("ILLEGAL_TRANSITION", `cannot confirm from ${record.state}`);
       }
