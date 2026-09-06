@@ -1,0 +1,8 @@
+{
+  "//": "Deno config for the Supabase Edge Functions. These run under Deno, NOT the Node/browser workspace — they are intentionally self-contained (see _shared/*.ts duplication notes). No @lumin/* imports.",
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.45.4"
+  },
+  "lint": { "rules": { "tags": ["recommended"] } },
+  "fmt": { "lineWidth": 120 }
+}
