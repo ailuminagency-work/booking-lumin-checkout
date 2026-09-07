@@ -23,13 +23,18 @@ a convenience layer on top of what these files enforce.
 | `migrations/0001_extensions_and_helpers.sql` | pgcrypto, `lumin` schema, SECURITY DEFINER helpers (`is_platform_admin`, `is_tenant_member`, `tenant_role`, `tenant_is_active`, `touch_updated_at`) |
 | `migrations/0002_tenants_and_identity.sql` | `tenants`, `tenant_members`, `platform_admins` (separate trust level, SI-9), `tenant_invitations` |
 | `migrations/0003_services.sql` | Generalized catalog: `services` + items/addons/questions |
-| `migrations/_deferred/` | **Not applied.** Designed-but-unwired tables (`resources`, `locations`, `service_areas`) held out of the RC-1 set until a reader/writer exists (acceptance finding DEF-1) |
+| `migrations/_deferred/` | **Empty of applied surface.** The originally-deferred tables (`resources`, `locations`, `service_areas`) were **promoted in `0012_resources.sql`** once a reader/writer existed (`@lumin/resources` + `lumin.reserve_resource`); the file remains only as the historical DDL record for DEF-1 |
 | `migrations/0004_availability.sql` | `availability_rules`, `availability_overrides`, `scheduling_policies` |
 | `migrations/0005_customers_bookings_payments.sql` | `customers`, `bookings` (+ state-machine triggers per `BOOKING_TRANSITIONS`), `booking_state_history`, `payments`, `refunds` |
 | `migrations/0006_integrations_and_settings.sql` | `*_connections` (secret-free) + `*_connection_secrets` (service_role only), `checkout_settings`, `tenant_settings`, `audit_events` (append-only) |
 | `migrations/0007_rls.sql` | **The security core**: FORCE RLS everywhere, deny-by-default policies, public-checkout catalog policies, `lumin.create_booking_draft` RPC |
 | `migrations/0008_command_center_views.sql` | SECURITY INVOKER aggregate views for the Command Center (no PII; GMV never conflated with platform revenue) |
+| `migrations/0009_rc2_hardening.sql` | RC-2 hardening follow-ups |
+| `migrations/0010_capacity_holds.sql` | `capacity_holds` + `lumin.reserve_capacity`/`consume_hold`/`release_hold` (W6 final-slot race fix, F1). Server-internal: FORCE RLS, no client policies/grants |
+| `migrations/0011_refund_accounting.sql` | `refunds` provider + dedupe key (RC-3 F4) |
+| `migrations/0012_resources.sql` | **Promotes** `resources`, `locations`, `service_areas` from `_deferred`; adds `service_resources` link + `resource_reservations` holds + `lumin.reserve_resource`/`consume_resource_holds`/`release_resource_holds` (W5). Composes with 0010 |
 | `tests/rls_attack_tests.sql` | Attack simulation: cross-tenant reads/writes, anon probing, role escalation, illegal transitions, idempotency/double-mint duplicates |
+| `tests/resource_rls_tests.sql` | Resource-RLS check: cross-tenant resource reads repelled, anon has no resource access, anon may read active `service_areas` |
 | `tests/local_harness.sql` | Optional stub (roles + `auth` schema) for dry runs on plain Postgres 15+. **Not for Supabase.** |
 
 ## Applying to a fresh Supabase project
@@ -46,7 +51,7 @@ Or with plain `psql`, strictly in order:
 
 ```sh
 export DATABASE_URL='postgresql://postgres:...@db.<NEW_PROJECT_REF>.supabase.co:5432/postgres'
-for f in supabase/migrations/000{1,2,3,4,5,6,7,8}_*.sql; do
+for f in supabase/migrations/00[0-9][0-9]_*.sql; do
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" || break
 done
 ```
@@ -119,4 +124,9 @@ runtime) bypasses RLS by design; `postgres` is the migration/dashboard role.
 | `checkout_settings` | SELECT (active tenant) | SELECT own tenant | INSERT/UPDATE/DELETE | SELECT all | owner only |
 | `tenant_settings` | — | SELECT own tenant | INSERT/UPDATE/DELETE | SELECT all | owner only |
 | `audit_events` | — | — (staff: no) | SELECT own tenant | SELECT all | none; append-only for every role (UPDATE/DELETE revoked incl. service_role) |
+| `capacity_holds` | — | **no access** | **no access** | **no access** | none — service_role only (server-internal holds, F1) |
+| `resources` / `locations` | — | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
+| `service_resources` | — | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
+| `service_areas` | SELECT (active tenant/service) | SELECT/INSERT/UPDATE own tenant | DELETE | SELECT all | member |
+| `resource_reservations` | — | **no access** | **no access** | **no access** | none — service_role only (server-internal holds, W5) |
 | views `platform_*` (4) | — | zero rows | zero rows | SELECT aggregates | n/a (views) |
