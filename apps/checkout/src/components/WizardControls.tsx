@@ -2,6 +2,7 @@ import type { Service } from "@lumin/contracts";
 import { getService } from "../config/demoTenant";
 import { useCheckout, type Step } from "../state/checkout";
 import { hasConfiguration, validateCustomerDraft, validateSelection } from "../state/validation";
+import { workflowView } from "../lib/workflow";
 
 export const STEP_LABELS: Record<Step, string> = {
   service: "Service",
@@ -38,12 +39,16 @@ export function WizardControls() {
       case "service":
         return state.selection != null;
       case "configure":
-      case "summary":
+      case "summary": {
+        if (service == null || state.selection == null) return false;
+        // A workflow-driven service hides some questions and can disqualify;
+        // hidden questions are not required, a disqualification blocks Continue.
+        const view = workflowView(service, state.selection);
         return (
-          service != null &&
-          state.selection != null &&
-          validateSelection(service, state.selection).length === 0
+          view.disqualified.length === 0 &&
+          validateSelection(service, state.selection, view.hiddenQuestionIds).length === 0
         );
+      }
       case "slot":
         return state.slot != null;
       case "customer":

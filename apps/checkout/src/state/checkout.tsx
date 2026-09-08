@@ -16,6 +16,7 @@ import type {
   Slot,
 } from "@lumin/contracts";
 import { emptyCustomerDraft, hasConfiguration, type CustomerDraft } from "./validation";
+import type { UploadedMedia } from "../lib/media";
 
 export type Step =
   | "service"
@@ -63,6 +64,8 @@ export interface CheckoutState {
   intentId: string | null;
   paymentStatus: PaymentStatus;
   stepMessage: StepMessage | null;
+  /** Mock media (via @lumin/media) attached to this checkout draft. */
+  media: UploadedMedia[];
 }
 
 export type CheckoutAction =
@@ -79,6 +82,7 @@ export type CheckoutAction =
   | { type: "PAYMENT_SUCCEEDED"; booking: BookingRecord }
   | { type: "PAYMENT_FAILED"; message: string }
   | { type: "RETURN_TO"; step: Step; message: string; clearSlot?: boolean }
+  | { type: "ADD_MEDIA"; media: UploadedMedia }
   | { type: "RESET" };
 
 function randomChunk(): string {
@@ -112,6 +116,7 @@ export function createFreshState(): CheckoutState {
     intentId: null,
     paymentStatus: "idle",
     stepMessage: null,
+    media: [],
   };
 }
 
@@ -149,6 +154,7 @@ export function checkoutReducer(state: CheckoutState, action: CheckoutAction): C
         slot: null,
         attempted: {},
         stepMessage: null,
+        media: [], // media belongs to the prior draft
         ...invalidateBooking(state),
       };
     }
@@ -215,6 +221,8 @@ export function checkoutReducer(state: CheckoutState, action: CheckoutAction): C
         intentId: null,
         paymentStatus: "idle",
       };
+    case "ADD_MEDIA":
+      return { ...state, media: [...state.media, action.media] };
     case "RESET":
       return createFreshState();
     default:
@@ -239,6 +247,7 @@ export function loadPersistedState(): CheckoutState | null {
       ...parsed,
       idempotencyKey: parsed.idempotencyKey,
       customerDraft: { ...base.customerDraft, ...(parsed.customerDraft ?? {}) },
+      media: Array.isArray(parsed.media) ? parsed.media : base.media,
       // Never restore a mid-flight or failed payment as anything but idle.
       paymentStatus: parsed.paymentStatus === "succeeded" ? "succeeded" : "idle",
       stepMessage: null,

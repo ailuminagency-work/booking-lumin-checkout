@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addMoney,
-  formatMoney,
   LuminError,
   PaymentError,
   type BookingRecord,
@@ -11,6 +10,8 @@ import { getService, TENANT_ID } from "../config/demoTenant";
 import { bookingEngine, confirmBookingAfterPayment, paymentProvider } from "../engines";
 import { hasConfiguration } from "../state/validation";
 import { useCheckout } from "../state/checkout";
+import { display } from "../lib/i18n";
+import { workflowView } from "../lib/workflow";
 
 const AVAILABILITY_CODES = new Set([
   "SLOT_UNAVAILABLE",
@@ -67,10 +68,16 @@ export function Payment() {
     intentId: string;
   } | null> => {
     if (!state.selection || !state.slot || !state.customer) return null;
+    // Charge the EFFECTIVE selection (base + workflow pricing effects) so the
+    // amount booked matches the amount shown in Summary. Same object for a
+    // service with no flow — the engine remains the pricing authority.
+    const effectiveSelection = service
+      ? workflowView(service, state.selection).effectiveSelection
+      : state.selection;
     const request: CreateBookingRequest = {
       tenantId: TENANT_ID,
       idempotencyKey: state.idempotencyKey,
-      selection: state.selection,
+      selection: effectiveSelection,
       slotStart: state.slot.start,
       customer: state.customer,
       ...(state.address ? { address: state.address } : {}),
@@ -94,7 +101,7 @@ export function Payment() {
     }
     dispatch({ type: "SET_INTENT", intentId });
     return { booking, intentId };
-  }, [dispatch, state.address, state.customer, state.idempotencyKey, state.selection, state.slot]);
+  }, [dispatch, service, state.address, state.customer, state.idempotencyKey, state.selection, state.slot]);
 
   /** A live pending booking with a still-completable engine intent, or a fresh one. */
   const ensureUsable = useCallback(async (): Promise<{
@@ -216,7 +223,7 @@ export function Payment() {
               disabled={!ready || working}
               onClick={() => void pay("succeeded")}
             >
-              Pay {chargeAmount ? formatMoney(chargeAmount) : ""}
+              Pay {chargeAmount ? display.money(chargeAmount) : ""}
             </button>
             <button
               type="button"

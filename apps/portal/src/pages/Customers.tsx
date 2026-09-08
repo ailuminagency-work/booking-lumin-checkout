@@ -1,17 +1,19 @@
 import { useState } from "react";
-import { formatMoney } from "@lumin/contracts";
 import { usePortal } from "../components/PortalProvider";
-import { EmptyState, PageHeader, StateBadge, formatSlot } from "../components/ui";
+import { EmptyState, PageHeader, StateBadge } from "../components/ui";
 import {
   customerLifetimeValue,
   getCustomer,
   getService,
+  getTenant,
   listCustomerBookings,
   listCustomers,
 } from "../data/api";
+import { fmtMoney, fmtSlot } from "../data/i18n";
 
 export function CustomersPage() {
   const { ctx, store } = usePortal();
+  const tenant = getTenant(ctx, store);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const customers = listCustomers(ctx, store);
   const selected = selectedId ? getCustomer(ctx, selectedId, store) : null;
@@ -57,7 +59,7 @@ export function CustomersPage() {
                       <td>{c.details.email}</td>
                       <td>{c.details.phone ?? "—"}</td>
                       <td className="num">{bookingCount}</td>
-                      <td className="num">{formatMoney(customerLifetimeValue(ctx, c.id, store))}</td>
+                      <td className="num">{fmtMoney(tenant, customerLifetimeValue(ctx, c.id, store))}</td>
                     </tr>
                   );
                 })}
@@ -90,7 +92,7 @@ export function CustomersPage() {
             </div>
             <div>
               <dt>Lifetime value</dt>
-              <dd>{formatMoney(customerLifetimeValue(ctx, selected.id, store))}</dd>
+              <dd>{fmtMoney(tenant, customerLifetimeValue(ctx, selected.id, store))}</dd>
             </div>
           </dl>
           <section aria-label="Customer bookings">
@@ -105,12 +107,12 @@ export function CustomersPage() {
                       <span className="upcoming-ref">{b.reference}</span>
                       <div className="muted">
                         {getService(ctx, b.selection.serviceId, store)?.name ?? "—"} ·{" "}
-                        {formatSlot(b.slotStart, b.slotEnd)}
+                        {fmtSlot(tenant, b.slotStart, b.slotEnd)}
                       </div>
                     </div>
                     <div className="upcoming-right">
                       <StateBadge state={b.state} />
-                      <span className="upcoming-total">{formatMoney(b.pricing.total)}</span>
+                      <span className="upcoming-total">{fmtMoney(tenant, b.pricing.total)}</span>
                     </div>
                   </li>
                 ))}

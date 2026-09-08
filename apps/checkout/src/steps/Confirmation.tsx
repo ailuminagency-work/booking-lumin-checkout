@@ -1,8 +1,6 @@
 import { useState } from "react";
-import { formatMoney } from "@lumin/contracts";
-import { tenant } from "../config/demoTenant";
-import { formatDateTime } from "../lib/datetime";
 import { useCheckout } from "../state/checkout";
+import { display } from "../lib/i18n";
 
 export function Confirmation() {
   const { state, dispatch } = useCheckout();
@@ -38,7 +36,7 @@ export function Confirmation() {
       <dl className="receipt-details">
         <div className="receipt-row">
           <dt>When</dt>
-          <dd>{formatDateTime(booking.slotStart, tenant.timezone)}</dd>
+          <dd>{display.dateTime(booking.slotStart)}</dd>
         </div>
         <div className="receipt-row">
           <dt>Name</dt>
@@ -67,28 +65,28 @@ export function Confirmation() {
                 {line.label}
                 {line.quantity > 1 && <span className="muted"> × {line.quantity}</span>}
               </span>
-              <span>{formatMoney(line.amount)}</span>
+              <span>{display.money(line.amount)}</span>
             </li>
           ))}
         </ul>
         <dl className="price-totals">
           <div className="price-total-row">
             <dt>Subtotal</dt>
-            <dd>{formatMoney(booking.pricing.subtotal)}</dd>
+            <dd>{display.money(booking.pricing.subtotal)}</dd>
           </div>
           <div className="price-total-row">
             <dt>Tax</dt>
-            <dd>{formatMoney(booking.pricing.tax)}</dd>
+            <dd>{display.money(booking.pricing.tax)}</dd>
           </div>
           {booking.pricing.deposit.amount > 0 && (
             <div className="price-total-row">
               <dt>Deposit</dt>
-              <dd>{formatMoney(booking.pricing.deposit)}</dd>
+              <dd>{display.money(booking.pricing.deposit)}</dd>
             </div>
           )}
           <div className="price-total-row grand">
             <dt>Paid</dt>
-            <dd>{formatMoney(booking.pricing.total)}</dd>
+            <dd>{display.money(booking.pricing.total)}</dd>
           </div>
         </dl>
       </div>

@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import type { Slot } from "@lumin/contracts";
 import { getService, policy, tenant } from "../config/demoTenant";
 import { availabilityEngine, listExistingHolds } from "../engines";
-import { dateKeyInTz, formatDayLabel, formatTime } from "../lib/datetime";
+import { dateKeyInTz } from "../lib/datetime";
+import { display } from "../lib/i18n";
+import { isResourceBacked, resourceStatusForSlot } from "../lib/resources";
 import { overrides, rules } from "../config/demoTenant";
 import { useCheckout } from "../state/checkout";
 
@@ -10,9 +12,12 @@ export function SlotPicker() {
   const { state, dispatch } = useCheckout();
   const service = getService(state.selection?.serviceId);
   const [slots, setSlots] = useState<Slot[] | null>(null);
+  // Stable "now" for resource-availability reads across this render session.
+  const [nowIso] = useState(() => new Date().toISOString());
   const [selectedDate, setSelectedDate] = useState<string | null>(
     state.slot ? dateKeyInTz(state.slot.start, tenant.timezone) : null,
   );
+  const resourceBacked = service ? isResourceBacked(service.id) : false;
 
   useEffect(() => {
     if (!service) return;
@@ -102,6 +107,11 @@ export function SlotPicker() {
       <p className="muted">
         Times shown in {tenant.timezone.replace("_", " ")} · {service.durationMinutes} min
       </p>
+      {resourceBacked && (
+        <p className="muted" data-testid="slot-resource-hint">
+          Some times are limited by resource availability.
+        </p>
+      )}
       <div className="date-strip" role="group" aria-label="Choose a date">
         {dateKeys.map((key) => {
           const first = byDate.get(key)?.[0];
@@ -113,7 +123,7 @@ export function SlotPicker() {
               aria-pressed={key === activeDate}
               onClick={() => setSelectedDate(key)}
             >
-              {first ? formatDayLabel(first.start, tenant.timezone) : key}
+              {first ? display.dayLabel(first.start) : key}
             </button>
           );
         })}
@@ -121,15 +131,30 @@ export function SlotPicker() {
       <div className="slot-grid" role="group" aria-label="Choose a start time">
         {activeSlots.map((slot) => {
           const chosen = state.slot?.start === slot.start;
+          const rstat = resourceBacked
+            ? resourceStatusForSlot(service.id, { start: slot.start, end: slot.end }, nowIso)
+            : null;
+          const blocked = rstat != null && !rstat.satisfiable;
           return (
             <button
               key={slot.start}
               type="button"
-              className={`slot-btn${chosen ? " selected" : ""}`}
+              className={`slot-btn${chosen ? " selected" : ""}${blocked ? " unavailable" : ""}`}
               aria-pressed={chosen}
+              disabled={blocked}
+              title={
+                rstat && rstat.resourceName
+                  ? `${rstat.remaining}/${rstat.capacity} ${rstat.resourceName} available`
+                  : undefined
+              }
               onClick={() => dispatch({ type: "SET_SLOT", slot })}
             >
-              {formatTime(slot.start, tenant.timezone)}
+              {display.time(slot.start)}
+              {rstat && rstat.resourceName && (
+                <span className="slot-resource" aria-hidden="true">
+                  {rstat.remaining}/{rstat.capacity}
+                </span>
+              )}
             </button>
           );
         })}

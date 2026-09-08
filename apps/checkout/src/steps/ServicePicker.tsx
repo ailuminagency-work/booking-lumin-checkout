@@ -1,6 +1,7 @@
-import { formatMoney, money } from "@lumin/contracts";
+import { money } from "@lumin/contracts";
 import { services } from "../config/demoTenant";
 import { useCheckout } from "../state/checkout";
+import { display } from "../lib/i18n";
 
 export function ServicePicker() {
   const { state, dispatch } = useCheckout();
@@ -25,7 +26,7 @@ export function ServicePicker() {
                   <span className="service-desc">{service.description}</span>
                   <span className="service-price">
                     {service.basePrice > 0
-                      ? `From ${formatMoney(money(service.basePrice, service.currency))}`
+                      ? `From ${display.money(money(service.basePrice, service.currency))}`
                       : "Priced by your selection"}
                   </span>
                 </button>
