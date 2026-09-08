@@ -1170,3 +1170,11 @@ select:focus-visible,
     width: 100%;
   }
 }
+
+/* --- W13/W14 wiring: workflow flow preview notes --- */
+.flow-preview .flow-warning {
+  color: #92400e;
+}
+.flow-preview .flow-reco {
+  color: #075985;
+}

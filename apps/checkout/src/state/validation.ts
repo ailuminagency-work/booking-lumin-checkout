@@ -18,12 +18,22 @@ export interface SelectionIssue {
   message: string;
 }
 
+const NO_HIDDEN: ReadonlySet<string> = new Set();
+
 /**
  * Client-side gate for the wizard only. The pricing engine remains the
  * authority (it throws INVALID_SELECTION); this mirrors the rules so the UI
  * can block Continue with inline messages instead of a late failure.
+ *
+ * `hiddenQuestionIds` are questions the @lumin/workflow flow is currently
+ * hiding: they are not shown, so they are not required. Callers with no flow
+ * pass nothing and behavior is identical to before.
  */
-export function validateSelection(service: Service, selection: Selection): SelectionIssue[] {
+export function validateSelection(
+  service: Service,
+  selection: Selection,
+  hiddenQuestionIds: ReadonlySet<string> = NO_HIDDEN,
+): SelectionIssue[] {
   const issues: SelectionIssue[] = [];
 
   if (service.items.length > 0) {
@@ -44,6 +54,7 @@ export function validateSelection(service: Service, selection: Selection): Selec
   }
 
   for (const q of service.questions) {
+    if (hiddenQuestionIds.has(q.id)) continue; // hidden by the flow → not required
     const answer = selection.answers[q.id];
     if (q.kind === "quantity") {
       const min = q.minQty ?? 0;

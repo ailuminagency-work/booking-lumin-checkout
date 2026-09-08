@@ -5,6 +5,8 @@ import type {
   Service,
   Tenant,
 } from "@lumin/contracts";
+import { getTemplate } from "@lumin/templates";
+import type { Locale } from "@lumin/i18n";
 
 /**
  * Neutral demo tenant used by the checkout in development.
@@ -35,6 +37,13 @@ export const tenant: Tenant = {
   status: "active",
   createdAt: "2026-01-01T00:00:00.000Z",
 };
+
+/**
+ * Display locale for the checkout. Independent of currency/timezone (see
+ * @lumin/i18n) — it controls only how amounts and dates are rendered. Swap it to
+ * localize the whole checkout; money stays integer minor units regardless.
+ */
+export const locale: Locale = "en-US";
 
 /** Archetype: simple — flat-fee consultation, nothing to configure. */
 export const simpleService: Service = {
@@ -160,7 +169,41 @@ export const configurableService: Service = {
   active: true,
 };
 
-export const services: Service[] = [simpleService, cartService, configurableService];
+/**
+ * Two verticals derived straight from @lumin/templates — the generalization
+ * proof. Instead of hand-rolling their config, we materialize each from a
+ * registered archetype for THIS tenant/currency/timezone. The SAME pricing,
+ * availability and booking engines that serve the hand-rolled demo services
+ * above serve these with no vertical branch anywhere: the vertical is the data.
+ *
+ *  - `carDetailingService`  — a duration/slot service (configurable archetype:
+ *    package + vehicle-type questions, the latter a price multiplier).
+ *  - `tentRentalService`    — a quantity/add-on service (cart archetype: pick
+ *    item quantities, then optional add-ons).
+ *
+ * Deterministic service ids keep the catalog stable across reloads.
+ */
+export const carDetailingService: Service = getTemplate("car-detailing").build({
+  tenantId: TENANT_ID,
+  currency: tenant.currency,
+  timezone: tenant.timezone,
+  serviceId: "5c0a7e11-1a2b-4c3d-8e4f-606060606007",
+});
+
+export const tentRentalService: Service = getTemplate("tent-event-rental").build({
+  tenantId: TENANT_ID,
+  currency: tenant.currency,
+  timezone: tenant.timezone,
+  serviceId: "6d1b8f22-2b3c-4d4e-9f5a-707070707008",
+});
+
+export const services: Service[] = [
+  simpleService,
+  cartService,
+  configurableService,
+  carDetailingService,
+  tentRentalService,
+];
 
 export function getService(serviceId: string | undefined | null): Service | null {
   if (!serviceId) return null;

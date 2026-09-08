@@ -1,4 +1,12 @@
-/** Date/time display helpers — all rendering happens in the tenant timezone. */
+/**
+ * Date/time BUCKETING helper.
+ *
+ * This is not display — it produces a locale-independent, stable day key used to
+ * group slots by calendar day in the tenant timezone. All human-facing date/time
+ * rendering goes through `../lib/i18n` (backed by @lumin/i18n). Keeping the key
+ * locale-independent (en-CA → YYYY-MM-DD) means grouping never shifts when the
+ * display locale changes.
+ */
 
 export function dateKeyInTz(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -6,35 +14,5 @@ export function dateKeyInTz(iso: string, timeZone: string): string {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date(iso));
-}
-
-export function formatDayLabel(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(iso));
-}
-
-export function formatTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(iso));
-}
-
-export function formatDateTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
   }).format(new Date(iso));
 }

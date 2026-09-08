@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { BookingState, formatMoney } from "@lumin/contracts";
+import { BookingState } from "@lumin/contracts";
 import { BookingDrawer } from "../components/BookingDrawer";
 import { usePortal } from "../components/PortalProvider";
-import { EmptyState, PageHeader, STATE_LABELS, StateBadge, formatSlot } from "../components/ui";
-import { getService, listBookings } from "../data/api";
+import { EmptyState, PageHeader, STATE_LABELS, StateBadge } from "../components/ui";
+import { getService, getTenant, listBookings } from "../data/api";
+import { fmtMoney, fmtSlot } from "../data/i18n";
 
 const FILTER_TABS: Array<BookingState | "all"> = [
   "all",
@@ -18,6 +19,7 @@ const FILTER_TABS: Array<BookingState | "all"> = [
 
 export function BookingsPage() {
   const { ctx, store } = usePortal();
+  const tenant = getTenant(ctx, store);
   const [stateFilter, setStateFilter] = useState<BookingState | "all">("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -96,11 +98,11 @@ export function BookingsPage() {
                       <div className="muted">{b.customer.email}</div>
                     </td>
                     <td>{getService(ctx, b.selection.serviceId, store)?.name ?? "—"}</td>
-                    <td>{formatSlot(b.slotStart, b.slotEnd)}</td>
+                    <td>{fmtSlot(tenant, b.slotStart, b.slotEnd)}</td>
                     <td>
                       <StateBadge state={b.state} />
                     </td>
-                    <td className="num">{formatMoney(b.pricing.total)}</td>
+                    <td className="num">{fmtMoney(tenant, b.pricing.total)}</td>
                   </tr>
                 ))}
               </tbody>

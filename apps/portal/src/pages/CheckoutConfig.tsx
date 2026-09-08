@@ -1,13 +1,24 @@
 import { useState } from "react";
+import { createWorkflowEngine } from "@lumin/workflow";
 import { usePortal } from "../components/PortalProvider";
 import { PageHeader } from "../components/ui";
-import { getCheckoutSettings, getTenant, updateCheckoutSettings } from "../data/api";
+import { getCheckoutSettings, getService, getTenant, updateCheckoutSettings } from "../data/api";
+import { PREVIEW_QUESTION_ID, PREVIEW_SERVICE_ID, previewFlow } from "../data/workflows";
+
+const workflowEngine = createWorkflowEngine();
 
 export function CheckoutConfigPage() {
   const { ctx, store } = usePortal();
   const tenant = getTenant(ctx, store);
   const settings = getCheckoutSettings(ctx, store);
   const [copied, setCopied] = useState(false);
+
+  // Workflow preview: the conditional question flow a customer would see.
+  const previewService = getService(ctx, PREVIEW_SERVICE_ID, store);
+  const previewQuestion = previewService?.questions.find((q) => q.id === PREVIEW_QUESTION_ID) ?? null;
+  const [sampleChoice, setSampleChoice] = useState<string | null>(null);
+  const previewAnswers = sampleChoice ? { [PREVIEW_QUESTION_ID]: sampleChoice } : {};
+  const flowState = workflowEngine.nextState(previewFlow, previewAnswers);
 
   const embedSnippet = `<script\n  src="https://cdn.bookinglumin.example/checkout/v1.js"\n  data-tenant="${tenant.id}"\n  async\n></script>`;
 
@@ -94,6 +105,60 @@ export function CheckoutConfigPage() {
           </div>
         </section>
       </div>
+
+      <section className="panel" aria-label="Question flow preview">
+        <div className="panel-header">
+          <h2>Question flow preview</h2>
+        </div>
+        <p className="muted">
+          Preview the @lumin/workflow flow a customer sees for{" "}
+          <strong>{previewService?.name ?? "this service"}</strong>. Pick a sample answer to see
+          conditional recommendations and warnings.
+        </p>
+        {previewQuestion ? (
+          <div className="flow-preview" data-testid="flow-preview">
+            <div className="tabs" role="group" aria-label="Sample answer">
+              <button
+                type="button"
+                className={`tab ${sampleChoice === null ? "tab-active" : ""}`}
+                onClick={() => setSampleChoice(null)}
+              >
+                No answer
+              </button>
+              {previewQuestion.choices.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`tab ${sampleChoice === c.id ? "tab-active" : ""}`}
+                  onClick={() => setSampleChoice(c.id)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <ul className="plain-list">
+              <li data-testid="flow-visible-count">
+                Visible steps: {flowState.visibleSteps.length}
+              </li>
+              <li data-testid="flow-required">
+                Awaiting required answer: {flowState.requiredUnanswered.length > 0 ? "yes" : "no"}
+              </li>
+              {flowState.warnings.map((w) => (
+                <li key={w.stepKey} className="flow-warning" data-testid="flow-warning">
+                  {w.message}
+                </li>
+              ))}
+              {flowState.recommendations.map((r) => (
+                <li key={r.stepKey} className="flow-reco" data-testid="flow-reco">
+                  {r.text}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="muted">No configurable service available to preview.</p>
+        )}
+      </section>
 
       <section className="panel" aria-label="Embed snippet">
         <div className="panel-header">

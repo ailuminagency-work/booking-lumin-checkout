@@ -1,7 +1,12 @@
-import { formatMoney, money, type Selection, type Service, type ServiceQuestion } from "@lumin/contracts";
-import { getService } from "../config/demoTenant";
+import { useState } from "react";
+import { money, type Selection, type Service, type ServiceQuestion } from "@lumin/contracts";
+import { getService, TENANT_ID } from "../config/demoTenant";
 import { useCheckout } from "../state/checkout";
 import { validateSelection, type SelectionIssue } from "../state/validation";
+import { display } from "../lib/i18n";
+import { workflowView } from "../lib/workflow";
+import { serviceWantsPhoto } from "../config/media";
+import { mockUploadPhoto, placeholderImageBytes } from "../lib/media";
 
 interface StepperProps {
   label: string;
@@ -42,10 +47,54 @@ function Stepper({ label, value, min, max, onChange }: StepperProps) {
 
 function choiceHint(priceDelta: number, multiplierBp: number, currency: string): string {
   const parts: string[] = [];
-  if (priceDelta > 0) parts.push(`+${formatMoney(money(priceDelta, currency))}`);
-  if (priceDelta < 0) parts.push(`−${formatMoney(money(-priceDelta, currency))}`);
+  if (priceDelta > 0) parts.push(`+${display.money(money(priceDelta, currency))}`);
+  if (priceDelta < 0) parts.push(`−${display.money(money(-priceDelta, currency))}`);
   if (multiplierBp !== 10000) parts.push(`×${multiplierBp / 10000}`);
   return parts.join(" ");
+}
+
+/** Mock photo upload (via @lumin/media). No real file input, no network. */
+function PhotoUpload({ ownerId }: { ownerId: string }) {
+  const { state, dispatch } = useCheckout();
+  const [busy, setBusy] = useState(false);
+
+  async function attach() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const uploaded = await mockUploadPhoto({
+        tenantId: TENANT_ID,
+        ownerId,
+        fileName: `site-photo-${state.media.length + 1}.png`,
+        bytes: placeholderImageBytes(`${ownerId}-${state.media.length}`),
+        mimeType: "image/png",
+        altText: "Customer-provided site photo",
+      });
+      dispatch({ type: "ADD_MEDIA", media: uploaded });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <fieldset className="config-group">
+      <legend>Photos of the site (optional)</legend>
+      <p className="muted">Add a photo so the crew can plan — stored via the mock media provider.</p>
+      <button type="button" className="btn secondary" onClick={() => void attach()} disabled={busy}>
+        {busy ? "Attaching…" : "Attach a photo (mock)"}
+      </button>
+      {state.media.length > 0 && (
+        <ul className="media-list" data-testid="media-list">
+          {state.media.map((m) => (
+            <li key={m.asset.id} className="media-item">
+              <span className="config-row-name">{m.asset.altText ?? m.asset.id}</span>
+              <span className="config-row-desc">{m.asset.storageKey}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </fieldset>
+  );
 }
 
 export function Configurator() {
@@ -57,9 +106,13 @@ export function Configurator() {
     return <p className="empty">Choose a service first.</p>;
   }
 
+  const flow = workflowView(service, selection);
   const showErrors = state.attempted["configure"] === true;
-  const issues: SelectionIssue[] = showErrors ? validateSelection(service, selection) : [];
+  const issues: SelectionIssue[] = showErrors
+    ? validateSelection(service, selection, flow.hiddenQuestionIds)
+    : [];
   const issueFor = (id: string) => issues.find((i) => i.id === id)?.message;
+  const visibleQuestions = service.questions.filter((q) => !flow.hiddenQuestionIds.has(q.id));
 
   const update = (next: Selection) => dispatch({ type: "SET_SELECTION", selection: next });
 
@@ -114,7 +167,7 @@ export function Configurator() {
                     <span className="config-row-desc">{item.description}</span>
                   )}
                   <span className="config-row-price">
-                    {formatMoney(money(item.unitPrice, service.currency))} each
+                    {display.money(money(item.unitPrice, service.currency))} each
                   </span>
                 </div>
                 <Stepper
@@ -135,7 +188,7 @@ export function Configurator() {
         </fieldset>
       )}
 
-      {service.questions.map((q) => {
+      {visibleQuestions.map((q) => {
         const error = issueFor(q.id);
         const errorId = `err-${q.id}`;
         if (q.kind === "quantity") {
@@ -147,7 +200,7 @@ export function Configurator() {
                 <div className="config-row-text">
                   {q.unitPrice != null && (
                     <span className="config-row-price">
-                      {formatMoney(money(q.unitPrice, service.currency))} each
+                      {display.money(money(q.unitPrice, service.currency))} each
                     </span>
                   )}
                 </div>
@@ -228,7 +281,7 @@ export function Configurator() {
                   {addon.name}
                   <span className="choice-hint">
                     {" "}
-                    +{formatMoney(money(addon.price, service.currency))}
+                    +{display.money(money(addon.price, service.currency))}
                   </span>
                   {addon.description && (
                     <span className="config-row-desc">{addon.description}</span>
@@ -239,6 +292,32 @@ export function Configurator() {
           })}
         </fieldset>
       )}
+
+      {(flow.warnings.length > 0 || flow.recommendations.length > 0) && (
+        <div className="flow-notes" data-testid="flow-notes">
+          {flow.warnings.map((w) => (
+            <p key={w.stepKey} className="flow-warning" role="note">
+              {w.message}
+            </p>
+          ))}
+          {flow.recommendations.map((r) => (
+            <p key={r.stepKey} className="flow-reco" role="note">
+              {r.text}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {flow.appliedEffects.length > 0 && (
+        <p className="muted" data-testid="flow-effects">
+          Included automatically:{" "}
+          {flow.appliedEffects
+            .map((e) => e.addonId ?? e.itemId ?? e.questionKey ?? e.target)
+            .join(", ")}
+        </p>
+      )}
+
+      {serviceWantsPhoto(service.id) && <PhotoUpload ownerId={state.idempotencyKey} />}
     </section>
   );
 }

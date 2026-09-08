@@ -9,6 +9,8 @@ const NAV_ITEMS = [
   { to: "/customers", label: "Customers", glyph: "☺" },
   { to: "/services", label: "Services", glyph: "✦" },
   { to: "/availability", label: "Availability", glyph: "◷" },
+  { to: "/resources", label: "Resources", glyph: "▤" },
+  { to: "/media", label: "Media", glyph: "▨" },
   { to: "/checkout", label: "Checkout Config", glyph: "▣" },
   { to: "/integrations", label: "Integrations", glyph: "⇄" },
   { to: "/settings", label: "Settings", glyph: "⚙" },

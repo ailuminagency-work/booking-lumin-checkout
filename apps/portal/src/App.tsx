@@ -9,6 +9,8 @@ import { CheckoutConfigPage } from "./pages/CheckoutConfig";
 import { CustomersPage } from "./pages/Customers";
 import { DashboardPage } from "./pages/Dashboard";
 import { IntegrationsPage } from "./pages/Integrations";
+import { MediaLibraryPage } from "./pages/MediaLibrary";
+import { ResourcesPage } from "./pages/Resources";
 import { ServiceDetailPage, ServicesPage } from "./pages/Services";
 import { SettingsPage } from "./pages/Settings";
 
@@ -57,6 +59,8 @@ export function App() {
               <Route path="services" element={<ServicesPage />} />
               <Route path="services/:serviceId" element={<ServiceDetailPage />} />
               <Route path="availability" element={<AvailabilityPage />} />
+              <Route path="resources" element={<ResourcesPage />} />
+              <Route path="media" element={<MediaLibraryPage />} />
               <Route path="checkout" element={<CheckoutConfigPage />} />
               <Route path="integrations" element={<IntegrationsPage />} />
               <Route path="settings" element={<SettingsPage />} />

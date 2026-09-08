@@ -1,8 +1,9 @@
-import { formatMoney } from "@lumin/contracts";
 import { Link, useParams } from "react-router-dom";
+import { listTemplates } from "@lumin/templates";
 import { usePortal } from "../components/PortalProvider";
 import { EmptyState, PageHeader } from "../components/ui";
-import { getService, listServices, servicePriceFrom, setServiceActive } from "../data/api";
+import { getService, getTenant, listServices, servicePriceFrom, setServiceActive } from "../data/api";
+import { fmtMoney } from "../data/i18n";
 
 const ARCHETYPE_LABELS = {
   simple: "Simple",
@@ -13,6 +14,7 @@ const ARCHETYPE_LABELS = {
 
 export function ServicesPage() {
   const { ctx, store } = usePortal();
+  const tenant = getTenant(ctx, store);
   const services = listServices(ctx, store);
 
   return (
@@ -46,7 +48,7 @@ export function ServicesPage() {
               <p className="muted service-desc">{s.description || "No description."}</p>
               <div className="service-card-bottom">
                 <span className="service-price">
-                  from <strong>{formatMoney(servicePriceFrom(s))}</strong>
+                  from <strong>{fmtMoney(tenant, servicePriceFrom(s))}</strong>
                 </span>
                 <span className="muted">{s.durationMinutes} min</span>
               </div>
@@ -54,12 +56,49 @@ export function ServicesPage() {
           ))}
         </div>
       )}
+
+      <section className="panel" aria-label="Template catalog">
+        <div className="panel-header">
+          <h2>Adopt a template</h2>
+        </div>
+        <p className="muted">
+          Preview any @lumin/templates archetype configured for this tenant — one shared engine set,
+          the vertical is the data.
+        </p>
+        <div className="card-grid" data-testid="template-catalog">
+          {listTemplates().map((t) => {
+            const preview = t.build({
+              tenantId: ctx.tenantId,
+              currency: tenant.currency,
+              timezone: tenant.timezone,
+            });
+            return (
+              <article key={t.key} className="service-card" data-testid={`template-${t.key}`}>
+                <div className="service-card-top">
+                  <span className={`badge archetype-${t.archetype}`}>
+                    {ARCHETYPE_LABELS[t.archetype]}
+                  </span>
+                </div>
+                <h3 className="service-name">{t.title}</h3>
+                <p className="muted service-desc">{preview.description || "No description."}</p>
+                <div className="service-card-bottom">
+                  <span className="service-price">
+                    from <strong>{fmtMoney(tenant, servicePriceFrom(preview))}</strong>
+                  </span>
+                  <span className="muted">{preview.durationMinutes} min</span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
 
 export function ServiceDetailPage() {
   const { ctx, store } = usePortal();
+  const tenant = getTenant(ctx, store);
   const { serviceId } = useParams();
   const service = serviceId ? getService(ctx, serviceId, store) : null;
 
@@ -95,7 +134,7 @@ export function ServiceDetailPage() {
         </div>
         <div>
           <dt>Base price</dt>
-          <dd>{formatMoney({ amount: service.basePrice, currency: service.currency })}</dd>
+          <dd>{fmtMoney(tenant, { amount: service.basePrice, currency: service.currency })}</dd>
         </div>
         <div>
           <dt>Duration</dt>
@@ -129,7 +168,7 @@ export function ServiceDetailPage() {
                 {service.items.map((it) => (
                   <tr key={it.id}>
                     <td>{it.name}</td>
-                    <td className="num">{formatMoney({ amount: it.unitPrice, currency: service.currency })}</td>
+                    <td className="num">{fmtMoney(tenant, { amount: it.unitPrice, currency: service.currency })}</td>
                     <td className="num">
                       {it.minQty}–{it.maxQty}
                     </td>
@@ -149,7 +188,7 @@ export function ServiceDetailPage() {
           <ul className="plain-list">
             {service.addons.map((ad) => (
               <li key={ad.id}>
-                {ad.name} — {formatMoney({ amount: ad.price, currency: service.currency })}
+                {ad.name} — {fmtMoney(tenant, { amount: ad.price, currency: service.currency })}
               </li>
             ))}
           </ul>
@@ -171,7 +210,7 @@ export function ServiceDetailPage() {
                       <li key={c.id}>
                         {c.label}
                         {c.priceDelta !== 0
-                          ? ` · +${formatMoney({ amount: c.priceDelta, currency: service.currency })}`
+                          ? ` · +${fmtMoney(tenant, { amount: c.priceDelta, currency: service.currency })}`
                           : ""}
                         {c.priceMultiplierBp !== 10000 ? ` · ×${c.priceMultiplierBp} bp` : ""}
                       </li>
@@ -181,7 +220,7 @@ export function ServiceDetailPage() {
                 {q.kind === "quantity" && q.unitPrice !== undefined ? (
                   <span className="muted">
                     {" "}
-                    {formatMoney({ amount: q.unitPrice, currency: service.currency })} per unit
+                    {fmtMoney(tenant, { amount: q.unitPrice, currency: service.currency })} per unit
                   </span>
                 ) : null}
               </li>
@@ -202,7 +241,7 @@ export function ServiceDetailPage() {
             </div>
             <div>
               <dt>Price / period</dt>
-              <dd>{formatMoney({ amount: service.rental.pricePerPeriod, currency: service.currency })}</dd>
+              <dd>{fmtMoney(tenant, { amount: service.rental.pricePerPeriod, currency: service.currency })}</dd>
             </div>
             <div>
               <dt>Periods</dt>
@@ -212,7 +251,7 @@ export function ServiceDetailPage() {
             </div>
             <div>
               <dt>Deposit</dt>
-              <dd>{formatMoney({ amount: service.rental.depositAmount, currency: service.currency })}</dd>
+              <dd>{fmtMoney(tenant, { amount: service.rental.depositAmount, currency: service.currency })}</dd>
             </div>
           </dl>
         </section>

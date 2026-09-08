@@ -1,7 +1,7 @@
-import { formatMoney } from "@lumin/contracts";
 import { Link } from "react-router-dom";
 import { usePortal } from "../components/PortalProvider";
-import { EmptyState, PageHeader, STATE_LABELS, StateBadge, formatInstant, formatSlot } from "../components/ui";
+import { EmptyState, PageHeader, STATE_LABELS, StateBadge } from "../components/ui";
+import { fmtDateTime, fmtMoney, fmtSlot } from "../data/i18n";
 import {
   countUpcomingBookings,
   getBookingStateCounts,
@@ -47,7 +47,7 @@ export function DashboardPage() {
         <div className="stat-card">
           <span className="stat-label">Confirmed revenue (7 days)</span>
           <span className="stat-value" data-testid="stat-week-revenue">
-            {formatMoney(weekRevenue)}
+            {fmtMoney(tenant, weekRevenue)}
           </span>
           <span className="stat-hint">from booking totals, minor units</span>
         </div>
@@ -86,12 +86,12 @@ export function DashboardPage() {
                     <span className="upcoming-ref">{b.reference}</span>
                     <span className="muted"> · {b.customer.name}</span>
                     <div className="muted">
-                      {getService(ctx, b.selection.serviceId, store)?.name ?? "—"} · {formatSlot(b.slotStart, b.slotEnd)}
+                      {getService(ctx, b.selection.serviceId, store)?.name ?? "—"} · {fmtSlot(tenant, b.slotStart, b.slotEnd)}
                     </div>
                   </div>
                   <div className="upcoming-right">
                     <StateBadge state={b.state} />
-                    <span className="upcoming-total">{formatMoney(b.pricing.total)}</span>
+                    <span className="upcoming-total">{fmtMoney(tenant, b.pricing.total)}</span>
                   </div>
                 </li>
               ))}
@@ -114,7 +114,7 @@ export function DashboardPage() {
                     <span className="activity-ref">{String(e.data["reference"])}</span>
                   ) : null}
                   {typeof e.data["state"] === "string" && e.data["state"] in STATE_LABELS ? null : null}
-                  <span className="muted activity-at">{formatInstant(e.at)}</span>
+                  <span className="muted activity-at">{fmtDateTime(tenant, e.at)}</span>
                 </li>
               ))}
             </ul>
