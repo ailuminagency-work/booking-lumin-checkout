@@ -1,4 +1,5 @@
 import {
+  AvailabilityBlackout,
   AvailabilityOverride,
   AvailabilityRule,
   SchedulingPolicy,
@@ -49,6 +50,18 @@ export function override(
     id: uuid(800),
     tenantId: TENANT,
     serviceId: null,
+    ...overrides,
+  };
+}
+
+export function blackout(
+  overrides: Partial<AvailabilityBlackout> & { from: string; to: string },
+): AvailabilityBlackout {
+  return {
+    id: uuid(700),
+    tenantId: TENANT,
+    serviceId: null,
+    recurrence: "once",
     ...overrides,
   };
 }
