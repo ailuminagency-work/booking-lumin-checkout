@@ -69,6 +69,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_rls_tests.sql
       - name: Reject cross-tenant resource relationships
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_tenant_integrity_tests.sql
+      - name: Verify shared resource unit accounting and legacy compatibility
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_quantity_tests.sql
       - name: Verify durable outbox authorization and lease fencing
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
       - name: Verify flow storage tenant isolation and revision control
@@ -87,6 +89,11 @@ jobs:
       - name: Run overlapping interval and timezone races
         timeout-minutes: 2
         run: bash supabase/tests/capacity_overlap_concurrency_harness.sh
+      - name: Run observed resource quantity and lock-wait expiry races
+        timeout-minutes: 2
+        env:
+          RESOURCE_QUANTITY_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/resource_quantity_concurrency.py
       - name: Run concurrent durable outbox deduplication and leases
         timeout-minutes: 2
         env:
