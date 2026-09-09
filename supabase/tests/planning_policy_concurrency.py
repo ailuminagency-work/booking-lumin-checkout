@@ -3,18 +3,18 @@
 Cleanup disables only the policy immutability trigger in a transaction for exact
 random fixture tenants, then restores it; never an application capability.
 """
-import json,os,subprocess,time,uuid
-if os.environ.get('PLANNING_POLICY_TEST_DISPOSABLE')!='1' or os.environ.get('PGHOST') not in ('localhost','127.0.0.1') or not os.environ.get('PGDATABASE'):
+import json,os,re,subprocess,time,uuid
+if os.environ.get('PLANNING_POLICY_TEST_DISPOSABLE')!='1' or os.environ.get('PGHOST') not in ('localhost','127.0.0.1') or not os.environ.get('PGDATABASE','').startswith('lumin_'):
  raise SystemExit('Explicit disposable local PostgreSQL required')
-BASE=[os.environ.get('PSQL_BIN','psql'),'-X','-qAt','-v','ON_ERROR_STOP=1']
+BASE=[os.environ.get('PSQL_BIN','psql'),'-X','-qAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=verbose']
 def run(sql):
- p=subprocess.run(BASE,input=sql,text=True,capture_output=True)
+ p=subprocess.run(BASE,input=sql,text=True,capture_output=True,timeout=10)
  if p.returncode:raise RuntimeError(p.stderr)
  return p.stdout.strip()
 def wait(query,processes):
  end=time.monotonic()+10
  while run(query)!='t':
-  if any(p.poll() is not None for p in processes):raise AssertionError([p.communicate() for p in processes])
+  if any(p.poll() is not None for p in processes):raise AssertionError([(p.returncode,p.communicate(timeout=1)) for p in processes if p.poll() is not None])
   if time.monotonic()>end:raise AssertionError('Observed lock barrier timeout')
   time.sleep(.025)
 for case in ('reserve-first','policy-first-reserve','booking-first','policy-first-booking','inverted-booking'):
@@ -37,16 +37,24 @@ for case in ('reserve-first','policy-first-reserve','booking-first','policy-firs
   else:a,b='lock table public.bookings in row exclusive mode;',policy
   trailer=consumer if case=='inverted-booking' else ''
   first=subprocess.Popen(BASE,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-  first.stdin.write(f"set application_name='{app1}';begin;set local role service_role;{a}select pg_sleep(2);{trailer}commit;");first.stdin.close();first.stdin=None
-  wait(f"select exists(select 1 from pg_stat_activity where application_name='{app1}' and wait_event='PgSleep')",[first])
+  first.stdin.write(f"set application_name='{app1}';set statement_timeout='15s';set idle_in_transaction_session_timeout='30s';begin;set local role service_role;{a}\n");first.stdin.flush()
+  wait(f"select exists(select 1 from pg_stat_activity where application_name='{app1}' and state='idle in transaction')",[first])
   # Sentinel proves a losing transaction does not retain preceding writes.
   sentinel=f"insert into public.customers(tenant_id,name,email) values('{tenant}','Sentinel','{actor}@sentinel.test');"
   second=subprocess.Popen(BASE,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-  second.stdin.write(f"set application_name='{app2}';begin;set local role service_role;{sentinel}{b}commit;");second.stdin.close();second.stdin=None
+  second.stdin.write(f"set application_name='{app2}';set statement_timeout='15s';begin;set local role service_role;{sentinel}{b}commit;\n");second.stdin.close();second.stdin=None
   wait(f"select exists(select 1 from pg_stat_activity where application_name='{app2}' and wait_event_type='Lock')",[first,second])
-  out1,err1=first.communicate(timeout=15);out2,err2=second.communicate(timeout=15)
-  if case!='inverted-booking':assert first.returncode==0 and second.returncode!=0,(case,err1,err2)
-  else:assert (first.returncode==0)!=(second.returncode==0),(err1,err2)
+  # Holder cannot auto-commit before the competing Lock is actually observed.
+  first.stdin.write(f'{trailer}commit;\n');first.stdin.close();first.stdin=None
+  out1,err1=first.communicate(timeout=20);out2,err2=second.communicate(timeout=20)
+  if case!='inverted-booking':
+   assert first.returncode==0 and second.returncode!=0,(case,err1,err2)
+   code,message=('40001','EXISTING_CAPACITY_OBLIGATION') if case in ('reserve-first','booking-first') else ('0A000','PLANNING_ONLY_SERVICE')
+   assert re.search(r'ERROR:\s+'+code+r':',err2) and message in err2,(case,err2)
+  else:
+   assert (first.returncode==0)!=(second.returncode==0),(err1,err2)
+   loser=err1 if first.returncode else err2
+   assert re.search(r'ERROR:\s+40P01:',loser) and 'deadlock detected' in loser,loser
   counts=json.loads(run(f"select json_build_object('policies',(select count(*) from public.allocation_policies where tenant_id='{tenant}'),'holds',(select count(*) from public.capacity_holds where tenant_id='{tenant}' and status='active'),'consumers',(select count(*) from public.bookings where tenant_id='{tenant}' and state='confirmed'),'sentinel',(select count(*) from public.customers where tenant_id='{tenant}'))"))
   assert not(counts['policies'] and (counts['holds'] or counts['consumers'])),(case,counts)
   assert counts['sentinel']==(1 if second.returncode==0 else 0),(case,counts)
@@ -54,7 +62,12 @@ for case in ('reserve-first','policy-first-reserve','booking-first','policy-firs
   print('PASS',case,'observed Lock, exclusive safe outcome and full loser rollback')
  finally:
   for p in (first,second):
-   if p is not None and p.poll() is None:p.kill();p.communicate()
+   if p is not None and p.poll() is None:
+    if p.stdin is not None:
+     try:p.stdin.close()
+     except BrokenPipeError:pass
+     p.stdin=None
+    p.kill();p.communicate(timeout=5)
   run(f"""begin;alter table public.allocation_policies disable trigger allocation_policy_identity;
   delete from public.allocation_policies where tenant_id='{tenant}';
   alter table public.allocation_policies enable trigger allocation_policy_identity;
