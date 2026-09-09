@@ -76,6 +76,7 @@ test("rejected Netlify configuration fails before touching an existing preview",
   await mkdir(output, { recursive: true });
   await copyFile(join(scripts, "build-preview.mjs"), join(fixtureScripts, "build-preview.mjs"));
   await copyFile(join(scripts, "preview-mode.mjs"), join(fixtureScripts, "preview-mode.mjs"));
+  await copyFile(join(scripts, "source-provenance.mjs"), join(fixtureScripts, "source-provenance.mjs"));
   const marker = join(output, "previous-release.txt");
   await writeFile(marker, "unchanged accepted artifact");
   try {
@@ -102,6 +103,7 @@ test("rejected Netlify configuration fails before touching an existing preview",
     await rm(marker, { force: true });
     await rm(join(fixtureScripts, "build-preview.mjs"), { force: true });
     await rm(join(fixtureScripts, "preview-mode.mjs"), { force: true });
+    await rm(join(fixtureScripts, "source-provenance.mjs"), { force: true });
     await rmdir(output);
     await rmdir(join(fixture, "dist"));
     await rmdir(fixtureScripts);

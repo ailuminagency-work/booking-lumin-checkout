@@ -5,11 +5,14 @@ import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validatePreviewEnvironment } from "./preview-mode.mjs";
+import { sourceProvenance, validateSourceProvenance } from "./source-provenance.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "dist", "preview");
 const apps = ["checkout", "portal", "command-center"];
 const mode = validatePreviewEnvironment(process.env);
+const initialSource = sourceProvenance(root);
+validateSourceProvenance(initialSource, process.env);
 const require = createRequire(import.meta.url);
 const vite = join(dirname(require.resolve("vite/package.json")), "bin", "vite.js");
 
@@ -17,11 +20,6 @@ function run(args, options = {}) {
   const result = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit", ...options });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`Preview build failed (exit ${result.status})`);
-}
-
-function git(args) {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
-  return result.status === 0 ? result.stdout.trim() : null;
 }
 
 // Validate the resolved target before recursive cleanup. Refuse redirected dist
@@ -68,18 +66,18 @@ async function hashes(directory) {
   }
   return files;
 }
-const revision = git(["rev-parse", "HEAD"]);
-const status = git(["status", "--porcelain", "--untracked-files=normal"]);
+const finalSource = sourceProvenance(root);
+validateSourceProvenance(finalSource, process.env, initialSource);
 await writeFile(join(output, "build.json"), JSON.stringify({
   schemaVersion: 1,
   mode: mode.mode,
   persistence: mode.persistence,
   providerConnections: mode.providerConnections,
-  sourceCommit: revision ?? "unknown",
-  sourceDirty: status === null ? null : status.length > 0,
+  ...finalSource,
   builtAt: new Date().toISOString(),
   apps: Object.fromEntries(apps.map((app) => [app, `/${app}/`])),
   files: await hashes(output),
 }, null, 2) + "\n");
-run(["--test", join(root, "scripts", "build-preview.test.mjs"), join(root, "scripts", "preview-mode.test.mjs")]);
+run(["--test", join(root, "scripts", "build-preview.test.mjs"), join(root, "scripts", "preview-mode.test.mjs"), join(root, "scripts", "source-provenance.test.mjs")]);
+validateSourceProvenance(sourceProvenance(root), process.env, initialSource);
 console.log(`Preview ready: ${output}`);
