@@ -1,7 +1,8 @@
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
-import { Uuid,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { normalizeConfigurablePublication } from "@lumin/workflow";
+import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository } from "./repository";
 const statuses:Record<FlowCode,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -53,14 +54,29 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     }
     if(url.pathname==="/api/flow-sessions/request"){
      const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
-     const body=RequestInput.parse(await jsonBody(req));const data=await call("submit_flow_request",[tokenHash(token),origin,body.idempotencyKey,body.answers,body.customer,body.requestedStart]);send(res,200,{ok:true,data});return;
+     const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");const body=RequestInput.parse(raw);const data=await call("submit_flow_request",[tokenHash(token),origin,body.idempotencyKey,body.answers,body.customer,body.requestedStart]);send(res,200,{ok:true,data});return;
     }throw new FlowError("NOT_AVAILABLE");
    }
    const actor=await owner();
    if([...url.searchParams.keys()].some(k=>k!=="tenantId")||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
-   const lists:Record<string,FlowRpc>={"/api/services":"flow_owner_services","/api/flows":"flow_owner_list","/api/requests":"flow_owner_requests"};
+   const lists:Record<string,FlowRpc>={"/api/configurable-flows":"flow_owner_configurable_list","/api/services":"flow_owner_services","/api/flows":"flow_owner_list","/api/requests":"flow_owner_requests"};
    if(req.method==="GET"&&Object.hasOwn(lists,url.pathname)){send(res,200,{ok:true,data:await call(lists[url.pathname]!,[actor,tenant])});return;}
+   const configurable=url.pathname.match(/^\/api\/configurable-flows\/([^/]+)\/(draft|publish)$/);
+   if(configurable){
+    const flow=Uuid.parse(configurable[1]);
+    if(configurable[2]==="draft"&&req.method==="GET"){send(res,200,{ok:true,data:await call("get_configurable_flow_draft",[actor,tenant,flow])});return;}
+    if(configurable[2]==="draft"&&req.method==="POST"){
+     const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");const b=SaveConfigurableDraft.parse(raw);
+     const catalog=RpcResults.flow_owner_services.parse(await call("flow_owner_services",[actor,tenant])).services.find(s=>s.id===b.serviceId);if(!catalog)throw new FlowError("NOT_AVAILABLE");
+     let authoring;try{authoring=normalizeConfigurablePublication(catalog,b.authoring).authoring;}catch{throw new FlowError("UNSUPPORTED_CONFIG");}
+     send(res,200,{ok:true,data:await call("save_configurable_flow_draft",[actor,tenant,flow,b.serviceId,b.expectedRevision,b.name,authoring])});return;
+    }
+    if(configurable[2]==="publish"&&req.method==="POST"){
+     const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");const b=PublishDraft.parse(raw);if(b.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError("FORBIDDEN");
+     const data=RpcResults.publish_configurable_flow.parse(await call("publish_configurable_flow",[actor,tenant,flow,b.expectedRevision,randomUUID(),randomUUID(),b.allowedOrigins]));send(res,200,{ok:true,data:{...data,hostedPath:`/checkout/flow/${data.installationId}`}});return;
+    }throw new FlowError("NOT_AVAILABLE");
+   }
    const match=url.pathname.match(/^\/api\/flows\/([^/]+)\/(draft|publish)$/);if(!match)throw new FlowError("NOT_AVAILABLE");const flow=Uuid.parse(match[1]);
    if(match[2]==="draft"&&req.method==="GET"){send(res,200,{ok:true,data:await call("flow_owner_draft",[actor,tenant,flow])});return;}
    if(match[2]==="draft"&&req.method==="POST"){

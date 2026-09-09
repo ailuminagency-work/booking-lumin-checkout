@@ -24,3 +24,4 @@ export type {
   FlowPricingEffects,
 } from "./pricingEffects";
 export * from "./publication";
+export * from "./configurablePublication";

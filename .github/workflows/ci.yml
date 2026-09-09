@@ -75,6 +75,10 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/flow_storage_tests.sql
       - name: Verify bound publication and atomic customer requests
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/bound_flow_tests.sql
+      - name: Verify configurable publication, pinned answers and legacy guards
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/configurable_flow_tests.sql
+      - name: Verify configurable JavaScript and SQL fixture parity
+        run: python3 supabase/tests/configurable_flow_parity.py
       # SQL suites roll back their fixtures. The final-slot harness requires
       # committed fixtures and separate concurrent transactions; run races last.
       - name: Run concurrent final-slot capacity race
@@ -96,6 +100,11 @@ jobs:
         env:
           BOUND_FLOW_TEST_DISPOSABLE: "1"
         run: python3 supabase/tests/bound_flow_concurrency.py
+      - name: Run configurable adoption, publication and canonical retry races
+        timeout-minutes: 2
+        env:
+          CONFIGURABLE_FLOW_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/configurable_flow_concurrency.py
       - uses: actions/setup-node@v4
         with:
           node-version: 20
