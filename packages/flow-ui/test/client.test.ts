@@ -31,4 +31,3 @@ it('ordering shares exact required service question set and rejects weakened pol
  expect(()=>orderedQuestions(service,{...config,steps:config.steps.slice(1)})).toThrow();
  expect(()=>orderedQuestions(service,{...config,steps:config.steps.map(s=>({...s,required:false}))})).toThrow();
 });
-

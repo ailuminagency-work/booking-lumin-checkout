@@ -19,4 +19,3 @@ export function orderedQuestions(service:ServiceRender,config:FlowConfig){
 export function answersValid(service:ServiceRender,config:FlowConfig,answers:Answers){
  try{return orderedQuestions(service,config).every(q=>{const a=Object.hasOwn(answers,q.id)?answers[q.id]:undefined;if(!a)return !q.required;if(q.kind==='quantity')return Number.isInteger(a.quantity)&&a.quantity!>=(q.minQty??0)&&a.quantity!<=(q.maxQty??10000)&&a.choiceIds===undefined;const ids=a.choiceIds??[];return a.quantity===undefined&&(!q.required||ids.length>0)&&(q.kind!=='single_choice'||ids.length<=1)&&new Set(ids).size===ids.length&&ids.every(id=>q.choices.some(c=>c.id===id));})&&Object.keys(answers).every(id=>service.questions.some(q=>q.id===id));}catch{return false;}
 }
-

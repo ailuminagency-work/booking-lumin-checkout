@@ -28,5 +28,3 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  };
 }
 export type FlowClient=ReturnType<typeof createFlowClient>;
-
-
