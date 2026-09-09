@@ -19,6 +19,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+      - run: npm run build:preview
       - run: bash scripts/contamination-check.sh
 
   database:
