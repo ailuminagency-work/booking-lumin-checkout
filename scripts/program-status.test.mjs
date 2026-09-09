@@ -23,7 +23,7 @@ test('recorded completion requires every gate, commit and CI evidence', () => {
   for (const key of ['gates', 'candidate', 'ci', 'evidence']) { const ledger = fixture(); delete ledger.waves[1][key]; assert.throws(() => inspectProgram(ledger)); }
 });
 test('activation, duplicate IDs and silently removed gates fail closed', () => {
-  for (const mutate of [l => l.waves[5].status = 'planned', l => l.waves[1].id = 'W0', l => l.requiredGates.pop()]) {
+  for (const mutate of [l => l.waves[5].status = 'planned', l => l.waves[1].id = 'W0', l => l.requiredGates.pop(), l => l.waves[1].scope = 'planning']) {
     const ledger = fixture(); mutate(ledger); assert.throws(() => inspectProgram(ledger));
   }
 });

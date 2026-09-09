@@ -14,6 +14,7 @@ export function inspectProgram(ledger) {
     if (!Array.isArray(wave.dependsOn) || new Set(wave.dependsOn).size !== wave.dependsOn.length) throw new Error('Invalid dependencies');
     if (!['planned', 'building', 'rework', 'verified', 'blocked'].includes(wave.status)) throw new Error('Invalid wave status');
     if (!['planning', 'candidate', 'staging', 'activation'].includes(wave.scope)) throw new Error('Invalid wave scope');
+    if ((wave.id === 'W0') !== (wave.scope === 'planning')) throw new Error('Only W0 is exempt from implementation gates');
     if (wave.status === 'blocked' && !wave.blocker?.trim()) throw new Error('Blocked wave needs a reason');
     if (wave.scope === 'activation' && wave.status !== 'blocked') throw new Error('Activation requires a separately reviewed authorization change');
     if (wave.status === 'verified') {
