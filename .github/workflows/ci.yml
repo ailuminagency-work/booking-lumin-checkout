@@ -61,6 +61,8 @@ jobs:
           done
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
+      - name: Verify platform financial minimization and suspended tenant denial
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/platform_financial_minimization_tests.sql
       - name: Run capacity hold invariants
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/capacity_tests.sql
       - name: Run resource tenant-isolation attacks
