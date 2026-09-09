@@ -52,5 +52,39 @@ try{
  const pub2=await owner(`/api/flows/${flow2}/publish?tenantId=${F.tenantA}`,{expectedRevision:1,allowedOrigins:[F.customerOrigin]});assert.equal(pub2.status,200);
  const session2=await customer(`/api/installations/${pub2.data.installationId}/sessions`,{});assert.equal(session2.status,200);assert.equal(session2.data.render.service.questions.find((q:any)=>q.id==="options").kind,"multi_choice");
  const r2=await customer("/api/flow-sessions/request",{...payload,idempotencyKey:`http-fixture-${randomUUID()}`,answers:{quantity:{quantity:3},options:{choiceIds:["standard","extra"]}}},session2.data.sessionToken);assert.equal(r2.status,200);
- console.log("PASS: real local PG HTTP two-preset journey, restart durability, ownership/CAS, pinned sessions, concurrent idempotent draft plus one outbox event; not browser HTTPS or real Auth certification");
+ // V2 uses the same catalog, request transaction and hosted endpoint; no parallel catalog.
+ await pool.query("update public.service_questions set required=false where tenant_id=$1 and service_id=$2 and question_key='quantity'",[F.tenantA,F.serviceA2]);
+ try{
+  const v2path=`/api/configurable-flows/${flow2}/draft?tenantId=${F.tenantA}`;
+  const authoring={authoringVersion:2,config:{key:"configurable-request",steps:[{key:"options",questionKey:"options",kind:"question",required:true},{key:"quantity",questionKey:"quantity",kind:"question",required:true,visibleWhen:{field:"options",op:"includes",value:"extra"}}]},questionOverrides:{quantity:{prompt:"Number requested",minQty:2,maxQty:4},options:{choiceLabels:{extra:"Additional"}}}};
+  const v2draft={expectedRevision:1,serviceId:F.serviceA2,name:"Configurable request",authoring};
+  assert.equal((await owner(v2path,v2draft,F.staffToken)).status,403);
+  assert.equal((await owner(v2path,v2draft,F.platformToken)).status,403);
+  assert.equal((await owner(v2path,{...v2draft,serviceId:F.serviceB})).status,404);
+  const savedV2=await owner(v2path,v2draft);assert.equal(savedV2.status,200);assert.equal(savedV2.data.authoringVersion,2);assert.equal(savedV2.data.revision,2);
+  assert.equal((await owner(v2path,v2draft)).status,409);
+  await stop();pool=localPool();await start();
+  const restoredV2=await owner(v2path);assert.equal(restoredV2.status,200);assert.deepEqual(restoredV2.data.authoring,authoring);assert.equal(restoredV2.data.effectiveService.questions.find((q:any)=>q.id==='quantity').prompt,'Number requested');
+  const v2list=await owner(`/api/configurable-flows?tenantId=${F.tenantA}`);assert.ok(v2list.data.flows.some((f:any)=>f.flowId===flow2));const legacyList=await owner(`/api/flows?tenantId=${F.tenantA}`);assert.ok(!legacyList.data.flows.some((f:any)=>f.flowId===flow2));
+  assert.notEqual((await owner(`/api/flows/${flow2}/draft?tenantId=${F.tenantA}`)).status,200);
+  assert.notEqual((await owner(`/api/flows/${flow2}/draft?tenantId=${F.tenantA}`,{...draft,expectedRevision:2,serviceId:F.serviceA2})).status,200);
+  assert.notEqual((await owner(`/api/flows/${flow2}/publish?tenantId=${F.tenantA}`,{expectedRevision:2,allowedOrigins:[F.customerOrigin]})).status,200);
+  const pubV2=await owner(`/api/configurable-flows/${flow2}/publish?tenantId=${F.tenantA}`,{expectedRevision:2,allowedOrigins:[F.customerOrigin]});assert.equal(pubV2.status,200);assert.equal(pubV2.data.renderSchemaVersion,2);
+  const sessionV2=await customer(`/api/installations/${pubV2.data.installationId}/sessions`,{});assert.equal(sessionV2.status,200);assert.equal(sessionV2.data.render.renderSchemaVersion,2);assert.equal(sessionV2.data.render.submissionMode,'unconfirmed_request');
+  const changed=structuredClone(v2draft);changed.expectedRevision=2;changed.authoring.questionOverrides.quantity.prompt='Later prompt';assert.equal((await owner(v2path,changed)).status,200);
+  assert.equal((await owner(`/api/configurable-flows/${flow2}/publish?tenantId=${F.tenantA}`,{expectedRevision:3,allowedOrigins:[F.customerOrigin]})).status,200);
+  const pinned=await customer(`/api/installations/${pubV2.data.installationId}/sessions`,{});assert.equal(pinned.data.render.service.questions.find((q:any)=>q.id==='quantity').prompt,'Number requested');
+  const v2payload={...payload,idempotencyKey:`http-v2-${randomUUID()}`,answers:{options:{choiceIds:['extra','standard']},quantity:{quantity:3}}};
+  const hidden=await customer('/api/flow-sessions/request',{...v2payload,answers:{options:{choiceIds:['standard']},quantity:{quantity:3}}},sessionV2.data.sessionToken);assert.notEqual(hidden.status,200);
+  const missing=await customer('/api/flow-sessions/request',{...v2payload,answers:{options:{choiceIds:['extra']}}},sessionV2.data.sessionToken);assert.notEqual(missing.status,200);
+  assert.equal((await pool.query('select count(*)::int as n from public.flow_requests r join public.flow_sessions s on s.id=r.session_id where s.version_id=$1',[pubV2.data.versionId])).rows[0].n,0);
+  const accepted=await customer('/api/flow-sessions/request',v2payload,sessionV2.data.sessionToken);assert.equal(accepted.status,200);assert.deepEqual(accepted.data,{reference:accepted.data.reference,state:'draft',confirmed:false});
+  await stop();pool=localPool();await start();
+  const reorderedRetry=await customer('/api/flow-sessions/request',{...v2payload,answers:{...v2payload.answers,options:{choiceIds:['standard','extra']}}},sessionV2.data.sessionToken);assert.equal(reorderedRetry.status,200);assert.equal(reorderedRetry.data.reference,accepted.data.reference);
+  assert.equal((await customer('/api/flow-sessions/request',{...v2payload,answers:{options:{choiceIds:['extra']},quantity:{quantity:3}}},sessionV2.data.sessionToken)).status,409);
+  const effects=await pool.query("select b.state,b.pricing,b.payment_id,(select count(*)::int from public.payments p where p.booking_id=b.id) payments,(select count(*)::int from public.capacity_holds h where h.booking_id=b.id) holds,(select count(*)::int from public.durable_outbox o where o.booking_id=b.id and o.event_type='booking.requested') events,s.version_id,s.installation_id,s.tenant_id,s.flow_id from public.bookings b join public.flow_requests r on r.booking_id=b.id join public.flow_sessions s on s.id=r.session_id where b.reference=$1",[accepted.data.reference]);assert.equal(effects.rows.length,1);assert.deepEqual(effects.rows[0],{state:'draft',pricing:{},payment_id:null,payments:0,holds:0,events:1,version_id:pubV2.data.versionId,installation_id:pubV2.data.installationId,tenant_id:F.tenantA,flow_id:flow2});
+  // Existing V1 session and retry remain valid after adoption and new versions.
+  assert.equal((await customer('/api/flow-sessions/request',{...payload,idempotencyKey:`http-fixture-${randomUUID()}`,answers:{quantity:{quantity:3},options:{choiceIds:['standard']}}},(await customer(`/api/installations/${pub2.data.installationId}/sessions`,{})).data.sessionToken)).status,200);
+ }finally{await pool.query("update public.service_questions set required=true where tenant_id=$1 and service_id=$2 and question_key='quantity'",[F.tenantA,F.serviceA2]);}
+ console.log("PASS: V1/V2 configurable pinning, canonical retry and real local PG HTTP two-preset journey, restart durability, ownership/CAS, pinned sessions, concurrent idempotent draft plus one outbox event; not browser HTTPS or real Auth certification");
 }finally{await stop();}
