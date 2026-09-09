@@ -10,7 +10,12 @@ export function sourceProvenance(root, gitCommand = "git") {
   const top = git(["rev-parse", "--show-toplevel"]);
   const revision = git(["rev-parse", "HEAD"]);
   const status = git(["status", "--porcelain", "--untracked-files=all"]);
-  if (top === null || resolve(top) !== resolve(root) || !/^[a-f0-9]{40}$/.test(revision ?? "") || status === null) {
+  // Index flags can hide tracked edits from status. Refuse such a checkout,
+  // including fsmonitor-valid entries, without altering the caller's index.
+  const tracked = git(["ls-files", "-v", "-z"]);
+  const monitored = git(["ls-files", "-f", "-z"]);
+  const visible = (listing) => listing !== null && listing.split("\0").filter(Boolean).every(entry => entry.startsWith("H "));
+  if (top === null || resolve(top) !== resolve(root) || !/^[a-f0-9]{40}$/.test(revision ?? "") || status === null || !visible(tracked) || !visible(monitored)) {
     return { sourceCommit: "unknown", sourceDirty: null };
   }
   return { sourceCommit: revision, sourceDirty: status.length > 0 };

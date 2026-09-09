@@ -74,6 +74,18 @@ test("missing Git and missing repository are unknown, never falsely clean", asyn
   assert.throws(() => validateSourceProvenance(unknown, netlify), /clean Git/);
 }, false));
 
+test("hidden tracked-file index flags fail closed without clearing the flags", async () => {
+  for (const flag of ["--assume-unchanged", "--skip-worktree"]) await fixture(async (root, git) => {
+    git("update-index", flag, "source.txt");
+    await writeFile(join(root, "source.txt"), "hidden tracked change");
+    assert.equal(git("status", "--porcelain"), "");
+    const flagsBefore = git("ls-files", "-v");
+    assert.deepEqual(sourceProvenance(root), { sourceCommit: "unknown", sourceDirty: null });
+    assert.throws(() => validateSourceProvenance(sourceProvenance(root), netlify), /clean Git/);
+    assert.equal(git("ls-files", "-v"), flagsBefore);
+  });
+});
+
 test("post-build dirty state and clean commit drift reject the accepted starting revision", async () => fixture(async (root, git) => {
   const initial = sourceProvenance(root);
   await writeFile(join(root, "source.txt"), "changed by build\n");
