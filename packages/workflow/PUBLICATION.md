@@ -1,0 +1,12 @@
+# Publication contract boundary
+
+The additive publication exports validate the existing question/info/warning WorkflowConfig subset. Unsupported fields, step kinds and unknown object properties reject rather than silently disappear. Expressions are depth-limited; the existing structural engine also validates references. This is not the full future field registry.
+
+`snapshotFlowPublication` parses and copies a draft into a deeply frozen, explicitly allowlisted public configuration snapshot. It checks flow ownership, archive status, expected revision, and unconditional required questions supplied through `requiredQuestionKeys`. Supply that policy from trusted server configuration; never accept it from the author. Customer identity, availability, consent and payment checks remain mandatory server action checks outside this questionnaire library. Snapshot creation always carries `unconfirmed_request`; it grants no pricing, capacity, paid or confirmed authority.
+
+`validateFlowSessionBinding` checks a stored installation/publication/session tuple. Load these records through authorized server storage; matching attacker-provided records is not authentication. An allowed origin is an exact HTTPS origin, but this library does not enforce HTTP origin/session access, lifecycle revocation or session expiry. Those remain Action API responsibilities.
+
+This package implements neither persistence nor publish authorization. The expected revision comparison is a pure check, not atomic optimistic concurrency across requests: future storage must compare-and-set the revision and version pointer in a transaction, enforce immutable unique version IDs, and handle publish idempotency. It must also resolve and authorize service, pricing and media references; this schema does not prove their existence. The snapshot contains only customer-safe authoring fields, but cannot detect someone typing secret text into an allowed public title/message. Do not put internal data in public fields.
+
+The schemas deliberately do not add a booking writer, provider, credential, application wiring or database migration. Existing in-memory workflow APIs remain unchanged.
+Publication parsing is capped at 10,000 traversed values/properties and 65,536 aggregate key/string UTF-16 code units (not a transport byte limit); revisions are safe positive integers. HTTP request byte limits remain the API responsibility.
