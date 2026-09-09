@@ -2,6 +2,8 @@
 
 **Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
+Original audit foundation: `fb98a7b9feaadb429ca7656430590d790d394a1a`; accepted RC-2 is a separate protected historical foundation. This plan authorizes no live migration or deployment.
+
 ## Preservation strategy
 
 Use an incremental replacement: introduce contracts and adapters beside working behavior, migrate one complete journey, compare results, then retire only the superseded caller. Keep existing routes as compatibility aliases. Do not rewrite the three apps, copy verticals or change accepted migration files. The new worker app is a separate shell with a deliberately smaller API surface.
