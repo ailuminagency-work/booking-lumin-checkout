@@ -68,7 +68,19 @@ select pg_temp.reject('delete from public.allocation_policies','0A000');
 select pg_temp.reject($q$update public.allocation_policies set service_id='b0000000-0000-4000-8000-000000000001'$q$,'0A000');
 select pg_temp.reject('update public.allocation_policies set ttl_seconds=null','23502');
 select pg_temp.reject('update public.allocation_policies set setup_minutes=1441','23514');
-select pg_temp.reject($q$delete from public.services where id='a0000000-0000-4000-8000-000000000001'$q$,'23001');
+-- PG15 reports foreign_key_violation; PG18 reports restrict_violation.
+-- Accept only this exact restrictive policy FK, never an unrelated denial.
+do $$declare violation_constraint text;begin
+ begin
+  delete from public.services where id='a0000000-0000-4000-8000-000000000001';
+  raise exception 'FAIL service deletion accepted';
+ exception when foreign_key_violation or restrict_violation then
+  get stacked diagnostics violation_constraint=constraint_name;
+  if violation_constraint is distinct from 'allocation_policies_tenant_id_service_id_fkey' then raise;end if;
+ end;
+ perform pg_temp.assert(exists(select 1 from public.services where id='a0000000-0000-4000-8000-000000000001')
+  and exists(select 1 from public.allocation_policies where service_id='a0000000-0000-4000-8000-000000000001'),'restrictive FK retains service and policy');
+end$$;
 select pg_temp.assert((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.allocation_policies'::regclass),'forced RLS');
 do $$declare role_name text;verb text;begin foreach role_name in array array['anon','authenticated','service_role'] loop
  foreach verb in array array['SELECT','INSERT','UPDATE','DELETE'] loop perform pg_temp.assert(not has_table_privilege(role_name,'public.allocation_policies',verb),'raw ACL '||role_name||verb);end loop;
