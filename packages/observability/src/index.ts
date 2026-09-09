@@ -2,9 +2,9 @@
  * The caller must bind the tenant from authenticated context before creating
  * this scope. This in-memory model is not an authorization boundary or collector.
  */
-export const COUNTERS = ["bookings_confirmed", "bookings_failed", "payments_failed", "deliveries_failed"] as const;
-export const COMPONENTS = ["checkout", "payments", "calendar", "notifications"] as const;
-export const HEALTH_STATUSES = ["unknown", "healthy", "degraded", "unavailable", "not_connected"] as const;
+export const COUNTERS = Object.freeze(["bookings_confirmed", "bookings_failed", "payments_failed", "deliveries_failed"] as const);
+export const COMPONENTS = Object.freeze(["checkout", "payments", "calendar", "notifications"] as const);
+export const HEALTH_STATUSES = Object.freeze(["unknown", "healthy", "degraded", "unavailable", "not_connected"] as const);
 export type Counter = typeof COUNTERS[number];
 export type Component = typeof COMPONENTS[number];
 export type HealthStatus = typeof HEALTH_STATUSES[number];

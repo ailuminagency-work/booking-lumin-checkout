@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMockTenantHealth } from "../src/index";
+import { createMockTenantHealth, COUNTERS, COMPONENTS, HEALTH_STATUSES } from "../src/index";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -72,5 +72,21 @@ describe("mock tenant health", () => {
 
   it("rejects PII tenant labels instead of persisting them", () => {
     expect(() => createMockTenantHealth("private@example.test")).toThrow(/^INVALID_TELEMETRY_INPUT$/);
+  });
+});
+
+
+describe("allowlist integrity", () => {
+  it("cannot mutate any exported allowlist to persist arbitrary labels", () => {
+    for (const list of [COUNTERS, COMPONENTS, HEALTH_STATUSES]) {
+      expect(Object.isFrozen(list)).toBe(true);
+      expect(() => (list as unknown as string[]).push("private@example.test")).toThrow();
+      expect(() => Object.assign(list, { 0: "private@example.test" })).toThrow();
+    }
+    const h = createMockTenantHealth(A);
+    expect(() => h.increment({ counter: "private@example.test" })).toThrow();
+    expect(() => h.setStatus({ component: "private@example.test", status: "healthy" })).toThrow();
+    expect(() => h.setStatus({ component: "checkout", status: "private@example.test" })).toThrow();
+    expect(JSON.stringify(h.snapshot())).not.toContain("private@example.test");
   });
 });
