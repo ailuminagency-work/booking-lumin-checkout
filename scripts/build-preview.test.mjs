@@ -4,12 +4,12 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { previewMode } from "./preview-mode.mjs";
+import { previewMode, validatePreviewEnvironment } from "./preview-mode.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "dist", "preview");
 const apps = ["checkout", "portal", "command-center"];
-const mode = previewMode(process.env.VITE_RUNTIME_MODE || "mock");
+const mode = validatePreviewEnvironment(process.env);
 
 test("each app loads its own actual nested assets and retains a visible demo boundary", async () => {
   for (const app of apps) {

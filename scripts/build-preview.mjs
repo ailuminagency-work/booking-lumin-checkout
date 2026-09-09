@@ -4,12 +4,12 @@ import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "no
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { previewMode } from "./preview-mode.mjs";
+import { validatePreviewEnvironment } from "./preview-mode.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = join(root, "dist", "preview");
 const apps = ["checkout", "portal", "command-center"];
-const mode = previewMode(process.env.VITE_RUNTIME_MODE || "mock");
+const mode = validatePreviewEnvironment(process.env);
 const require = createRequire(import.meta.url);
 const vite = join(dirname(require.resolve("vite/package.json")), "bin", "vite.js");
 
@@ -43,7 +43,7 @@ await mkdir(output, { recursive: true });
 
 for (const app of apps) {
   run([vite, "build", join(root, "apps", app), "--outDir", join(output, app), "--emptyOutDir"], {
-    env: { ...process.env, VITE_BASE_PATH: `/${app}/` },
+    env: { ...process.env, VITE_RUNTIME_MODE: mode.runtimeMode, VITE_BASE_PATH: `/${app}/` },
   });
   const entry = join(output, app, "index.html");
   const html = await readFile(entry, "utf8");
@@ -79,5 +79,5 @@ await writeFile(join(output, "build.json"), JSON.stringify({
   apps: Object.fromEntries(apps.map((app) => [app, `/${app}/`])),
   files: await hashes(output),
 }, null, 2) + "\n");
-run(["--test", join(root, "scripts", "build-preview.test.mjs")]);
+run(["--test", join(root, "scripts", "build-preview.test.mjs"), join(root, "scripts", "preview-mode.test.mjs")]);
 console.log(`Preview ready: ${output}`);
