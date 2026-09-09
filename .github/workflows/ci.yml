@@ -16,6 +16,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Validate execution workflow and gate ledger
+        run: node --test scripts/program-status.test.mjs && node scripts/program-status.mjs
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
@@ -63,6 +65,10 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_rls_tests.sql
       - name: Reject cross-tenant resource relationships
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_tenant_integrity_tests.sql
+      - name: Verify durable outbox authorization and lease fencing
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
+      - name: Verify flow storage tenant isolation and revision control
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/flow_storage_tests.sql
       # SQL suites roll back their fixtures. The final-slot harness requires
       # committed fixtures and separate concurrent transactions; run races last.
       - name: Run concurrent final-slot capacity race
@@ -71,3 +77,11 @@ jobs:
       - name: Run overlapping interval and timezone races
         timeout-minutes: 2
         run: bash supabase/tests/capacity_overlap_concurrency_harness.sh
+      - name: Run concurrent durable outbox deduplication and leases
+        timeout-minutes: 2
+        env:
+          OUTBOX_TEST_DISPOSABLE: "1"
+        run: bash supabase/tests/outbox_concurrency_harness.sh
+      - name: Run concurrent flow draft revision updates
+        timeout-minutes: 2
+        run: python3 supabase/tests/flow_storage_concurrency.py
