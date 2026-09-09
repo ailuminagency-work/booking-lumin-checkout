@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
@@ -50,7 +51,7 @@ export function App() {
   return (
     <ErrorBoundary>
       <PortalProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
           <Routes>
             <Route element={<Layout />}>
               <Route index element={<DashboardPage />} />
