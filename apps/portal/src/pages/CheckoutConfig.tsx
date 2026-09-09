@@ -2,16 +2,14 @@ import { useState } from "react";
 import { createWorkflowEngine } from "@lumin/workflow";
 import { usePortal } from "../components/PortalProvider";
 import { PageHeader } from "../components/ui";
-import { getCheckoutSettings, getService, getTenant, updateCheckoutSettings } from "../data/api";
+import { getCheckoutSettings, getService, updateCheckoutSettings } from "../data/api";
 import { PREVIEW_QUESTION_ID, PREVIEW_SERVICE_ID, previewFlow } from "../data/workflows";
 
 const workflowEngine = createWorkflowEngine();
 
 export function CheckoutConfigPage() {
   const { ctx, store } = usePortal();
-  const tenant = getTenant(ctx, store);
   const settings = getCheckoutSettings(ctx, store);
-  const [copied, setCopied] = useState(false);
 
   // Workflow preview: the conditional question flow a customer would see.
   const previewService = getService(ctx, PREVIEW_SERVICE_ID, store);
@@ -20,23 +18,11 @@ export function CheckoutConfigPage() {
   const previewAnswers = sampleChoice ? { [PREVIEW_QUESTION_ID]: sampleChoice } : {};
   const flowState = workflowEngine.nextState(previewFlow, previewAnswers);
 
-  const embedSnippet = `<script\n  src="https://cdn.bookinglumin.example/checkout/v1.js"\n  data-tenant="${tenant.id}"\n  async\n></script>`;
-
-  const copySnippet = async () => {
-    try {
-      await navigator.clipboard.writeText(embedSnippet);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  };
-
   return (
     <div>
       <PageHeader
-        title="Checkout Configuration"
-        subtitle="Branding for the customer-facing checkout, applied live to the preview."
+        title="Embed Builder"
+        subtitle="Demo branding and question preview. Full flow editing and publishing are not available yet."
       />
 
       <div className="checkout-config-grid">
@@ -160,20 +146,9 @@ export function CheckoutConfigPage() {
         )}
       </section>
 
-      <section className="panel" aria-label="Embed snippet">
-        <div className="panel-header">
-          <h2>Embed on your site</h2>
-          <button type="button" className="btn btn-secondary" onClick={copySnippet}>
-            {copied ? "Copied ✓" : "Copy snippet"}
-          </button>
-        </div>
-        <pre className="code-block">
-          <code>{embedSnippet}</code>
-        </pre>
-        <p className="muted">
-          Paste this before <code>&lt;/body&gt;</code>. The <code>data-tenant</code> attribute scopes the checkout to
-          this business only.
-        </p>
+      <section className="panel" aria-label="Installation status">
+        <h2>Installation is not available yet</h2>
+        <p>This demo does not publish a flow or generate a working embed. Your live website is unchanged.</p>
       </section>
     </div>
   );
