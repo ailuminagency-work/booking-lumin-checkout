@@ -22,3 +22,4 @@ export * from "./errors";
 export * from "./events";
 
 export const CONTRACTS_VERSION = "1.0.0";
+export * from "./worker";
