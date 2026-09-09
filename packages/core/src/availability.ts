@@ -1,4 +1,5 @@
 import {
+  AvailabilityBlackout,
   AvailabilityEngine,
   AvailabilityOverride,
   AvailabilityQuery,
@@ -113,10 +114,68 @@ interface Window {
   capacity: number;
 }
 
-function windowsForDate(query: AvailabilityQuery, y: number, m: number, d: number): Window[] {
-  const weekday = weekdayOfDate(y, m, d);
-  const date = isoDate(y, m, d);
+/** True if a seasonal rule is effective on the given tenant-local date. */
+function ruleEffectiveOn(r: AvailabilityRule, date: string): boolean {
+  // YYYY-MM-DD strings compare correctly lexicographically. A missing bound
+  // leaves that side open; missing both means "always effective" (legacy).
+  if (r.effectiveFrom !== undefined && date < r.effectiveFrom) return false;
+  if (r.effectiveTo !== undefined && date > r.effectiveTo) return false;
+  return true;
+}
 
+/** True if a blackout covers the given tenant-local date (scope + recurrence). */
+function blackoutCovers(query: AvailabilityQuery, b: AvailabilityBlackout, date: string): boolean {
+  if (!(b.serviceId === null || b.serviceId === query.serviceId)) return false;
+  if (b.recurrence === "annual") {
+    // Compare only month+day ("MM-DD"); an annual range may wrap the year end.
+    const md = date.slice(5);
+    const from = b.from.slice(5);
+    const to = b.to.slice(5);
+    return from <= to ? md >= from && md <= to : md >= from || md <= to;
+  }
+  // Absolute range. A misconfigured inverted range (from > to) is normalized to
+  // [min, max] rather than covering nothing — blackouts FAIL CLOSED, so a
+  // backwards-typed vacation still closes the intended days instead of silently
+  // leaving them bookable. (An annual range, by contrast, treats from > to as an
+  // intentional year-end wrap and is handled above.)
+  const lo = b.from <= b.to ? b.from : b.to;
+  const hi = b.from <= b.to ? b.to : b.from;
+  return date >= lo && date <= hi;
+}
+
+/** Remove the minute interval [bs, be) from a set of windows (may split). */
+function subtractInterval(windows: Window[], bs: number, be: number): Window[] {
+  const out: Window[] = [];
+  for (const w of windows) {
+    if (be <= w.startMinute || bs >= w.endMinute) {
+      out.push(w); // no overlap
+      continue;
+    }
+    if (bs > w.startMinute) out.push({ startMinute: w.startMinute, endMinute: bs, capacity: w.capacity });
+    if (be < w.endMinute) out.push({ startMinute: be, endMinute: w.endMinute, capacity: w.capacity });
+  }
+  return out;
+}
+
+/**
+ * Apply authoritative, fail-closed blackouts to a date's base windows. A
+ * full-day blackout (no minute window) wipes the day; a partial-day blackout
+ * clips its minute window out of every window.
+ */
+function applyBlackouts(query: AvailabilityQuery, date: string, windows: Window[]): Window[] {
+  const covering = (query.blackouts ?? []).filter((b) => blackoutCovers(query, b, date));
+  let result = windows;
+  for (const b of covering) {
+    if (b.startMinute === undefined || b.endMinute === undefined || b.startMinute >= b.endMinute) {
+      return []; // full-day (or malformed) blackout → fail closed for the whole day
+    }
+    result = subtractInterval(result, b.startMinute, b.endMinute);
+  }
+  return result;
+}
+
+/** Base windows from overrides/rules, before blackouts are applied. */
+function baseWindowsForDate(query: AvailabilityQuery, weekday: number, date: string): Window[] {
   // Overrides for this date: service-specific take precedence over tenant-wide.
   const applicableOverrides = query.overrides.filter(
     (o: AvailabilityOverride) => o.date === date && (o.serviceId === null || o.serviceId === query.serviceId),
@@ -138,8 +197,12 @@ function windowsForDate(query: AvailabilityQuery, y: number, m: number, d: numbe
 
   // Weekly rules: if any service-specific rule exists for this weekday, use
   // only those; otherwise fall back to tenant-wide (serviceId null) rules.
+  // Rules outside their seasonal effective window are ignored entirely.
   const dayRules = query.rules.filter(
-    (r: AvailabilityRule) => r.weekday === weekday && (r.serviceId === null || r.serviceId === query.serviceId),
+    (r: AvailabilityRule) =>
+      r.weekday === weekday &&
+      (r.serviceId === null || r.serviceId === query.serviceId) &&
+      ruleEffectiveOn(r, date),
   );
   const serviceRules = dayRules.filter((r) => r.serviceId === query.serviceId);
   const effectiveRules = serviceRules.length > 0 ? serviceRules : dayRules;
@@ -147,6 +210,14 @@ function windowsForDate(query: AvailabilityQuery, y: number, m: number, d: numbe
   return effectiveRules
     .filter((r) => r.startMinute < r.endMinute)
     .map((r) => ({ startMinute: r.startMinute, endMinute: r.endMinute, capacity: r.capacity }));
+}
+
+function windowsForDate(query: AvailabilityQuery, y: number, m: number, d: number): Window[] {
+  const weekday = weekdayOfDate(y, m, d);
+  const date = isoDate(y, m, d);
+  // Blackouts are authoritative and fail closed — apply them AFTER overrides so
+  // that an `open` override still loses to a blackout on the same date.
+  return applyBlackouts(query, date, baseWindowsForDate(query, weekday, date));
 }
 
 function computeSlots(query: AvailabilityQuery): Slot[] {
