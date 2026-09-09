@@ -62,12 +62,12 @@ export function normalizeConfigurablePublication(catalogInput:unknown,authoringI
   if(sourceIndex<0||sourceIndex>=i||source?.visibleWhen||!q||q.kind!==(c.op==="eq"?"single_choice":"multi_choice")||!q.choices.some(x=>x.id===c.value))throw new ConfigurablePublicationError("INVALID_DEPENDENCY");
  });
  const effective=steps.map(s=>{
-  const q=fields.get(s.questionKey)!;const override=authoring.questionOverrides[q.id]??{};
+  const q=fields.get(s.questionKey)!;const override=Object.hasOwn(authoring.questionOverrides,q.id)?authoring.questionOverrides[q.id]! : {};
   if(override.choiceLabels&&Object.keys(override.choiceLabels).some(key=>!q.choices.some(c=>c.id===key)))throw new ConfigurablePublicationError("INVALID_OVERRIDE");
   if(q.kind!=="quantity"&&(override.minQty!==undefined||override.maxQty!==undefined)||q.kind==="quantity"&&override.choiceLabels!==undefined)throw new ConfigurablePublicationError("INVALID_OVERRIDE");
   const min=override.minQty??q.minQty,max=override.maxQty??q.maxQty;
   if(q.kind==="quantity"&&(min!<q.minQty!||max!>q.maxQty!||min!>max!))throw new ConfigurablePublicationError("INVALID_OVERRIDE");
-  return {...q,prompt:override.prompt??q.prompt,choices:q.choices.map(c=>({id:c.id,label:override.choiceLabels?.[c.id]??c.label})),...(q.kind==="quantity"?{minQty:min,maxQty:max}:{})};
+  return {...q,prompt:override.prompt??q.prompt,choices:q.choices.map(c=>({id:c.id,label:override.choiceLabels&&Object.hasOwn(override.choiceLabels,c.id)?override.choiceLabels[c.id]!:c.label})),...(q.kind==="quantity"?{minQty:min,maxQty:max}:{})};
  });
  // Deterministic key insertion order for fixtures; SQL compares JSON structurally.
  const overrides=Object.fromEntries(Object.entries(authoring.questionOverrides).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,o])=>[key,{...(o.prompt!==undefined?{prompt:o.prompt}:{}),...(o.choiceLabels?{choiceLabels:Object.fromEntries(Object.entries(o.choiceLabels).sort(([a],[b])=>a<b?-1:a>b?1:0))}:{}),...(o.minQty!==undefined?{minQty:o.minQty}:{}),...(o.maxQty!==undefined?{maxQty:o.maxQty}:{})}]));
@@ -84,8 +84,8 @@ export function validateConfigurableAnswers(snapshotInput:unknown,answersInput:u
  const snapshot=normalizeConfigurablePublication(raw.service,{authoringVersion:2,config:raw.config,questionOverrides:{}}).snapshot;
  let answers:Record<string,z.infer<typeof Answer>>;try{answers=z.record(Key,Answer).parse(bounded(answersInput));}catch{throw new ConfigurablePublicationError("INVALID_ANSWER");}
  const known=new Set(snapshot.config.steps.map(s=>s.questionKey));if(Object.keys(answers).some(k=>!known.has(k)))throw new ConfigurablePublicationError("INVALID_ANSWER");
- const flattened:Answers={};const normalized:Record<string,z.infer<typeof Answer>>={};
- for(const step of snapshot.config.steps){const q=snapshot.service.questions.find(q=>q.id===step.questionKey)!;const a=answers[q.id];
+ const flattened:Answers=Object.create(null) as Answers;const normalized:Record<string,z.infer<typeof Answer>>={};
+ for(const step of snapshot.config.steps){const q=snapshot.service.questions.find(q=>q.id===step.questionKey)!;const a=Object.hasOwn(answers,q.id)?answers[q.id]:undefined;
   const visible=!step.visibleWhen||evaluate(step.visibleWhen,flattened);if(!visible){if(a!==undefined)throw new ConfigurablePublicationError("HIDDEN_ANSWER");continue;}
   if(a===undefined){if(step.required)throw new ConfigurablePublicationError("MISSING_REQUIRED");continue;}
   if(q.kind==="quantity"){

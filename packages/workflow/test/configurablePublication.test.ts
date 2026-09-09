@@ -73,3 +73,16 @@ for(const boundary of fixture.utf16Boundaries)it(`shared SQL UTF16 boundary: ${b
  if(boundary.target==="prompt"){good.authoring.questionOverrides.mode.prompt=valid;bad.authoring.questionOverrides.mode.prompt=invalid;}else{good.authoring.questionOverrides.mode.choiceLabels.extra=valid;bad.authoring.questionOverrides.mode.choiceLabels.extra=invalid;}
  expect(()=>normalize(good.catalog,good.authoring)).not.toThrow();rejects(()=>normalize(bad.catalog,bad.authoring),"INVALID_CONFIG");
 });
+
+it("uses own properties for legitimate inherited-name choice and override IDs",()=>{
+ const f=fresh();f.catalog.questions[0]!.choices=[...f.catalog.questions[0]!.choices,{id:"toString",label:"Safe label"}];f.authoring.questionOverrides.mode.choiceLabels={} as any;
+ const p=normalize(f.catalog,f.authoring).snapshot;expect(p.service.questions[0]!.choices.find(c=>c.id==="toString")!.label).toBe("Safe label");
+ f.catalog.questions[1]!.id="toString";f.authoring.config.steps[1]!.questionKey="toString";
+ expect(normalize(f.catalog,f.authoring).snapshot.service.questions[1]!.prompt).toBe("Choose options");
+});
+it("missing optional inherited-name answers remain missing, including condition sources",()=>{
+ const f=fresh();f.catalog.questions[1]!.id="hasOwnProperty";f.authoring.config.steps[1]!.questionKey="hasOwnProperty";f.authoring.config.steps[2]!.visibleWhen={field:"hasOwnProperty",op:"includes",value:"b"};
+ const p=normalize(f.catalog,f.authoring).snapshot;
+ expect(answers(p,{mode:{choiceIds:["basic"]}})).toEqual({mode:{choiceIds:["basic"]}});
+ expect(answers(p,{mode:{choiceIds:["basic"]},hasOwnProperty:{choiceIds:["b"]},count:{quantity:3}})).toEqual({mode:{choiceIds:["basic"]},hasOwnProperty:{choiceIds:["b"]},count:{quantity:3}});
+});
