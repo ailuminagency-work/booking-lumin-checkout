@@ -18,7 +18,8 @@ cleanup() {
   if [ -n "$P1" ]; then wait "$P1" || true; fi
   if [ -n "$P2" ]; then wait "$P2" || true; fi
   run -c "delete from public.tenants where id='$TENANT';" || true
-  rm -rf "$TMP"
+  rm -f "$TMP/first" "$TMP/second" "$TMP/first-clean" "$TMP/second-clean"
+  rmdir "$TMP"
 }
 trap cleanup EXIT
 run <<SQL
