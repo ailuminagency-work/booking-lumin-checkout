@@ -37,13 +37,19 @@ select pg_temp.reject('select pg_temp.reserve(12,-1)','22023');
 select pg_temp.assert(pg_temp.reserve(12,2147483647)='NO_CAPACITY','overflow safe sum');
 select pg_temp.reject($q$select * from lumin.reserve_resource_quantity('a2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000002','2035-01-01T10:00Z','2035-01-01T11:00Z','b2000000-0000-4000-8000-000000000010',interval '15 minutes',1)$q$,'23503');
 select pg_temp.assert((select result='NO_CAPACITY' from lumin.reserve_resource_quantity('a2000000-0000-4000-8000-000000000001','b2000000-0000-4000-8000-000000000002','2035-01-01T10:00Z','2035-01-01T11:00Z','a2000000-0000-4000-8000-000000000012',interval '15 minutes',1)),'foreign resource');
+-- Privileged synthetic state setup; application writes are exercised through RPCs.
+reset role;
 update public.resource_reservations set status='released' where booking_id='a2000000-0000-4000-8000-000000000010';
 update public.resource_reservations set status='consumed' where booking_id='a2000000-0000-4000-8000-000000000011';
+set local role service_role;
 select pg_temp.assert(pg_temp.reserve(12,2)='NO_CAPACITY','consumed quantity counted');
 select pg_temp.assert(pg_temp.reserve(12)='GRANTED','remaining one unit');
 -- Adjacent interval does not overlap consumed capacity.
 select pg_temp.assert((select result='GRANTED' from lumin.reserve_resource_quantity('a2000000-0000-4000-8000-000000000001','a2000000-0000-4000-8000-000000000002','2035-01-01T11:00Z','2035-01-01T12:00Z','a2000000-0000-4000-8000-000000000013',interval '15 minutes',3)),'half-open adjacency');
+-- Expiry is a privileged fixture, never an application direct-write capability.
+reset role;
 update public.resource_reservations set status='held',expires_at=clock_timestamp()-interval '1 second' where booking_id='a2000000-0000-4000-8000-000000000011';
+set local role service_role;
 select pg_temp.assert(pg_temp.reserve(11)='GRANTED','expired quantity row reused by old caller');
 select pg_temp.assert((select quantity=1 from public.resource_reservations where booking_id='a2000000-0000-4000-8000-000000000011'),'old caller resets reused quantity');
 select pg_temp.assert((select bool_and(state='draft') from public.bookings),'no confirmation');
