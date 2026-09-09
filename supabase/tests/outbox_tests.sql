@@ -123,4 +123,3 @@ rollback to atomic_writer;
 select pg_temp.assert(count(*)=0,'enqueue rolls back with calling transaction') from public.durable_outbox where dedup_key='00000000-0000-0000-0000-000000000004';
 rollback;
 \echo 'outbox tests PASS (fixtures rolled back)'
-
