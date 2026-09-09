@@ -34,7 +34,7 @@ begin
  if exists(select 1 from public.capacity_holds where booking_id=b and group_id is null) or exists(select 1 from public.resource_reservations where booking_id=b and group_id is null) then raise exception 'GROUP_INCOMPLETE' using errcode='55000';end if;
  if gen=1 then insert into public.allocation_group_heads values(t,gid,b,1);
  else update public.allocation_group_heads set current_generation=gen where tenant_id=t and id=gid;end if;
- digest_value:=public.digest(convert_to(jsonb_build_array(1,jsonb_build_array(w),case when r is null then '[]'::jsonb else jsonb_build_array(jsonb_build_array(r,1)) end)::text,'UTF8'),'sha256');
+ digest_value:=pg_catalog.sha256(convert_to(jsonb_build_array(1,jsonb_build_array(w),case when r is null then '[]'::jsonb else jsonb_build_array(jsonb_build_array(r,1)) end)::text,'UTF8'));
  insert into public.allocation_groups(tenant_id,id,generation,booking_id,service_id,crew_id,policy_revision,roster_version,requested_start,requested_end,occupied_start,occupied_end,setup_minutes,cleanup_minutes,created_at,expires_at,resource_mode,intent_hash,evidence_hash,manifest_digest,worker_count,resource_count,status,sealed)
  values(t,gid,gen,b,s,c,1,v,'2035-01-01T10:00Z','2035-01-01T11:00Z','2035-01-01T10:00Z','2035-01-01T11:00Z',0,0,least(clock_timestamp(),expiry-interval '120 seconds'),expiry,case when r is null then 'none' else 'linked' end,digest_value,digest_value,digest_value,1,case when r is null then 0 else 1 end,'held',false);
  insert into public.allocation_group_workers values(t,gid,gen,w);

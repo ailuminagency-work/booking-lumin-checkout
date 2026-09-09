@@ -8,6 +8,7 @@ create function pg_temp.reject(q text,code text) returns void language plpgsql a
  raise exception 'EXPECTED % for %',code,q;
 end $$;
 create function pg_temp.release(gen bigint default 1) returns jsonb language sql as $$select public.release_planning_group(pg_temp.id(1),pg_temp.id(2),pg_temp.id(8),gen)$$;
+select pg_temp.ok(encode(pg_catalog.sha256(convert_to('abc','UTF8')),'hex')='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad','native SHA256 known vector');
 select pg_temp.reject('select lumin.group_require_fence()','55000');
 select pg_temp.fixture_parents(pg_temp.id(1),pg_temp.id(2),pg_temp.id(3),pg_temp.id(4),pg_temp.id(5),pg_temp.id(6),pg_temp.id(7));
 select pg_temp.fixture_group(pg_temp.id(1),pg_temp.id(2),pg_temp.id(3),pg_temp.id(8),pg_temp.id(4),pg_temp.id(5),pg_temp.id(6),pg_temp.id(7),1,clock_timestamp()+interval '120 seconds');

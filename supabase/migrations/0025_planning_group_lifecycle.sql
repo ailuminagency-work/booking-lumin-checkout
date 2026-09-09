@@ -63,9 +63,9 @@ create function lumin.group_statement() returns trigger language plpgsql securit
  perform lumin.group_prefix(tg_argv[0]='strong');return null;
 end $$;
 create function lumin.group_digest(p_tenant uuid,p_group uuid,p_generation bigint) returns bytea language sql stable security definer set search_path=pg_catalog as $$
- select public.digest(convert_to(jsonb_build_array(1,
+ select pg_catalog.sha256(convert_to(jsonb_build_array(1,
  coalesce((select jsonb_agg(worker_id order by worker_id) from public.allocation_group_workers where tenant_id=p_tenant and group_id=p_group and generation=p_generation),'[]'::jsonb),
- coalesce((select jsonb_agg(jsonb_build_array(resource_id,quantity) order by resource_id) from public.allocation_group_resources where tenant_id=p_tenant and group_id=p_group and generation=p_generation),'[]'::jsonb))::text,'UTF8'),'sha256')
+ coalesce((select jsonb_agg(jsonb_build_array(resource_id,quantity) order by resource_id) from public.allocation_group_resources where tenant_id=p_tenant and group_id=p_group and generation=p_generation),'[]'::jsonb))::text,'UTF8'))
 $$;
 create function lumin.group_validate(p_tenant uuid,p_group uuid,p_generation bigint) returns void language plpgsql security definer set search_path=pg_catalog as $$
 declare g public.allocation_groups%rowtype;h public.allocation_group_heads%rowtype;
