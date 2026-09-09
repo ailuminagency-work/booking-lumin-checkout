@@ -18,7 +18,7 @@ function conditionAt(depth: number): z.ZodType<Condition> {
 const condition = conditionAt(4);
 const effect = z.discriminatedUnion("target", [
   z.object({ target: z.literal("addon"), when: condition.optional(), addonId: z.string().min(1) }).strict(),
-  z.object({ target: z.literal("item"), when: condition.optional(), itemId: z.string().min(1), quantity: z.number().int().positive() }).strict(),
+  z.object({ target: z.literal("item"), when: condition.optional(), itemId: z.string().min(1), quantity: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
   z.object({ target: z.literal("choice"), when: condition.optional(), questionKey: z.string().min(1), choiceIds: z.array(z.string().min(1)).min(1) }).strict(),
 ]);
 const step = WorkflowStep.extend({
@@ -112,5 +112,3 @@ export function validateFlowSessionBinding(versionInput: unknown, installationIn
   if (installation.installationId !== session.installationId) throw new Error("Invalid installation session binding");
   return freeze(session);
 }
-
-

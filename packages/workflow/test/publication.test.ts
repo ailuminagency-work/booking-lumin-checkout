@@ -92,3 +92,9 @@ it("bounds parse work, revisions and operands before publication", () => {
     expect(PublicationWorkflowConfig.safeParse({ key: "x", steps: [{ key: "x", questionKey: "x", visibleWhen: { field: "x", op, value } }] }).success).toBe(false);
   }
 });
+
+it("rejects unsafe pricing input quantities while preserving the safe boundary", () => {
+  const config = (quantity: number) => ({ key: "x", steps: [{ key: "x", kind: "info", pricingEffect: { target: "item", itemId: "item", quantity } }] });
+  expect(PublicationWorkflowConfig.safeParse(config(Number.MAX_SAFE_INTEGER + 1)).success).toBe(false);
+  expect(PublicationWorkflowConfig.safeParse(config(Number.MAX_SAFE_INTEGER)).success).toBe(true);
+});
