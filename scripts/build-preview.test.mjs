@@ -41,6 +41,10 @@ test("provenance explicitly states configured mode and verifies published artifa
   assert.equal(build.providerConnections, mode.providerConnections);
   assert.match(build.sourceCommit, /^(?:[a-f0-9]{40}|unknown)$/);
   assert.ok(build.sourceDirty === null || typeof build.sourceDirty === "boolean");
+  if (process.env.NETLIFY === "true") {
+    assert.match(build.sourceCommit, /^[a-f0-9]{40}$/);
+    assert.equal(build.sourceDirty, false);
+  }
   assert.ok(Number.isFinite(Date.parse(build.builtAt)));
   for (const app of apps) assert.equal(build.apps[app], `/${app}/`);
   for (const [path, hash] of Object.entries(build.files)) {
