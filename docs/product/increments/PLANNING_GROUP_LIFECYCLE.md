@@ -12,7 +12,7 @@ Held groups require exactly their declared service, resource and worker carriers
 
 ## Single application mutation
 
-`public.release_planning_group(actor, tenant, group_id, expected_generation)` is granted only to the server role. It verifies active owner membership and the actual draft booking, locks the current generation and carriers, checks fresh expiry after waits, and releases all carriers and the group in one SQL statement. Invalid receipts, constraint failures or injected final-step failures roll back the whole transaction. Retries reauthorize and return the stored terminal result.
+`public.release_planning_group(actor, tenant, group_id, expected_generation)` is granted only to the server role. It verifies active owner membership and the actual draft booking, locks the current generation and carriers, checks fresh expiry after waits, and releases all carriers and the group in one SQL statement. Invalid arguments, constraint failures or injected final-step failures roll back the whole transaction. Retries reauthorize and return the stored terminal result.
 
 The fixed receipt contains group ID, generation, released/expired status, expiry, `bookingState: draft` and `confirmed: false`. No caller-supplied status, expiry, manifest or quantity is accepted. All internal helpers remain inaccessible to application roles.
 
