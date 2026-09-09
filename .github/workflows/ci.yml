@@ -71,6 +71,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_tenant_integrity_tests.sql
       - name: Verify shared resource unit accounting and legacy compatibility
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_quantity_tests.sql
+      - name: Verify isolated worker roster and owner mutation boundaries
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/worker_roster_tests.sql
       - name: Verify durable outbox authorization and lease fencing
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
       - name: Verify flow storage tenant isolation and revision control
@@ -94,6 +96,11 @@ jobs:
         env:
           RESOURCE_QUANTITY_TEST_DISPOSABLE: "1"
         run: python3 supabase/tests/resource_quantity_concurrency.py
+      - name: Run observed worker roster version contention
+        timeout-minutes: 2
+        env:
+          WORKER_ROSTER_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/worker_roster_concurrency.py
       - name: Run concurrent durable outbox deduplication and leases
         timeout-minutes: 2
         env:
