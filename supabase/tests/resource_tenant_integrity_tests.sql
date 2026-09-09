@@ -50,8 +50,8 @@ select pg_temp.expect_fk($q$insert into public.service_areas(tenant_id,service_i
  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','b0000000-0000-0000-0000-000000000001','radius','{}')$q$);
 select pg_temp.expect_fk($q$update public.service_areas set service_id='b0000000-0000-0000-0000-000000000001'$q$);
 reset role;
-set local role service_role;
--- Server-internal reservations are constrained even though service_role bypasses RLS.
+-- Privileged storage-integrity fixtures retain exact composite-FK assertions.
+-- Application-role raw-write denial is covered by carrier_direct_write_tests.sql.
 insert into public.resource_reservations(tenant_id,resource_id,booking_id,slot_start,slot_end,hold_key,expires_at) values
  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000003','2030-01-01T10:00Z','2030-01-01T11:00Z','synthetic',now()+interval '5 minutes');
 select pg_temp.expect_fk($q$insert into public.resource_reservations(tenant_id,resource_id,booking_id,slot_start,slot_end,hold_key,expires_at) values
