@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "repository": "ailuminagency-work/booking-lumin-checkout",
   "releaseBoundary": "reviewed_candidates_only",
   "requiredGates": [
@@ -92,6 +92,12 @@
         "architecture_audit: HTTP API and repository",
         "security_audit: Portal and hosted request UI",
         "root: contract approval, integration and verification"
+      ],
+      "requires": [
+        "W3.fields_and_workflows",
+        "W3.publication_and_installation",
+        "W3.runtime_and_presets",
+        "W3.hosted_request_acceptance"
       ]
     },
     {
@@ -103,7 +109,11 @@
       ],
       "status": "planned",
       "scope": "candidate",
-      "deployment": "not_deployed"
+      "deployment": "not_deployed",
+      "requires": [
+        "W4.capabilities",
+        "W4.hosted_acceptance"
+      ]
     },
     {
       "id": "W5",
@@ -114,7 +124,11 @@
       ],
       "status": "planned",
       "scope": "candidate",
-      "deployment": "not_deployed"
+      "deployment": "not_deployed",
+      "requires": [
+        "W5.capabilities",
+        "W5.hosted_acceptance"
+      ]
     },
     {
       "id": "W6",
@@ -125,7 +139,11 @@
       ],
       "status": "planned",
       "scope": "candidate",
-      "deployment": "not_deployed"
+      "deployment": "not_deployed",
+      "requires": [
+        "W6.capabilities",
+        "W6.hosted_acceptance"
+      ]
     },
     {
       "id": "W7",
@@ -138,7 +156,11 @@
       ],
       "status": "planned",
       "scope": "candidate",
-      "deployment": "not_deployed"
+      "deployment": "not_deployed",
+      "requires": [
+        "W7.capabilities",
+        "W7.hosted_acceptance"
+      ]
     },
     {
       "id": "W8",
@@ -149,7 +171,10 @@
       "status": "blocked",
       "scope": "staging",
       "blocker": "Netlify access permission and genuine authenticated pilot identities remain unresolved; prepare and test all independent artifacts first.",
-      "deployment": "not_deployed"
+      "deployment": "not_deployed",
+      "requires": [
+        "W8.integrated_pilot"
+      ]
     },
     {
       "id": "W9",
@@ -161,6 +186,240 @@
       "scope": "activation",
       "blocker": "Real provider credentials explicitly prohibited until separate activation authorization.",
       "deployment": "not_deployed"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "W3.1.local_candidate",
+      "kind": "implementation",
+      "owner": "W3",
+      "status": "verified",
+      "dependsOn": [
+        "W2"
+      ],
+      "acceptance": "Bounded local persisted builder to pinned no-pay request with SQL/HTTP/PG/runtime candidate gates; not full W3 or hosted proof.",
+      "candidate": "e3f4985f1875da104bd3b1f03f95b1caa826656e",
+      "ci": "https://github.com/ailuminagency-work/booking-lumin-checkout/actions/runs/34395974824",
+      "evidence": "https://github.com/ailuminagency-work/booking-lumin-checkout/pull/34",
+      "gates": [
+        "builder",
+        "unit",
+        "domain",
+        "independent",
+        "adversarial",
+        "integration",
+        "runtime",
+        "ci",
+        "release"
+      ],
+      "deployment": "not_deployed"
+    },
+    {
+      "id": "W3.2.local_candidate",
+      "kind": "implementation",
+      "owner": "W3",
+      "status": "planned",
+      "dependsOn": [
+        "W3.1.local_candidate"
+      ],
+      "acceptance": "Reviewed per-flow field overrides/conditional editing, actual local persistence and runtime parity; not full W3."
+    },
+    {
+      "id": "E.environment_access",
+      "kind": "external",
+      "owner": null,
+      "status": "blocked",
+      "dependsOn": [],
+      "acceptance": "Independent authorized hosting/database access, trusted HTTPS and genuine test identities; no provider activation.",
+      "blocker": "Hosting access, trusted HTTPS and genuine authenticated pilot identities are not evidenced. This external prerequisite does not wait for W7/W8."
+    },
+    {
+      "id": "W3.fields_and_workflows",
+      "kind": "capability",
+      "owner": "W3",
+      "status": "planned",
+      "dependsOn": [
+        "W3.1.local_candidate"
+      ],
+      "acceptance": "All approved field/step/workflow builder capabilities including nineteen-field registry, required server policy and shared renderer; bounded W3.1/W3.2 are insufficient."
+    },
+    {
+      "id": "W3.publication_and_installation",
+      "kind": "capability",
+      "owner": "W3",
+      "status": "planned",
+      "dependsOn": [
+        "W3.1.local_candidate"
+      ],
+      "acceptance": "All approved draft/preview/publish/version/install lifecycle capabilities including script/iframe/hosted scope, safe domains and immutable compatibility."
+    },
+    {
+      "id": "W3.runtime_and_presets",
+      "kind": "capability",
+      "owner": "W3",
+      "status": "planned",
+      "dependsOn": [
+        "W3.1.local_candidate"
+      ],
+      "acceptance": "Full W3 P9/P10/P11/P12/P13/P14/P21/P23 scope from EXECUTION_WORKFLOW/product specs: shared renderer, two presets, authenticated APIs and pinned persistence; no auto-confirmation."
+    },
+    {
+      "id": "W3.hosted_request_acceptance",
+      "kind": "hosted",
+      "owner": "W3",
+      "status": "blocked",
+      "dependsOn": [
+        "E.environment_access",
+        "W3.fields_and_workflows",
+        "W3.publication_and_installation",
+        "W3.runtime_and_presets"
+      ],
+      "acceptance": "Real authorized owner publish and customer trusted-HTTPS request persistence, isolation and deployment provenance; no local evidence substitution.",
+      "blocker": "Full W3 capabilities and authorized environment/TLS/real-identity evidence required."
+    },
+    {
+      "id": "W4.implementation",
+      "kind": "implementation",
+      "owner": "W4",
+      "status": "planned",
+      "dependsOn": [
+        "W2",
+        "W3.1.local_candidate"
+      ],
+      "acceptance": "Reviewed W4 implementation contracts/local integration for dependent leaves with full candidate gates; not full parent capability/hosted acceptance."
+    },
+    {
+      "id": "W4.capabilities",
+      "kind": "capability",
+      "owner": "W4",
+      "status": "planned",
+      "dependsOn": [
+        "W4.implementation"
+      ],
+      "acceptance": "Every approved W4 capability/workstream in EXECUTION_WORKFLOW and product specs; bounded implementation alone is insufficient."
+    },
+    {
+      "id": "W4.hosted_acceptance",
+      "kind": "hosted",
+      "owner": "W4",
+      "status": "planned",
+      "dependsOn": [
+        "E.environment_access",
+        "W4.capabilities"
+      ],
+      "acceptance": "Real hosted acceptance of full W4 scope, authorized identity/isolation/runtime and environment provenance; local synthetic proof cannot substitute."
+    },
+    {
+      "id": "W5.implementation",
+      "kind": "implementation",
+      "owner": "W5",
+      "status": "planned",
+      "dependsOn": [
+        "W2",
+        "W4.implementation"
+      ],
+      "acceptance": "Reviewed W5 implementation contracts/local integration for dependent leaves with full candidate gates; not full parent capability/hosted acceptance."
+    },
+    {
+      "id": "W5.capabilities",
+      "kind": "capability",
+      "owner": "W5",
+      "status": "planned",
+      "dependsOn": [
+        "W5.implementation"
+      ],
+      "acceptance": "Every approved W5 capability/workstream in EXECUTION_WORKFLOW and product specs; bounded implementation alone is insufficient."
+    },
+    {
+      "id": "W5.hosted_acceptance",
+      "kind": "hosted",
+      "owner": "W5",
+      "status": "planned",
+      "dependsOn": [
+        "E.environment_access",
+        "W5.capabilities"
+      ],
+      "acceptance": "Real hosted acceptance of full W5 scope, authorized identity/isolation/runtime and environment provenance; local synthetic proof cannot substitute."
+    },
+    {
+      "id": "W6.implementation",
+      "kind": "implementation",
+      "owner": "W6",
+      "status": "planned",
+      "dependsOn": [
+        "W2",
+        "W5.implementation"
+      ],
+      "acceptance": "Reviewed W6 implementation contracts/local integration for dependent leaves with full candidate gates; not full parent capability/hosted acceptance."
+    },
+    {
+      "id": "W6.capabilities",
+      "kind": "capability",
+      "owner": "W6",
+      "status": "planned",
+      "dependsOn": [
+        "W6.implementation"
+      ],
+      "acceptance": "Every approved W6 capability/workstream in EXECUTION_WORKFLOW and product specs; bounded implementation alone is insufficient."
+    },
+    {
+      "id": "W6.hosted_acceptance",
+      "kind": "hosted",
+      "owner": "W6",
+      "status": "planned",
+      "dependsOn": [
+        "E.environment_access",
+        "W6.capabilities"
+      ],
+      "acceptance": "Real hosted acceptance of full W6 scope, authorized identity/isolation/runtime and environment provenance; local synthetic proof cannot substitute."
+    },
+    {
+      "id": "W7.implementation",
+      "kind": "implementation",
+      "owner": "W7",
+      "status": "planned",
+      "dependsOn": [
+        "W3.1.local_candidate",
+        "W4.implementation",
+        "W5.implementation",
+        "W6.implementation"
+      ],
+      "acceptance": "Reviewed W7 implementation contracts/local integration for dependent leaves with full candidate gates; not full parent capability/hosted acceptance."
+    },
+    {
+      "id": "W7.capabilities",
+      "kind": "capability",
+      "owner": "W7",
+      "status": "planned",
+      "dependsOn": [
+        "W7.implementation"
+      ],
+      "acceptance": "Every approved W7 capability/workstream in EXECUTION_WORKFLOW and product specs; bounded implementation alone is insufficient."
+    },
+    {
+      "id": "W7.hosted_acceptance",
+      "kind": "hosted",
+      "owner": "W7",
+      "status": "planned",
+      "dependsOn": [
+        "E.environment_access",
+        "W7.capabilities"
+      ],
+      "acceptance": "Real hosted acceptance of full W7 scope, authorized identity/isolation/runtime and environment provenance; local synthetic proof cannot substitute."
+    },
+    {
+      "id": "W8.integrated_pilot",
+      "kind": "hosted",
+      "owner": "W8",
+      "status": "planned",
+      "dependsOn": [
+        "W3.hosted_request_acceptance",
+        "W4.hosted_acceptance",
+        "W5.hosted_acceptance",
+        "W6.hosted_acceptance",
+        "W7.hosted_acceptance"
+      ],
+      "acceptance": "Integrated staging pilot W3-W7 hosted capabilities, isolation/load/failure/rollback/residual-risk certification; no provider activation."
     }
   ]
 }

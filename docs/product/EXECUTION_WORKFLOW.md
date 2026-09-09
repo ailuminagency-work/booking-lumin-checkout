@@ -2,7 +2,7 @@
 
 The user authorized continued work across all waves and pushing tested candidates on September 9, 2026. This supersedes the planning snapshots' “implementation not launched” status. It does not supersede the earlier prohibition on real provider credentials, the review loop, main protection, or explicit access approvals.
 
-`wave-ledger.json` is the current implementation queue. Run `node scripts/program-status.mjs` to validate the DAG and list dependency-ready waves. A verified candidate is not a merge, deployment or live certification. Detailed product requirements remain in the nine specifications; this ledger groups them into executable increments.
+`wave-ledger.json` is the current implementation queue. Run `node scripts/program-status.mjs` to validate the combined DAG and list dependency-ready waves and evidence nodes. A verified candidate is not a merge, deployment or live certification. Detailed product requirements remain in the nine specifications; this ledger groups them into executable increments.
 
 ## Resume protocol
 
@@ -36,3 +36,19 @@ W3–W8 require multiple builder/review cycles, not one large speculative commit
 Main remains `152bb909c06fa8602d99f8b37d2cfe9f90aa5ead` at launch. PR31 is `codex/program-integration` at `fb98a7b`; PR32 is `codex/product-wave1` at `ccdafde`. Wave2 starts from PR32 on `codex/product-wave2`. Reconcile remote state before using these historical references.
 
 Hourly continuation is attached to this thread as `continue-booking-lumin-engineering-waves`. It resumes from this ledger; it does not bypass missing access or guarantee work while the desktop/runtime is unavailable. Stop the continuation once all authorized waves are verified and report any separately gated activation work.
+
+## Schema2 evidence DAG and parent completion
+
+The scope and completion criteria above remain mandatory. Schema2 separates parent-wave acceptance from implementation/evidence nodes. `readyNodes` identifies contract/local implementation work that can start; `ready` retains whole-wave dependency readiness. W0-W9 keep their original scopes and parent dependencies.
+
+W3 remains BUILDING. `W3.1.local_candidate` records exact reviewed code `e3f4985f1875da104bd3b1f03f95b1caa826656e`, PR34 and CI34395974824 with all nine gates. It proves the bounded local persisted no-pay journey, not the full field builder, installation suite or hosted customer authentication. W3.2 and W4 implementation leaves may consume this reviewed contract without waiting for a staging pilot.
+
+W3 completion still requires all three full-capability nodes (fields/workflows, publication/installation, runtime/presets) AND hosted_request_acceptance. Those nodes represent every applicable approved requirement, not a renamed bounded increment. W4-W7 likewise require full capability coverage and hosted acceptance, plus their original parent dependencies. Only the designated Wn.implementation node can establish implementation readiness for a BUILDING parent whose whole-wave dependencies remain incomplete. No arbitrary added node can promote a parent.
+
+E.environment_access is an external prerequisite with no W7/W8 dependency. Authorized infrastructure access, trusted TLS and legitimate test identities may be prepared independently; missing access stays BLOCKED. W3.hosted_request_acceptance requires E plus W3 capabilities. W8.integrated_pilot requires W3 hosted acceptance and W4-W7 hosted acceptance. Staging preparation therefore does not wait for the pilot it enables. W9 remains BLOCKED regardless of other readiness; provider activation requires separately reviewed authorization.
+
+The validator encodes mandatory core node kinds, owners, dependencies and parent completion requirements. Removing a required node/edge, reclassifying hosted proof, adding unknown fields/nodes, weakening the nine gates or introducing a parent/evidence cycle fails validation. New incremental node IDs require an explicit reviewed registry/ledger change; they cannot silently waive core requirements.
+
+Verified implementation/capability nodes and nonplanning parents require a full40-character code SHA, exact repository PR and CI-run links and all distinct required gates. Verified hosted/external nodes additionally require hostedEvidence: matching candidate SHA, staging environment, named independent reviewer and a separate public-HTTPS evidence artifact. IP literals, loopback/fixture/example hosts, this ledger/status script, PR links and CI-run pages cannot be hosted proof. An updated ledger does not retroactively expand its historical receipt: root must run exact-head CI again for the new integration commit.
+
+This validator checks recorded structure, not truth. It cannot authenticate CI SHA/results, reviewer independence, DNS or artifact contents. Governors must independently verify external receipts before marking VERIFIED. The validator's own green output or an entry repeating its own claim is not acceptance evidence. Preserve exact external evidence in the linked review/report; changes invalidate affected downstream approvals. Production/hosted acceptance and actual Auth remain incomplete wherever evidence is missing.
