@@ -36,3 +36,8 @@ describe('public runtime transport boundary',()=>{
   const f=transport([json({message:'private@example.test token=fixture'},403)]);const c=createRuntimeClient(config,f);await expect(c.services()).rejects.toThrow(/^Access denied for this account\.$/);
  });
 });
+it('rejects a body decoded after the authenticated session has ended',async()=>{
+ let finish!:(value:unknown)=>void;const decoded=new Promise<unknown>(r=>finish=r);const slow=json([]);vi.spyOn(slow,'json').mockReturnValue(decoded);
+ const f=transport([json({access_token:'synthetic'}),json({id:U}),slow]);const c=createRuntimeClient(config,f);await c.signIn('synthetic@example.test','fixture');const pending=c.memberships();
+ await vi.waitFor(()=>expect(slow.json).toHaveBeenCalled());c.signOut();finish([{tenant_id:T,role:'BUSINESS_OWNER'}]);await expect(pending).rejects.toThrow('Session changed');
+});

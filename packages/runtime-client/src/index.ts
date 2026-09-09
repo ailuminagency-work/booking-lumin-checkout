@@ -23,7 +23,9 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(current!==generation)return fail('Session changed. Please sign in again.');
   if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
-  try{return await response.json()}catch{return fail('The server returned an invalid response.')}
+  let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
+  if(current!==generation)return fail('Session changed. Please sign in again.');
+  return parsed;
  }
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
@@ -63,4 +65,5 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  };
 }
 export type RuntimeClient=ReturnType<typeof createRuntimeClient>;
+
 
