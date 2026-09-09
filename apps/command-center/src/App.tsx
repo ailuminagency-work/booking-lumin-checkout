@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { ConnectedCommandCenter } from "./connected/ConnectedCommandCenter";
 import { NavLink, Route, Routes } from "react-router-dom";
 import Bookings from "./pages/Bookings";
 import Businesses from "./pages/Businesses";
@@ -47,6 +48,13 @@ const NAV_ITEMS = [
 ];
 
 export default function App() {
+  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
+    return <ErrorBoundary><ConnectedCommandCenter config={{
+      url: import.meta.env.VITE_SUPABASE_URL ?? "",
+      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
+      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+    }} /></ErrorBoundary>;
+  }
   return (
     <ErrorBoundary>
       <div className="shell">

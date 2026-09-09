@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lumin/runtime-client": "*",
     "@lumin/contracts": "*",
     "@lumin/i18n": "*",
     "@lumin/media": "*",

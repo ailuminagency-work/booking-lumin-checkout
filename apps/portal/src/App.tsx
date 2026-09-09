@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { Component } from "react";
+import { ConnectedPortal } from "./connected/ConnectedPortal";
 import type { ErrorInfo, ReactNode } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
@@ -48,6 +49,13 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 export function App() {
+  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
+    return <ErrorBoundary><ConnectedPortal config={{
+      url: import.meta.env.VITE_SUPABASE_URL ?? "",
+      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
+      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+    }} /></ErrorBoundary>;
+  }
   return (
     <ErrorBoundary>
       <PortalProvider>
