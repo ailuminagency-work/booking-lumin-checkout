@@ -1,10 +1,11 @@
+import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository } from "./repository";
-const statuses:Record<FlowCode,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
+const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
@@ -50,7 +51,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if([...url.searchParams].length||req.method!=="POST")throw new FlowError("INVALID_REQUEST");
     const match=url.pathname.match(/^\/api\/installations\/([^/]+)\/sessions$/);
     if(match){const id=Uuid.parse(match[1]);z.object({}).strict().parse(await jsonBody(req));
-     const sessionToken=randomBytes(32).toString("base64url");const data=await call("issue_flow_session",[id,tokenHash(sessionToken),origin]);send(res,200,{ok:true,data:{...data,sessionToken}});return;
+     const sessionToken=randomBytes(32).toString("base64url");const data=RpcResults.issue_flow_session.parse(await call("issue_flow_session",[id,tokenHash(sessionToken),origin]));send(res,200,{ok:true,data:{...data,sessionToken}});return;
     }
     if(url.pathname==="/api/flow-sessions/request"){
      const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
@@ -60,6 +61,9 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const actor=await owner();
    if([...url.searchParams.keys()].some(k=>k!=="tenantId")||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
+    const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
+   }
    const lists:Record<string,FlowRpc>={"/api/configurable-flows":"flow_owner_configurable_list","/api/services":"flow_owner_services","/api/flows":"flow_owner_list","/api/requests":"flow_owner_requests"};
    if(req.method==="GET"&&Object.hasOwn(lists,url.pathname)){send(res,200,{ok:true,data:await call(lists[url.pathname]!,[actor,tenant])});return;}
    const configurable=url.pathname.match(/^\/api\/configurable-flows\/([^/]+)\/(draft|publish)$/);

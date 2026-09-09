@@ -1,3 +1,4 @@
+import { RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
@@ -31,6 +32,8 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ owner_roster_snapshot:z.unknown().transform((v,ctx)=>{try{return parseRosterSnapshot(v);}catch{ctx.addIssue({code:"custom",message:"Invalid roster snapshot"});return z.NEVER;}}),
+ roster_provision:RosterVersion,roster_worker_put:RosterVersion,roster_crew_put:RosterVersion,roster_crew_member_set:RosterVersion,roster_eligibility_put:RosterVersion,roster_shift_put:RosterVersion,
  flow_owner_services:z.object({services:z.array(ServiceRender).max(100)}).strict(),
  flow_owner_list:FlowList,
  flow_owner_configurable_list:FlowList,
