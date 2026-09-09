@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { BookingRecord, Slot } from "@lumin/contracts";
 import { simpleService, TENANT_ID } from "../config/demoTenant";
 import * as engines from "../engines";
@@ -15,9 +15,25 @@ function Probe() {
   const { state } = useCheckout();
   return <output data-testid="checkout-state">{JSON.stringify({ step: state.step, slot: state.slot })}</output>;
 }
+function ConditionalSlotStep() {
+  const { state } = useCheckout();
+  return <>{state.step === "slot" ? <SlotPicker /> : <p>Customer details</p>}<WizardControls /><Probe /></>;
+}
 afterEach(() => vi.restoreAllMocks());
 
 describe("checkout recovery", () => {
+  it.each([false, true])("blocks Continue during delayed availability, then honors checked slot validity=%s", async valid => {
+    let finish!: () => void;
+    vi.spyOn(engines, "listExistingHolds").mockImplementation(() => new Promise(resolve => { finish = () => resolve([]); }));
+    vi.spyOn(engines.availabilityEngine, "getSlots").mockReturnValue(valid ? [first] : []);
+    render(<CheckoutProvider initialState={{ ...createFreshState(), step: "slot", selection: emptySelection(simpleService.id), slot: first }}><ConditionalSlotStep /></CheckoutProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(JSON.parse(screen.getByTestId("checkout-state").textContent!).step).toBe("slot");
+    await act(async () => finish());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(JSON.parse(screen.getByTestId("checkout-state").textContent!)).toEqual(valid ? { step: "customer", slot: first } : { step: "slot", slot: null });
+  });
+
   it("clears the previous day's hidden slot when choosing another date", async () => {
     vi.spyOn(engines, "listExistingHolds").mockResolvedValue([]);
     vi.spyOn(engines.availabilityEngine, "getSlots").mockReturnValue([first, second]);

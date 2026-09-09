@@ -21,6 +21,7 @@ export function SlotPicker() {
 
   useEffect(() => {
     if (!service) return;
+    dispatch({ type: "SLOT_AVAILABILITY_PENDING", pending: true });
     let cancelled = false;
     setSlots(null);
     void (async () => {
@@ -53,10 +54,13 @@ export function SlotPicker() {
   }, [service?.id]);
 
   useEffect(() => {
-    if (slots === null || !state.slot || !service) return;
-    const selected = slots.find(slot => slot.start === state.slot?.start && slot.end === state.slot?.end);
-    const resourceAvailable = !resourceBacked || resourceStatusForSlot(service.id, state.slot, nowIso).satisfiable;
-    if (!selected || !resourceAvailable) dispatch({ type: "CLEAR_SLOT" });
+    if (slots === null || !service) return;
+    if (state.slot) {
+      const selected = slots.find(slot => slot.start === state.slot?.start && slot.end === state.slot?.end);
+      const resourceAvailable = !resourceBacked || resourceStatusForSlot(service.id, state.slot, nowIso).satisfiable;
+      if (!selected || !resourceAvailable) dispatch({ type: "CLEAR_SLOT" });
+    }
+    dispatch({ type: "SLOT_AVAILABILITY_PENDING", pending: false });
   }, [slots, state.slot, service, resourceBacked, nowIso, dispatch]);
 
   if (!service) return <p className="empty">Choose a service first.</p>;
