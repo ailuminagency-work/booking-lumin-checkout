@@ -110,6 +110,7 @@ create function public.save_flow_draft(p_tenant_id uuid,p_flow_id uuid,p_name te
 returns bigint language plpgsql security definer set search_path=pg_catalog as $$
 declare v_revision bigint;
 begin
+ if not lumin.tenant_is_active(p_tenant_id) then raise exception 'FLOW_TENANT_INACTIVE' using errcode='42501'; end if;
  if lumin.tenant_role(p_tenant_id) is distinct from 'BUSINESS_OWNER' then raise exception 'FLOW_OWNER_REQUIRED' using errcode='42501'; end if;
  if p_expected_revision is null or p_expected_revision < 0 or p_expected_revision >= 9007199254740991 then raise exception 'FLOW_REVISION_INVALID' using errcode='22023'; end if;
  if p_expected_revision=0 then
@@ -136,6 +137,7 @@ create function public.publish_flow_version(p_tenant_id uuid,p_flow_id uuid,p_ex
 returns uuid language plpgsql security definer set search_path=pg_catalog as $$
 declare d public.flow_drafts;
 begin
+ if not lumin.tenant_is_active(p_tenant_id) then raise exception 'FLOW_TENANT_INACTIVE' using errcode='42501'; end if;
  perform 1 from public.flows where tenant_id=p_tenant_id and id=p_flow_id and status<>'archived' for update;
  if not found then raise exception 'FLOW_NOT_PUBLISHABLE' using errcode='40001'; end if;
  select * into d from public.flow_drafts where tenant_id=p_tenant_id and flow_id=p_flow_id;

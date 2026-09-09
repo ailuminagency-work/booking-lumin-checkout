@@ -86,5 +86,17 @@ select set_config('request.jwt.claims','{"sub":"11111111-1111-4111-8111-11111111
 set local role authenticated;
 select pg_temp.assert_true((select count(*)=1 from public.flow_versions),'owner published config visible');
 select pg_temp.assert_true((select count(*)=1 from public.flow_installations),'owner installation visible');
+reset role;
+update public.tenants set status='inactive' where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+set local role authenticated;
+select pg_temp.reject_sql($q$select public.save_flow_draft('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000001','Flow',2,'{"key":"x","steps":[{"key":"q","questionKey":"q"}]}')$q$,'42501');
+reset role; set local role service_role;
+select pg_temp.reject_sql($q$select public.publish_flow_version('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000001',2,'a0000000-0000-4000-8000-000000000012','a0000000-0000-4000-8000-000000000013','{"key":"x","steps":[{"key":"q","questionKey":"q"}]}','["https://business.example"]')$q$,'42501');
+reset role;
+update public.tenants set status='suspended' where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+set local role authenticated;
+select pg_temp.reject_sql($q$select public.save_flow_draft('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000001','Flow',2,'{"key":"x","steps":[{"key":"q","questionKey":"q"}]}')$q$,'42501');
+reset role; set local role service_role;
+select pg_temp.reject_sql($q$select public.publish_flow_version('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000001',2,'a0000000-0000-4000-8000-000000000012','a0000000-0000-4000-8000-000000000013','{"key":"x","steps":[{"key":"q","questionKey":"q"}]}','["https://business.example"]')$q$,'42501');
 reset role; rollback;
 \echo ALL FLOW STORAGE TESTS PASSED
