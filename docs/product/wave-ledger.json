@@ -218,7 +218,7 @@
       "id": "W3.2.local_candidate",
       "kind": "implementation",
       "owner": "W3",
-      "status": "planned",
+      "status": "building",
       "dependsOn": [
         "W3.1.local_candidate"
       ],
