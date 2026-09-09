@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "repository": "ailuminagency-work/booking-lumin-checkout",
+  "releaseBoundary": "reviewed_candidates_only",
+  "requiredGates": ["builder", "unit", "domain", "independent", "adversarial", "integration", "runtime", "ci", "release"],
+  "waves": [
+    {"id":"W0","name":"Product agreement","dependsOn":[],"status":"verified","scope":"planning","evidence":"docs/product/README.md"},
+    {"id":"W1","name":"Portal shell and publication/worker contracts","dependsOn":["W0"],"status":"verified","scope":"candidate","candidate":"ccdafde3dc81b4e2cd180cb916e490dcdf4bc56e","gates":["builder","unit","domain","independent","adversarial","integration","runtime","ci","release"],"evidence":"https://github.com/ailuminagency-work/booking-lumin-checkout/pull/32","ci":"https://github.com/ailuminagency-work/booking-lumin-checkout/actions/runs/34390399999","deployment":"not_deployed"},
+    {"id":"W2","name":"Action API, outbox and flow storage foundations","dependsOn":["W1"],"status":"building","scope":"candidate","branch":"codex/product-wave2","owners":["architecture_audit: packages/action-api","security_audit: migration0015 and outbox tests","baseline_context: migration0016 and flow storage tests","root: workflow, CI, lockfile and integration"],"deployment":"not_deployed"},
+    {"id":"W3","name":"Builder to persisted customer request","dependsOn":["W2"],"status":"planned","scope":"candidate","deployment":"not_deployed"},
+    {"id":"W4","name":"Scheduling, resources and field operations","dependsOn":["W2","W3"],"status":"planned","scope":"candidate","deployment":"not_deployed"},
+    {"id":"W5","name":"Merchant financial integrity and platform billing","dependsOn":["W2","W4"],"status":"planned","scope":"candidate","deployment":"not_deployed"},
+    {"id":"W6","name":"Fake provider connections and durable delivery","dependsOn":["W2","W5"],"status":"planned","scope":"candidate","deployment":"not_deployed"},
+    {"id":"W7","name":"Operational Portal, Command Center, AI and health","dependsOn":["W3","W4","W5","W6"],"status":"planned","scope":"candidate","deployment":"not_deployed"},
+    {"id":"W8","name":"Staging pilot and deployment synchronization","dependsOn":["W7"],"status":"blocked","scope":"staging","blocker":"Netlify access permission and genuine authenticated pilot identities remain unresolved; prepare and test all independent artifacts first.","deployment":"not_deployed"},
+    {"id":"W9","name":"Optional real provider activation","dependsOn":["W8"],"status":"blocked","scope":"activation","blocker":"Real provider credentials explicitly prohibited until separate activation authorization.","deployment":"not_deployed"}
+  ]
+}
