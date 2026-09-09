@@ -40,7 +40,7 @@ end $$;
 create function public.roster_provision(p_actor uuid,p_tenant uuid) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
 declare v bigint;begin perform lumin.flow_actor(p_actor,p_tenant,true);insert into public.worker_roster_state(tenant_id) values(p_tenant) on conflict do nothing;select version into v from public.worker_roster_state where tenant_id=p_tenant for share;return v;end $$;
 create function public.roster_worker_put(p_actor uuid,p_tenant uuid,p_expected bigint,p_id uuid,p_name text,p_active boolean,p_create boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_create is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
@@ -50,7 +50,7 @@ begin
  return v;
 end $$;
 create function public.roster_crew_put(p_actor uuid,p_tenant uuid,p_expected bigint,p_id uuid,p_name text,p_active boolean,p_create boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_create is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
@@ -60,7 +60,7 @@ begin
  return v;
 end $$;
 create function public.roster_access_put(p_actor uuid,p_tenant uuid,p_expected bigint,p_user uuid,p_worker uuid,p_active boolean,p_create boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_create is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
@@ -77,7 +77,7 @@ begin
  return v;
 end $$;
 create function public.roster_crew_member_set(p_actor uuid,p_tenant uuid,p_expected bigint,p_crew uuid,p_worker uuid,p_present boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_present is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
@@ -86,7 +86,7 @@ begin
  return v;
 end $$;
 create function public.roster_eligibility_put(p_actor uuid,p_tenant uuid,p_expected bigint,p_service uuid,p_worker uuid,p_active boolean,p_create boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_create is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
@@ -96,7 +96,7 @@ begin
  return v;
 end $$;
 create function public.roster_shift_put(p_actor uuid,p_tenant uuid,p_expected bigint,p_id uuid,p_worker uuid,p_kind text,p_start timestamptz,p_end timestamptz,p_zone text,p_active boolean,p_create boolean) returns bigint language plpgsql security definer set search_path=pg_catalog as $$
-declare v bigint; 
+declare v bigint;
 begin
  v:=lumin.roster_begin(p_actor,p_tenant,p_expected);
  if p_create is null then raise exception 'ROSTER_INVALID' using errcode='22023';end if;
