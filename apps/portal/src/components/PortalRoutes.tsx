@@ -28,7 +28,7 @@ export function UnavailablePage({ title, children }: { title: string; children?:
   return <section><h1>{title}</h1><p role="status">This section is not available yet.</p><p>No changes can be made here. Existing bookings and settings are unchanged.</p>{children}</section>;
 }
 
-export function PortalRoutes({ mode, bookings, services, embed }: { mode: "demo" | "connected"; bookings?: ReactNode; services?: ReactNode; embed?: ReactNode }) {
+export function PortalRoutes({ mode, bookings, services, embed, workers }: { mode: "demo" | "connected"; bookings?: ReactNode; services?: ReactNode; embed?: ReactNode; workers?: ReactNode }) {
   const demo = mode === "demo";
   const page = (title: string, content: ReactNode) => demo ? content : <UnavailablePage title={title} />;
   return <Routes>
@@ -38,7 +38,7 @@ export function PortalRoutes({ mode, bookings, services, embed }: { mode: "demo"
     <Route path="calendar" element={<UnavailablePage title="Calendar">{demo && <p><Link to="/calendar/availability">View demo availability settings</Link></p>}</UnavailablePage>} />
     <Route path="calendar/availability" element={page("Availability settings", <AvailabilityPage />)} />
     <Route path="calendar/*" element={<UnavailablePage title="Calendar" />} />
-    <Route path="workers/*" element={<UnavailablePage title="Workers" />} />
+    <Route path="workers/*" element={workers ?? <UnavailablePage title="Workers" />} />
     <Route path="customers" element={page("Customers", <CustomersPage />)} />
     <Route path="customers/:customerId" element={<UnavailablePage title="Customer detail" />} />
     <Route path="services" element={demo ? <><p><Link to="/services/resources">Resources</Link> · <Link to="/services/templates">Templates</Link></p><ServicesPage /></> : services} />

@@ -10,7 +10,8 @@
     "test": "vitest run",
     "local:serve": "tsx server/local.ts",
     "local:seed": "tsx server/seed.ts",
-    "test:flow-http": "tsx server/pg-http.integration.ts"
+    "test:flow-http": "tsx server/pg-http.integration.ts",
+    "test:roster-http": "tsx server/roster-http.integration.ts"
   },
   "dependencies": {
     "@lumin/contracts": "*",
