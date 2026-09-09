@@ -72,6 +72,7 @@ export type CheckoutAction =
   | { type: "SELECT_SERVICE"; service: Service }
   | { type: "SET_SELECTION"; selection: Selection }
   | { type: "SET_SLOT"; slot: Slot }
+  | { type: "CLEAR_SLOT" }
   | { type: "SET_CUSTOMER_DRAFT"; patch: Partial<CustomerDraft> }
   | { type: "CONFIRM_CUSTOMER"; customer: CustomerDetails; address: Address | null }
   | { type: "GOTO"; step: Step }
@@ -166,6 +167,8 @@ export function checkoutReducer(state: CheckoutState, action: CheckoutAction): C
         slot: null,
         ...invalidateBooking(state),
       };
+    case "CLEAR_SLOT":
+      return { ...state, slot: null, ...invalidateBooking(state) };
     case "SET_SLOT":
       return {
         ...state,

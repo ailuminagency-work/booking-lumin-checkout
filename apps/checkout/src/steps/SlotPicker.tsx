@@ -52,6 +52,13 @@ export function SlotPicker() {
     };
   }, [service?.id]);
 
+  useEffect(() => {
+    if (slots === null || !state.slot || !service) return;
+    const selected = slots.find(slot => slot.start === state.slot?.start && slot.end === state.slot?.end);
+    const resourceAvailable = !resourceBacked || resourceStatusForSlot(service.id, state.slot, nowIso).satisfiable;
+    if (!selected || !resourceAvailable) dispatch({ type: "CLEAR_SLOT" });
+  }, [slots, state.slot, service, resourceBacked, nowIso, dispatch]);
+
   if (!service) return <p className="empty">Choose a service first.</p>;
 
   if (slots === null) {
@@ -121,7 +128,12 @@ export function SlotPicker() {
               type="button"
               className={`chip${key === activeDate ? " selected" : ""}`}
               aria-pressed={key === activeDate}
-              onClick={() => setSelectedDate(key)}
+              onClick={() => {
+                setSelectedDate(key);
+                if (state.slot && dateKeyInTz(state.slot.start, tenant.timezone) !== key) {
+                  dispatch({ type: "CLEAR_SLOT" });
+                }
+              }}
             >
               {first ? display.dayLabel(first.start) : key}
             </button>
@@ -159,6 +171,7 @@ export function SlotPicker() {
           );
         })}
       </div>
+      {state.attempted.slot && !state.slot && <p role="alert">Please choose a time before continuing.</p>}
     </section>
   );
 }
