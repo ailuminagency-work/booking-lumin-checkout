@@ -133,7 +133,14 @@ function blackoutCovers(query: AvailabilityQuery, b: AvailabilityBlackout, date:
     const to = b.to.slice(5);
     return from <= to ? md >= from && md <= to : md >= from || md <= to;
   }
-  return date >= b.from && date <= b.to;
+  // Absolute range. A misconfigured inverted range (from > to) is normalized to
+  // [min, max] rather than covering nothing — blackouts FAIL CLOSED, so a
+  // backwards-typed vacation still closes the intended days instead of silently
+  // leaving them bookable. (An annual range, by contrast, treats from > to as an
+  // intentional year-end wrap and is handled above.)
+  const lo = b.from <= b.to ? b.from : b.to;
+  const hi = b.from <= b.to ? b.to : b.from;
+  return date >= lo && date <= hi;
 }
 
 /** Remove the minute interval [bs, be) from a set of windows (may split). */

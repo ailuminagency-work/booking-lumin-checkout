@@ -82,6 +82,25 @@ describe("blackout: inclusive date range", () => {
     expect(startsOn(slots, "2026-01-08")).toHaveLength(8);
     expect(startsOn(slots, "2026-01-09")).toHaveLength(8);
   });
+
+  it("fails CLOSED on a backwards-typed once-range (from > to) — normalized, not ignored", () => {
+    // A tenant misconfigures the vacation with the dates inverted. Because
+    // blackouts must fail closed, the intended range 01-05..01-07 is still
+    // closed rather than silently left bookable.
+    const slots = engine.getSlots(
+      query({
+        now: "2026-01-04T00:00:00.000Z",
+        from: "2026-01-05T00:00:00.000Z",
+        to: "2026-01-10T00:00:00.000Z",
+        blackouts: [blackout({ from: "2026-01-07", to: "2026-01-05" })],
+      }),
+    );
+    expect(startsOn(slots, "2026-01-05")).toHaveLength(0);
+    expect(startsOn(slots, "2026-01-06")).toHaveLength(0);
+    expect(startsOn(slots, "2026-01-07")).toHaveLength(0);
+    // Days outside the intended range stay open.
+    expect(startsOn(slots, "2026-01-08")).toHaveLength(8);
+  });
 });
 
 describe("blackout: annual recurrence across a year boundary", () => {
