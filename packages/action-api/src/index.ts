@@ -63,7 +63,8 @@ export function createActionApi(dependencies: ActionApiDependencies = {}) {
       let actor: VerifiedActor;
       try {
         actor = VerifiedActor.parse(await authenticate(credential));
-        if (!Number.isFinite(now()) || Date.parse(actor.expiresAt) <= now()) return fail("UNAUTHENTICATED");
+        const verifiedAt = now();
+        if (!Number.isFinite(verifiedAt) || Date.parse(actor.expiresAt) <= verifiedAt) return fail("UNAUTHENTICATED");
       } catch { return fail("UNAUTHENTICATED"); }
       if (actor.tenantId !== request.tenantId || actor.kind !== "member") return fail("FORBIDDEN");
       // Conservative initial policy: staff may read, only owner may request mutations.
@@ -79,7 +80,13 @@ export function createActionApi(dependencies: ActionApiDependencies = {}) {
         if ("bookingId" in parsed && "bookingId" in request.body && parsed.bookingId !== request.body.bookingId) return fail("INTERNAL_ERROR");
         // Suppress a response that completes after session expiry. Handlers must
         // recheck revocation and state in the committing transaction themselves.
-        if (!Number.isFinite(now()) || Date.parse(actor.expiresAt) <= now()) return fail("UNAUTHENTICATED");
+        const verifiedAt = now();
+        if (!Number.isFinite(verifiedAt) || Date.parse(actor.expiresAt) <= verifiedAt) return fail("UNAUTHENTICATED");
+        if (request.action === "findAvailability" && "offers" in parsed) {
+          const start = Date.parse(request.body.startsAt); const end = Date.parse(request.body.endsAt);
+          if (Date.parse(parsed.expiresAt) <= verifiedAt || parsed.offers.some(offer =>
+            Date.parse(offer.startsAt) < start || Date.parse(offer.endsAt) > end)) return fail("INTERNAL_ERROR");
+        }
         return { ok: true, requestId: request.requestId, result: parsed };
       } catch (error) {
         return fail(error instanceof ActionHandlerError && ["FORBIDDEN", "CONFLICT", "NOT_AVAILABLE"].includes(error.code) ? error.code : "INTERNAL_ERROR");

@@ -84,3 +84,18 @@ describe("controlled dispatch", () => {
     const h=harness(); const r=request("findAvailability");for(const endsAt of [r.body.startsAt,"2031-01-02T12:00:00Z"]){expect(await h.api.dispatch("test-session",json({...r,body:{...r.body,endsAt}}))).toEqual(no("INVALID_REQUEST"));}
   });
 });
+
+it("rejects expired and out-of-query handler availability while accepting exact boundaries", async () => {
+  const r=request("findAvailability");
+  const dispatch = async (offers: unknown[], expiresAt: string) => createActionApi({authenticate:async()=>member(),now,handlers:{findAvailability:async()=>({offers,expiresAt})}}).dispatch("test-session",json(r));
+  for(const expiry of ["2030-01-01T11:59:59Z","2030-01-01T12:00:00Z"]) expect(await dispatch([],expiry)).toEqual(no("INTERNAL_ERROR"));
+  for(const offer of [
+    {startsAt:"2030-01-02T08:59:59Z",endsAt:"2030-01-02T10:00:00Z"},
+    {startsAt:"2030-01-02T11:00:00Z",endsAt:"2030-01-02T12:00:01Z"},
+  ]) expect(await dispatch([offer],member().expiresAt)).toEqual(no("INTERNAL_ERROR"));
+  expect((await dispatch([{startsAt:r.body.startsAt,endsAt:r.body.endsAt}],member().expiresAt)).ok).toBe(true);
+});
+it("checks offer expiry against the trusted clock after awaited handler work", async () => {
+  let clock=now();const api=createActionApi({authenticate:async()=>member(),now:()=>clock,handlers:{findAvailability:async()=>{clock+=1000;return {offers:[],expiresAt:"2030-01-01T12:00:01Z"};}}});
+  expect(await api.dispatch("test-session",json(request("findAvailability")))).toEqual(no("INTERNAL_ERROR"));
+});
