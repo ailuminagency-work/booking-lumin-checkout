@@ -2,19 +2,10 @@
 import { Component } from "react";
 import { ConnectedPortal } from "./connected/ConnectedPortal";
 import type { ErrorInfo, ReactNode } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PortalProvider } from "./components/PortalProvider";
-import { AvailabilityPage } from "./pages/Availability";
-import { BookingsPage } from "./pages/Bookings";
-import { CheckoutConfigPage } from "./pages/CheckoutConfig";
-import { CustomersPage } from "./pages/Customers";
-import { DashboardPage } from "./pages/Dashboard";
-import { IntegrationsPage } from "./pages/Integrations";
-import { MediaLibraryPage } from "./pages/MediaLibrary";
-import { ResourcesPage } from "./pages/Resources";
-import { ServiceDetailPage, ServicesPage } from "./pages/Services";
-import { SettingsPage } from "./pages/Settings";
+import { LegacyRedirects, PortalRoutes } from "./components/PortalRoutes";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -48,43 +39,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   }
 }
 
-export function App() {
-  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
-    return <ErrorBoundary><ConnectedPortal config={{
+/** Shared route context; mode determines data access, never a fallback to demo. */
+export function PortalApplication() {
+  return <><LegacyRedirects />{import.meta.env.VITE_RUNTIME_MODE === "supabase" ?
+    <ConnectedPortal config={{
       url: import.meta.env.VITE_SUPABASE_URL ?? "",
       publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
       tenantId: import.meta.env.VITE_TENANT_ID ?? "",
-    }} /></ErrorBoundary>;
-  }
-  return (
-    <ErrorBoundary>
-      <PortalProvider>
-        <BrowserRouter basename={import.meta.env.BASE_URL}>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<DashboardPage />} />
-              <Route path="bookings" element={<BookingsPage />} />
-              <Route path="customers" element={<CustomersPage />} />
-              <Route path="services" element={<ServicesPage />} />
-              <Route path="services/:serviceId" element={<ServiceDetailPage />} />
-              <Route path="availability" element={<AvailabilityPage />} />
-              <Route path="resources" element={<ResourcesPage />} />
-              <Route path="media" element={<MediaLibraryPage />} />
-              <Route path="checkout" element={<CheckoutConfigPage />} />
-              <Route path="integrations" element={<IntegrationsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route
-                path="*"
-                element={
-                  <div className="empty-state" role="status">
-                    <p className="empty-state-title">Page not found</p>
-                  </div>
-                }
-              />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </PortalProvider>
-    </ErrorBoundary>
-  );
+    }} /> : <PortalProvider><Layout><PortalRoutes mode="demo" /></Layout></PortalProvider>}</>;
+}
+
+export function App() {
+  return <ErrorBoundary><BrowserRouter basename={import.meta.env.BASE_URL}><PortalApplication /></BrowserRouter></ErrorBoundary>;
 }
