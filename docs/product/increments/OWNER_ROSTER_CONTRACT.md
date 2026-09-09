@@ -85,4 +85,3 @@ Snapshot SQL errors:42501 FORBIDDEN→HTTP403; P0002 ROSTER_NOT_INITIALIZED→HT
 PostgreSQL is the source timezone registry. Do not silently substitute Intl support as a restriction on reading existing valid PostgreSQL zone labels. A browser that cannot format a recorded zone uses a clearly labeled UTC display fallback. There are no raw ISO timestamp input boxes in the initial owner UI.
 
 Ownership: baseline_context SQL0023/tests; architecture_audit shared contracts and action-api; security_audit flow-ui client and Portal components. API cell commits shared contract exports early for UI consumption. Root owns combined lockfile/CI/integration and review rotation. No shared dependency installation or root node_modules retargeting during parallel work.
-

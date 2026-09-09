@@ -15,4 +15,3 @@ The policy candidate's first CI run failed a version-specific test expectation: 
 The next owner-roster slice follows [the accepted contract](OWNER_ROSTER_CONTRACT.md): complete bounded snapshot, strict owner APIs, worker/crew/eligibility controls and read-only formatted shifts. Shared schema review alone does not certify the SQL/API/UI implementation. Atomic combined holds, worker job access, confirmation/payment handoff, friendly shift editing, production Auth and hosted deployment remain open.
 
 Netlify synchronization and live infrastructure activation are not certified by these source/CI receipts. Real provider credentials remain prohibited. See the main product specs, execution workflow and wave ledger for full program requirements.
-
