@@ -176,4 +176,3 @@ Every slice follows Builder → Unit Test → Domain Review → Independent Revi
 | Current frontend build packaging | `netlify.toml`, `scripts/build-preview.mjs`, `scripts/preview-mode.mjs` |
 
 The current implementation statements above derive from this repository snapshot. Render, durable jobs/outbox, the Action API, new worker roles and immutable publication persistence remain proposals. Official hosting documentation supports the platform boundary choices, not a claim that any service has been provisioned or connected.
-
