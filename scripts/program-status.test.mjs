@@ -12,6 +12,7 @@ function fullW3(){const ledger=fixture();for(const id of ['W3.fields_and_workflo
 test('records local candidate without full W3 completion and unlocks dependent implementation only',()=>{
  // Freeze this scenario at the first local increment even as the real ledger advances.
  const firstIncrement=fixture();node(firstIncrement,'W3.2.local_candidate').status='planned';
+ node(firstIncrement,'W4.implementation').status='planned';wave(firstIncrement,'W4').status='planned';
  const result=inspectProgram(firstIncrement);assert.deepEqual(result.verified,['W0','W1','W2']);assert.deepEqual(result.verifiedNodes,['W3.1.local_candidate']);assert(result.active.includes('W3'));assert(result.readyNodes.includes('W4.implementation'));assert(!result.ready.includes('W4'));assert(!result.readyNodes.includes('W8.integrated_pilot'));
  const ledger=fixture();node(ledger,'W4.implementation').status='building';wave(ledger,'W4').status='building';assert(inspectProgram(ledger).active.includes('W4'));assert.equal(wave(ledger,'W3').status,'building');
 });

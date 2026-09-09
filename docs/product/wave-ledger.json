@@ -107,7 +107,7 @@
         "W2",
         "W3"
       ],
-      "status": "planned",
+      "status": "building",
       "scope": "candidate",
       "deployment": "not_deployed",
       "requires": [
@@ -295,7 +295,7 @@
       "id": "W4.implementation",
       "kind": "implementation",
       "owner": "W4",
-      "status": "planned",
+      "status": "building",
       "dependsOn": [
         "W2",
         "W3.1.local_candidate"
