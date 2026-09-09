@@ -60,8 +60,13 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/capacity_tests.sql
       - name: Run resource tenant-isolation attacks
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_rls_tests.sql
+      - name: Reject cross-tenant resource relationships
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_tenant_integrity_tests.sql
       # SQL suites roll back their fixtures. The final-slot harness requires
-      # committed fixtures and separate concurrent transactions; run it last.
+      # committed fixtures and separate concurrent transactions; run races last.
       - name: Run concurrent final-slot capacity race
         timeout-minutes: 2
         run: bash supabase/tests/capacity_concurrency_harness.sh
+      - name: Run overlapping interval and timezone races
+        timeout-minutes: 2
+        run: bash supabase/tests/capacity_overlap_concurrency_harness.sh

@@ -1,5 +1,8 @@
 # Dependency DAG
 
+Historical bootstrap DAG below. The active 18-workstream continuation queue and
+dependency graph are in [CONTINUATION_PROGRAM.md](CONTINUATION_PROGRAM.md).
+
 Owner: Program Governor. Re-evaluated on every major evidence change.
 
 ```
