@@ -218,11 +218,25 @@
       "id": "W3.2.local_candidate",
       "kind": "implementation",
       "owner": "W3",
-      "status": "building",
+      "status": "verified",
       "dependsOn": [
         "W3.1.local_candidate"
       ],
-      "acceptance": "Reviewed per-flow field overrides/conditional editing, actual local persistence and runtime parity; not full W3."
+      "acceptance": "Reviewed per-flow field overrides/conditional editing, actual local persistence and runtime parity; not full W3.",
+      "candidate": "58fdc529eeafa99c9809565679cf3f16fdb41a4d",
+      "evidence": "https://github.com/ailuminagency-work/booking-lumin-checkout/pull/36",
+      "ci": "https://github.com/ailuminagency-work/booking-lumin-checkout/actions/runs/34400524038",
+      "gates": [
+        "builder",
+        "unit",
+        "domain",
+        "independent",
+        "adversarial",
+        "integration",
+        "runtime",
+        "ci",
+        "release"
+      ]
     },
     {
       "id": "E.environment_access",

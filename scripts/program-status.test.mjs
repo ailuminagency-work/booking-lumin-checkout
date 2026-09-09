@@ -10,7 +10,9 @@ function hosted(ledger,item){review(ledger,item);item.hostedEvidence={environmen
 function fullW3(){const ledger=fixture();for(const id of ['W3.fields_and_workflows','W3.publication_and_installation','W3.runtime_and_presets'])review(ledger,node(ledger,id));hosted(ledger,node(ledger,'E.environment_access'));hosted(ledger,node(ledger,'W3.hosted_request_acceptance'));return ledger;}
 
 test('records local candidate without full W3 completion and unlocks dependent implementation only',()=>{
- const result=inspectProgram(fixture());assert.deepEqual(result.verified,['W0','W1','W2']);assert.deepEqual(result.verifiedNodes,['W3.1.local_candidate']);assert(result.active.includes('W3'));assert(result.readyNodes.includes('W4.implementation'));assert(!result.ready.includes('W4'));assert(!result.readyNodes.includes('W8.integrated_pilot'));
+ // Freeze this scenario at the first local increment even as the real ledger advances.
+ const firstIncrement=fixture();node(firstIncrement,'W3.2.local_candidate').status='planned';
+ const result=inspectProgram(firstIncrement);assert.deepEqual(result.verified,['W0','W1','W2']);assert.deepEqual(result.verifiedNodes,['W3.1.local_candidate']);assert(result.active.includes('W3'));assert(result.readyNodes.includes('W4.implementation'));assert(!result.ready.includes('W4'));assert(!result.readyNodes.includes('W8.integrated_pilot'));
  const ledger=fixture();node(ledger,'W4.implementation').status='building';wave(ledger,'W4').status='building';assert(inspectProgram(ledger).active.includes('W4'));assert.equal(wave(ledger,'W3').status,'building');
 });
 test('full parent requires every capability and hosted acceptance, then its own full receipt',()=>{
