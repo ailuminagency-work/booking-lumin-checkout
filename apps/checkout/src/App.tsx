@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { ConnectedCheckout } from "./connected/ConnectedCheckout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { STEP_LABELS, visibleStepsFor, WizardControls } from "./components/WizardControls";
 import { branding, getService } from "./config/demoTenant";
@@ -75,6 +76,13 @@ function Shell() {
 }
 
 export default function App() {
+  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
+    return <ErrorBoundary><ConnectedCheckout config={{
+      url: import.meta.env.VITE_SUPABASE_URL ?? "",
+      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
+      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+    }} /></ErrorBoundary>;
+  }
   // White-label: branding flows in via CSS custom properties, so swapping
   // the tenant config restyles the whole checkout.
   const brandStyle = { "--accent": branding.accentColor } as CSSProperties;
