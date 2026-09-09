@@ -48,7 +48,7 @@ jobs:
         run: psql -h localhost -U postgres -d postgres -c 'create database lumin_test;'
       - name: Apply local harness
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/local_harness.sql
-      - name: Apply migrations 0001..0009 in order (excluding _deferred)
+      - name: Apply all active migrations in order (excluding _deferred)
         run: |
           for f in supabase/migrations/0*.sql; do
             echo "applying $f"
@@ -56,3 +56,12 @@ jobs:
           done
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
+      - name: Run capacity hold invariants
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/capacity_tests.sql
+      - name: Run resource tenant-isolation attacks
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_rls_tests.sql
+      # SQL suites roll back their fixtures. The final-slot harness requires
+      # committed fixtures and separate concurrent transactions; run it last.
+      - name: Run concurrent final-slot capacity race
+        timeout-minutes: 2
+        run: bash supabase/tests/capacity_concurrency_harness.sh
