@@ -54,3 +54,10 @@ it('rejects a pinned V2 response carrying unused catalog palette data',()=>{
  const render={versionId:F.serviceA,renderSchemaVersion:2,config:{key:'request',steps:[authoring.config.steps[0]]},service:catalog,submissionMode:'unconfirmed_request'};
  expect(RpcResults.issue_flow_session.safeParse({expiresAt:'2030-01-01T00:00:00Z',render}).success).toBe(false);
 });
+it.each(['flow','revision','version','installation','draft'])('binds V2 result %s to the request before commit',async(kind)=>{
+ const result=kind==='flow'?{flowId:F.serviceB,revision:1,authoringVersion:2}:kind==='revision'?{flowId:F.serviceA,revision:2,authoringVersion:2}:kind==='draft'?{flowId:F.serviceB,name:'Draft',revision:1,serviceId:F.serviceA,authoring,effectiveService:catalog}:{versionId:kind==='version'?F.serviceB:F.serviceA,installationId:kind==='installation'?F.serviceA:F.serviceB,renderSchemaVersion:2};
+ const query=vi.fn(async(sql:string)=>({rows:sql.startsWith('select')?[{result}]:[]}));const repo=createFlowRepository({connect:async()=>({query,release:vi.fn()})} as never);
+ const name=kind==='draft'?'get_configurable_flow_draft':kind==='flow'||kind==='revision'?'save_configurable_flow_draft':'publish_configurable_flow';
+ const params=kind==='draft'?[F.ownerA,F.tenantA,F.serviceA]:name==='save_configurable_flow_draft'?[F.ownerA,F.tenantA,F.serviceA,F.serviceA,0,'name',authoring]:[F.ownerA,F.tenantA,F.serviceA,1,F.serviceA,F.serviceB,[F.customerOrigin]];
+ await expect(repo.call(name,params)).rejects.toMatchObject({code:'INTERNAL_ERROR'});expect(query).toHaveBeenCalledWith('rollback');expect(query).not.toHaveBeenCalledWith('commit');
+});

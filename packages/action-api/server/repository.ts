@@ -18,6 +18,16 @@ export function createFlowRepository(pool:Pool):FlowRepository{return {async cal
   const values=params.map((v,i)=>types[i]==="jsonb"?JSON.stringify(v):v);
   const result=await client.query(`select public.${name}(${placeholders}) as result`,values);
   const safe=RpcResults[name].parse(result.rows[0]?.result);
+  // Bind fixed RPC receipts to this request before committing side effects.
+  if(name==="save_configurable_flow_draft"){
+   const receipt=RpcResults.save_configurable_flow_draft.parse(safe);
+   if(receipt.flowId!==params[2]||receipt.revision!==Number(params[4])+1)throw new FlowError("INTERNAL_ERROR");
+  }else if(name==="get_configurable_flow_draft"){
+   if(RpcResults.get_configurable_flow_draft.parse(safe).flowId!==params[2])throw new FlowError("INTERNAL_ERROR");
+  }else if(name==="publish_configurable_flow"){
+   const receipt=RpcResults.publish_configurable_flow.parse(safe);
+   if(receipt.versionId!==params[4]||receipt.installationId!==params[5])throw new FlowError("INTERNAL_ERROR");
+  }
   await client.query("commit");return safe;
  }catch(error){await client.query("rollback").catch(()=>{});throw mapped(error);}finally{client.release();}
 }};}
