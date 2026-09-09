@@ -16,6 +16,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Check dependency security advisories
+        run: npm audit --audit-level=moderate
       - name: Validate execution workflow and gate ledger
         run: node --test scripts/program-status.test.mjs && node scripts/program-status.mjs
       - run: npm run typecheck
@@ -69,6 +71,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
       - name: Verify flow storage tenant isolation and revision control
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/flow_storage_tests.sql
+      - name: Verify bound publication and atomic customer requests
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/bound_flow_tests.sql
       # SQL suites roll back their fixtures. The final-slot harness requires
       # committed fixtures and separate concurrent transactions; run races last.
       - name: Run concurrent final-slot capacity race
@@ -85,3 +89,19 @@ jobs:
       - name: Run concurrent flow draft revision updates
         timeout-minutes: 2
         run: python3 supabase/tests/flow_storage_concurrency.py
+      - name: Run simultaneous customer request retries
+        timeout-minutes: 2
+        env:
+          BOUND_FLOW_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/bound_flow_concurrency.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Verify persisted request journey over HTTP
+        timeout-minutes: 3
+        env:
+          LOCAL_HARNESS: "1"
+          FLOW_TEST_DISPOSABLE: "1"
+        run: npm run test:flow-http --workspace @lumin/action-api

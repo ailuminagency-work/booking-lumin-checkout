@@ -15,6 +15,13 @@ export function previewMode(value = "mock") {
 
 /** Validate public build inputs before touching the existing publish directory. */
 export function validatePreviewEnvironment(environment) {
+  // W3.1 is a local fixture-auth harness, not a deployable API integration.
+  if (environment.VITE_FLOW_LOCAL_HARNESS !== undefined && environment.VITE_FLOW_LOCAL_HARNESS !== "false") {
+    throw new Error("Preview packaging cannot enable VITE_FLOW_LOCAL_HARNESS");
+  }
+  if (environment.VITE_FLOW_API_URL) {
+    throw new Error("VITE_FLOW_API_URL requires a separately reviewed hosted API integration");
+  }
   const configuredMode = environment.VITE_RUNTIME_MODE;
   if (configuredMode === undefined && environment.NETLIFY === "true") {
     throw new Error("Netlify builds require explicit VITE_RUNTIME_MODE=mock or supabase");

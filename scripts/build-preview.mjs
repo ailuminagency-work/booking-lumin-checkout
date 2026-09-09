@@ -43,7 +43,9 @@ await mkdir(output, { recursive: true });
 
 for (const app of apps) {
   run([vite, "build", join(root, "apps", app), "--outDir", join(output, app), "--emptyOutDir"], {
-    env: { ...process.env, VITE_RUNTIME_MODE: mode.runtimeMode, VITE_BASE_PATH: `/${app}/` },
+    // Explicit values also override Vite .env files; local fixture auth must
+    // never be activated by an app-local development environment at publish.
+    env: { ...process.env, VITE_RUNTIME_MODE: mode.runtimeMode, VITE_BASE_PATH: `/${app}/`, VITE_FLOW_LOCAL_HARNESS: "false", VITE_FLOW_API_URL: "" },
   });
   const entry = join(output, app, "index.html");
   const html = await readFile(entry, "utf8");
