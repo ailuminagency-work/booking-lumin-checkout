@@ -10,8 +10,9 @@ These receipts describe isolated draft candidates, not a merged or deployed prog
 
 Each candidate passed builder tests, domain/independent/adversarial review, integration, Runtime Guardian, exact CI and bounded local Release Governor acceptance. Builders and independent reviewers were distinct: quantities root/architecture versus security; roster architecture versus security; policy baseline versus root, with security Runtime Guardian review. Root coordinated integration and release. Exact clean preview packaging passed for each candidate. Accepted earlier migrations were preserved as source files; changes are additive migrations with explicit compatibility boundaries.
 
-The policy candidate's first CI run failed a version-specific test expectation: PostgreSQL15 and18 returned different referential-integrity codes for the same correctly rejected deletion. The corrected assertion requires the specific constraint and retained rows. No database protection was weakened. Its initial failed run is not a verified receipt.
+The policy candidate's first CI run failed a version-specific test expectation: PostgreSQL16.15 and18 returned different referential-integrity codes for the same correctly rejected deletion. The corrected assertion requires the specific constraint and retained rows. No database protection was weakened. Its initial failed run is not a verified receipt.
 
 The next owner-roster slice follows [the accepted contract](OWNER_ROSTER_CONTRACT.md): complete bounded snapshot, strict owner APIs, worker/crew/eligibility controls and read-only formatted shifts. Shared schema review alone does not certify the SQL/API/UI implementation. Atomic combined holds, worker job access, confirmation/payment handoff, friendly shift editing, production Auth and hosted deployment remain open.
 
 Netlify synchronization and live infrastructure activation are not certified by these source/CI receipts. Real provider credentials remain prohibited. See the main product specs, execution workflow and wave ledger for full program requirements.
+
