@@ -19,7 +19,7 @@ export function inspectProgram(ledger) {
     if (wave.scope === 'activation' && wave.status !== 'blocked') throw new Error('Activation requires a separately reviewed authorization change');
     if (wave.status === 'verified') {
       if (!wave.evidence?.trim()) throw new Error('Verified wave needs evidence');
-      if (wave.scope !== 'planning' && (!/^[a-f0-9]{40}$/.test(wave.candidate ?? '') || !wave.ci?.startsWith('https://github.com/') || !gates.every(g => wave.gates?.includes(g)))) throw new Error('Verified candidate lacks gate evidence');
+      if (wave.scope !== 'planning' && (!/^[a-f0-9]{40}$/.test(wave.candidate ?? '') || !wave.ci?.startsWith('https://github.com/') || !Array.isArray(wave.gates) || wave.gates.length !== gates.length || new Set(wave.gates).size !== gates.length || !gates.every(g => wave.gates.includes(g)))) throw new Error('Verified candidate lacks gate evidence');
     }
     byId.set(wave.id, wave);
   }

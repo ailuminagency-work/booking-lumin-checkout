@@ -21,6 +21,9 @@ test('rejects cycles, missing dependencies and premature wave starts', () => {
 });
 test('recorded completion requires every gate, commit and CI evidence', () => {
   for (const key of ['gates', 'candidate', 'ci', 'evidence']) { const ledger = fixture(); delete ledger.waves[1][key]; assert.throws(() => inspectProgram(ledger)); }
+  for (const invalid of ['builderunitdomainindependentadversarialintegrationruntimecirelease', [...fixture().requiredGates, 'unit']]) {
+    const ledger = fixture(); ledger.waves[1].gates = invalid; assert.throws(() => inspectProgram(ledger));
+  }
 });
 test('activation, duplicate IDs and silently removed gates fail closed', () => {
   for (const mutate of [l => l.waves[5].status = 'planned', l => l.waves[1].id = 'W0', l => l.requiredGates.pop(), l => l.waves[1].scope = 'planning']) {
