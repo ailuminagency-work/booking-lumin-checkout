@@ -24,7 +24,7 @@ jobs:
       - run: npm run test
       - run: npm run build
       - run: npm run build:preview
-      - run: bash scripts/contamination-check.sh
+      - run: bash scripts/contamination-check.test.sh && bash scripts/contamination-check.sh
 
   database:
     name: database (migrations + RLS attack suite)
