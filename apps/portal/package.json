@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@lumin/runtime-client": "*",
+    "@lumin/flow-ui": "*",
     "@lumin/contracts": "*",
     "@lumin/i18n": "*",
     "@lumin/media": "*",

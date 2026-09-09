@@ -28,7 +28,7 @@ export function UnavailablePage({ title, children }: { title: string; children?:
   return <section><h1>{title}</h1><p role="status">This section is not available yet.</p><p>No changes can be made here. Existing bookings and settings are unchanged.</p>{children}</section>;
 }
 
-export function PortalRoutes({ mode, bookings, services }: { mode: "demo" | "connected"; bookings?: ReactNode; services?: ReactNode }) {
+export function PortalRoutes({ mode, bookings, services, embed }: { mode: "demo" | "connected"; bookings?: ReactNode; services?: ReactNode; embed?: ReactNode }) {
   const demo = mode === "demo";
   const page = (title: string, content: ReactNode) => demo ? content : <UnavailablePage title={title} />;
   return <Routes>
@@ -49,7 +49,7 @@ export function PortalRoutes({ mode, bookings, services }: { mode: "demo" | "con
     <Route path="services/:serviceId" element={page("Service detail", <ServiceDetailPage />)} />
     <Route path="pricing/*" element={<UnavailablePage title="Pricing" />} />
     <Route path="invoices/*" element={<UnavailablePage title="Invoices" />} />
-    <Route path="embed" element={page("Embed Builder", <CheckoutConfigPage />)} />
+    <Route path="embed" element={demo ? <CheckoutConfigPage /> : embed ?? <UnavailablePage title="Embed Builder" />} />
     <Route path="embed/*" element={<UnavailablePage title="Embed Builder" />} />
     <Route path="media" element={page("Media", <MediaLibraryPage />)} />
     <Route path="integrations" element={page("Integrations", <IntegrationsPage />)} />

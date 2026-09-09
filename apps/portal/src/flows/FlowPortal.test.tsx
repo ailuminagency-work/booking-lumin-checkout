@@ -1,0 +1,19 @@
+import {fireEvent,render,screen,waitFor,cleanup} from '@testing-library/react';
+import {afterEach,it,expect,vi} from 'vitest';
+import {MemoryRouter} from 'react-router-dom';
+import {FlowPortal} from './FlowPortal';
+const tenant='11111111-1111-4111-8111-111111111111',flow='22222222-2222-4222-8222-222222222222';
+const service={id:tenant,name:'Test service',durationMinutes:30,questions:[{id:'q',prompt:'Your choice',kind:'single_choice',required:true,choices:[{id:'a',label:'Choice A'}]}]};
+const config={key:'request',steps:[{key:'question-0',questionKey:'q',kind:'question',required:true}]};
+const reply=(data:unknown)=>new Response(JSON.stringify({ok:true,data}));
+afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+async function login(){fireEvent.change(screen.getByLabelText('Local test credential'),{target:{value:'synthetic-token'}});fireEvent.change(screen.getByLabelText('Business ID'),{target:{value:tenant}});fireEvent.click(screen.getByText('Open business'));await screen.findByText('New questionnaire');}
+it('sends saved revision and retains edits on conflict then reloads persisted state',async()=>{
+ const bodies:any[]=[];vi.stubGlobal('fetch',vi.fn(async(url:string,options:RequestInit)=>{if(url.includes('/services'))return reply({services:[service]});if(url.includes('/requests'))return reply({requests:[]});if(url.includes('/draft')){if(options.method==='POST'){bodies.push(JSON.parse(options.body as string));return new Response(JSON.stringify({ok:false,code:'CONFLICT'}),{status:409});}return reply({flowId:flow,name:'Saved name',revision:3,serviceId:tenant,config,service});}return reply({flows:[{flowId:flow,name:'Existing',status:'draft',revision:2,serviceId:tenant,publishedVersionId:null}]});}));
+ render(<MemoryRouter initialEntries={['/embed']}><FlowPortal apiUrl="http://127.0.0.1:8787"/></MemoryRouter>);await login();fireEvent.change(screen.getByLabelText('Saved questionnaire'),{target:{value:flow}});await screen.findByDisplayValue('Saved name');fireEvent.change(screen.getByLabelText('Questionnaire name'),{target:{value:'My edit'}});fireEvent.click(screen.getByText('Save questionnaire'));await screen.findByText(/saved version changed/);expect(screen.getByDisplayValue('My edit')).toBeTruthy();expect(bodies[0].expectedRevision).toBe(3);expect(screen.getByText('Publish saved version')).toBeDisabled();fireEvent.click(screen.getByText('Refresh saved version (discard edits)'));await screen.findByDisplayValue('Saved name');
+});
+it('late draft load cannot repopulate a logged-out session',async()=>{
+ let resolve!:(v:Response)=>void;vi.stubGlobal('fetch',vi.fn(async(url:string)=>{if(url.includes('/services'))return reply({services:[service]});if(url.includes('/requests'))return reply({requests:[]});if(url.includes('/draft'))return new Promise<Response>(r=>resolve=r);return reply({flows:[{flowId:flow,name:'Existing',status:'draft',revision:2,serviceId:tenant,publishedVersionId:null}]});}));
+ render(<MemoryRouter initialEntries={['/embed']}><FlowPortal apiUrl="http://127.0.0.1:8787"/></MemoryRouter>);await login();fireEvent.change(screen.getByLabelText('Saved questionnaire'),{target:{value:flow}});fireEvent.click(screen.getByText('Sign out / change business'));resolve(reply({flowId:flow,name:'Private old name',revision:3,serviceId:tenant,config,service}));await waitFor(()=>expect(screen.getByText('Open local test business')).toBeTruthy());expect(screen.queryByDisplayValue('Private old name')).toBeNull();expect(screen.getByLabelText('Local test credential')).toHaveValue('');
+});
+it('fails closed for a nonloopback API without fallback or fetching',()=>{const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);render(<MemoryRouter><FlowPortal apiUrl="https://external.example"/></MemoryRouter>);expect(screen.getByRole('alert')).toHaveTextContent('Local flow mode is unavailable');expect(fetcher).not.toHaveBeenCalled();});
