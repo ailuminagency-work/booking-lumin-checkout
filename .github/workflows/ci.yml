@@ -73,6 +73,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_quantity_tests.sql
       - name: Verify isolated worker roster and owner mutation boundaries
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/worker_roster_tests.sql
+      - name: Verify explicit planning policy and legacy booking boundary
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/planning_policy_tests.sql
       - name: Verify durable outbox authorization and lease fencing
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
       - name: Verify flow storage tenant isolation and revision control
@@ -101,6 +103,11 @@ jobs:
         env:
           WORKER_ROSTER_TEST_DISPOSABLE: "1"
         run: python3 supabase/tests/worker_roster_concurrency.py
+      - name: Run observed policy activation and legacy writer races
+        timeout-minutes: 2
+        env:
+          PLANNING_POLICY_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/planning_policy_concurrency.py
       - name: Run concurrent durable outbox deduplication and leases
         timeout-minutes: 2
         env:
