@@ -30,6 +30,20 @@ test("connected config accepts public key formats without claiming key authentic
   assert.equal(validatePreviewEnvironment({ ...connected, VITE_SUPABASE_PUBLISHABLE_KEY: jwt("anon") }).providerConnections, "not-connected");
 });
 
+test("local fixture API cannot become a published integration", () => {
+  assert.equal(validatePreviewEnvironment({ VITE_FLOW_LOCAL_HARNESS: "false", VITE_FLOW_API_URL: "" }).runtimeMode, "mock");
+  for (const value of ["true", "TRUE", "1", "", " false "]) {
+    assert.throws(() => validatePreviewEnvironment({ VITE_FLOW_LOCAL_HARNESS: value }), /VITE_FLOW_LOCAL_HARNESS/);
+  }
+  for (const value of ["http://127.0.0.1:8787", "https://api.example.test", "private-marker"]) {
+    assert.throws(() => validatePreviewEnvironment({ VITE_FLOW_API_URL: value }), error => {
+      assert.match(error.message, /VITE_FLOW_API_URL/);
+      assert.ok(!error.message.includes(value));
+      return true;
+    });
+  }
+});
+
 test("invalid connected configuration rejects without echoing values", () => {
   const cases = [
     ["VITE_SUPABASE_URL", undefined], ["VITE_SUPABASE_URL", "not-a-url"],
@@ -70,14 +84,16 @@ test("rejected Netlify configuration fails before touching an existing preview",
       { NETLIFY: "true", VITE_RUNTIME_MODE: "" },
       { NETLIFY: "true", VITE_RUNTIME_MODE: "supabase" },
       { ...connected, VITE_SUPABASE_PUBLISHABLE_KEY: "sb_secret_private-marker" },
+      { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_FLOW_LOCAL_HARNESS: "true" },
+      { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_FLOW_API_URL: "private-marker" },
     ]) {
       const environment = { ...process.env };
-      for (const name of ["NETLIFY", "VITE_RUNTIME_MODE", "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_TENANT_ID"]) delete environment[name];
+      for (const name of ["NETLIFY", "VITE_RUNTIME_MODE", "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_TENANT_ID", "VITE_FLOW_LOCAL_HARNESS", "VITE_FLOW_API_URL"]) delete environment[name];
       const result = spawnSync(process.execPath, [join(fixtureScripts, "build-preview.mjs")], {
         cwd: fixture, env: { ...environment, ...overrides }, encoding: "utf8",
       });
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /VITE_RUNTIME_MODE|VITE_SUPABASE/);
+      assert.match(result.stderr, /VITE_RUNTIME_MODE|VITE_SUPABASE|VITE_FLOW_/);
       assert.ok(!result.stderr.includes("private-marker"));
       assert.equal(await readFile(marker, "utf8"), "unchanged accepted artifact");
     }
