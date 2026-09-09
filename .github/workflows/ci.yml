@@ -77,6 +77,13 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/owner_roster_snapshot_tests.sql
       - name: Verify explicit planning policy and legacy booking boundary
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/planning_policy_tests.sql
+      - name: Verify direct carrier writes are denied and legacy RPCs remain usable
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/carrier_direct_write_tests.sql
+      - name: Verify carrier privilege migration preflight and atomic rollback
+        timeout-minutes: 2
+        env:
+          CARRIER_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/carrier_privilege_preflight.py
       - name: Verify durable outbox authorization and lease fencing
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/outbox_tests.sql
       - name: Verify flow storage tenant isolation and revision control
