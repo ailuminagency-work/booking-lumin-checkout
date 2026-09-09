@@ -24,3 +24,11 @@ Observed production was `main` at `152bb909c06fa8602d99f8b37d2cfe9f90aa5ead`, de
 Normal Git push of accepted PR41 at `1d372ed5ecb59ce8312a7fc135fb31498a33d6a0` triggered deploy `6aa1d30372b5830008d3d522`. The site rendered the landing and Portal, but `/build.json` reported `sourceDirty: true`. This deployment therefore **failed acceptance**. Its build log showed generated `apps/checkout/.netlify/edge-functions`; generated-file handling and strict provenance checks are the next correction. A later passing receipt must identify its own exact SHA and deployment.
 
 GitHub-to-Netlify build triggering is observed; the whole system is not yet synchronized. Hosted Render/API, Supabase migrations, genuine authentication, tenant isolation, worker journeys, and persistence still require their own evidence. Stripe, calendar, email, SMS, CRM, and other real provider credentials remain disconnected by user instruction.
+
+## Accepted correction
+
+[PR42](https://github.com/ailuminagency-work/booking-lumin-checkout/pull/42), exact `5b8108e26cff65d319cb9a81b48d7904969d8b03`, passed all nine gates, including both required jobs in [CI34409972655](https://github.com/ailuminagency-work/booking-lumin-checkout/actions/runs/34409972655). Normal branch fast-forward triggered successful Netlify deploy `6aa1d7aacc0e4800083ffe9c`.
+
+Public verification at September 9, 2026 22:05 UTC confirmed the exact SHA, `sourceDirty: false`, explicit demo mode, all 11 public artifact hashes, and six correct app/deep-link HTML responses. Browser checks rendered the landing, Checkout, Portal dashboard and Command Center health page. Production stayed on the original main deployment. The original dirty deploy remains failed historical evidence; the corrected deployment has its own acceptance receipt.
+
+Fresh infrastructure inventory found Supabase project `pplwyfbxrnodimhzlvdl` healthy with migrations 0001–0009 and zero Edge Functions, versus repository migrations 0001–0024. The connected Render workspace contained only two services for the separate Leadgate repository. No Booking Lumin API host was identified. These findings keep hosted operation and pilot gates open despite the successful static preview. The next API host must replace local synthetic authentication through a reviewed contract before staging deployment.
