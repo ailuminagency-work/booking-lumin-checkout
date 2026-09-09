@@ -1,6 +1,6 @@
 # Backend dependency DAG
 
-**Status: PROPOSED — pending user review of the complete nine-document master product package.**
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 This is an architecture and sequencing proposal, not deployment or migration authorization. All implementation queues remain PROPOSED. Audit snapshot: `fb98a7b9feaadb429ca7656430590d790d394a1a` in `C:/Users/fligh/Documents/Codex/2026-09-08/continue-the-booking-lumin-checkout-engineering/work/repo`. Evidence paths below are relative to that root. Accepted RC-2 is separately pinned at `6bbcd679a09741d3a2e978ddd2bb398f1d98a6f9`; preserve its B1–B6/R1–R9 invariants. Current protection/CI facts do not certify new functionality or hosted runtime health.
 

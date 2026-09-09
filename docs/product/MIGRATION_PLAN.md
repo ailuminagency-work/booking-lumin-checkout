@@ -1,6 +1,6 @@
 # Safe product reorganization and migration plan
 
-Status: **PROPOSED — implementation waits for product review**. Date: September 9, 2026. Audit foundation: `fb98a7b9feaadb429ca7656430590d790d394a1a`; accepted RC-2 is a separate protected historical foundation. This plan authorizes no live migration or deployment.
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 ## Preservation strategy
 

@@ -1,6 +1,6 @@
 # Approved product program
 
-On September 9, 2026, the user approved starting the phased program with “go ahead and start”. The nine specifications in this directory are the reviewed planning snapshot. Their original PROPOSED labels describe the planning turn; this record authorizes bounded implementation, not a production release or provider activation.
+On September 9, 2026, the user approved starting the phased program with “go ahead and start”. The nine specifications in this directory are the reviewed planning snapshot. Their target architecture is accepted; the audit findings remain a historical planning snapshot. Current progress lives in wave-ledger.json and EXECUTION_WORKFLOW.md. Approval authorizes bounded implementation, not a production release or provider activation.
 
 ## Wave 1 scope
 

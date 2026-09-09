@@ -1,6 +1,6 @@
 # Data model gaps
 
-**Status: Proposed — review required.** This is a docs-only product/data audit, not approval to change schema, enable providers, migrate production or implement a worker role.
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 **Evidence boundary.** Repository inspected at `fb98a7b9feaadb429ca7656430590d790d394a1a`, with migration files `0001`–`0014`. The last separately verified live migration set was **0001–0009**. Repository additions and local tests do not establish that 0010–0014 are deployed. The accepted RC-2 invariants remain the foundation. No code, database, provider key or deployment changed during this audit.
 
