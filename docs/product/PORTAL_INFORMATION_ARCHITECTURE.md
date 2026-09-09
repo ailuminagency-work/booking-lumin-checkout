@@ -1,6 +1,6 @@
 # Portal information architecture
 
-**Status: PROPOSED — awaiting user review. Documentation only; no implementation, migration, deployment, provider activation, or navigation changes are authorized by this document.**
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 Audit date: September 9, 2026. Repository inspected: `ailuminagency-work/booking-lumin-checkout`, local `work/repo`, commit `fb98a7b9feaadb429ca7656430590d790d394a1a`. Paths below are repository-relative evidence, not claims that proposed routes already exist. Source inspection establishes implementation shape; it does not certify current hosted behavior.
 

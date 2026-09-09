@@ -1,6 +1,6 @@
 # Booking Lumin product map
 
-Status: **PROPOSED — product review required before implementation**. Date: September 9, 2026.
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 ## Decision and audit basis
 

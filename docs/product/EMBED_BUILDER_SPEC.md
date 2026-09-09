@@ -1,6 +1,6 @@
 # Embed Builder specification
 
-**Status: PROPOSED — awaiting user review. This is a design specification only. No editor, schema, endpoint, embed loader, provider connection, deployment, or code change has been implemented by this document.**
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 Evidence baseline: `ailuminagency-work/booking-lumin-checkout` at `fb98a7b9feaadb429ca7656430590d790d394a1a`, inspected September 9, 2026. All evidence paths are repository-relative. P-stream numbers refer to the requested master product organization, not the earlier W-stream labels.
 

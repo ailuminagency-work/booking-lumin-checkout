@@ -1,6 +1,6 @@
 # Command Center specification
 
-**Status: PROPOSED — pending user review of the complete nine-document master product package.**
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 Documentation only. No implementation, deployment, provider connection, migration or release is authorized by this specification. The Program Governor owns the master product/workstream plan; this document defines P26 with dependencies on P17, P22, P23, P27 and P28.
 

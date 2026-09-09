@@ -1,6 +1,6 @@
 # Worker experience specification
 
-**Status: Proposed — review required.** Product and security specification only. No worker application, role, schema, provider integration or PWA is implemented by this document.
+**Status: Accepted target architecture, September 9, 2026.** Implementation proceeds through reviewed increments; current completion and hosted acceptance are recorded in `wave-ledger.json` and `EXECUTION_WORKFLOW.md`. The audit below describes its original inspected baseline, not current deployment. Real provider activation remains separately prohibited.
 
 **Owners:** P4 Worker/Team Management owns worker/team identity, eligibility and assignments. P5 Worker Mobile/PWA owns the field experience. P20 Maps owns the replaceable MapProvider/navigation boundary. P28 Security/Tenant Isolation owns assignment-based authorization, field minimization and adversarial acceptance. Scheduling/resources and media owners collaborate on allocation and attachments; governors retain architecture/integration/runtime/release gates.
 
