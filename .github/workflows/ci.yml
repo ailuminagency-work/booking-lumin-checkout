@@ -73,6 +73,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/resource_quantity_tests.sql
       - name: Verify isolated worker roster and owner mutation boundaries
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/worker_roster_tests.sql
+      - name: Verify complete bounded owner roster snapshot
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/owner_roster_snapshot_tests.sql
       - name: Verify explicit planning policy and legacy booking boundary
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/planning_policy_tests.sql
       - name: Verify durable outbox authorization and lease fencing
@@ -103,6 +105,11 @@ jobs:
         env:
           WORKER_ROSTER_TEST_DISPOSABLE: "1"
         run: python3 supabase/tests/worker_roster_concurrency.py
+      - name: Run observed owner snapshot and roster mutation races
+        timeout-minutes: 2
+        env:
+          ROSTER_SNAPSHOT_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/owner_roster_snapshot_concurrency.py
       - name: Run observed policy activation and legacy writer races
         timeout-minutes: 2
         env:
@@ -137,3 +144,9 @@ jobs:
           LOCAL_HARNESS: "1"
           FLOW_TEST_DISPOSABLE: "1"
         run: npm run test:flow-http --workspace @lumin/action-api
+      - name: Verify owner roster operations over HTTP with PostgreSQL
+        timeout-minutes: 3
+        env:
+          LOCAL_HARNESS: "1"
+          FLOW_TEST_DISPOSABLE: "1"
+        run: npm run test:roster-http --workspace @lumin/action-api
