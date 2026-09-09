@@ -97,7 +97,7 @@ export function CheckoutConfigPage() {
           <h2>Question flow preview</h2>
         </div>
         <p className="muted">
-          Preview the @lumin/workflow flow a customer sees for{" "}
+          Preview the questions a customer sees for{" "}
           <strong>{previewService?.name ?? "this service"}</strong>. Pick a sample answer to see
           conditional recommendations and warnings.
         </p>
