@@ -7,13 +7,14 @@ import {__createPlanningAllocationRepositoryForTests as create,createLocalPlanni
 import {actor,request,seed,state,observer,pool,config,blocker,blocked,gone,observe,pause,backendPid,commitFixture,type Fixture} from './planning-allocation-fixtures';
 type Hook=(client:PoolClient,text:string,values:unknown[]|undefined,run:()=>Promise<any>)=>Promise<any>;
 type RecordEntry={pid:number,commands:string[],releases:boolean[]};
-function tracked(real:Pool,hook?:Hook){const records:RecordEntry[]=[];const facade={
- async connect(){const client=await real.connect();const record={pid:backendPid(client),commands:[] as string[],releases:[] as boolean[]};records.push(record);return {
+type CheckoutAttempt={state:'pending'|'rejected'|'returned';record?:RecordEntry};
+function tracked(real:Pool,hook?:Hook,afterAcquire?:()=>Promise<void>){const records:RecordEntry[]=[];const attempts:CheckoutAttempt[]=[];const facade={
+ async connect(){const attempt:CheckoutAttempt={state:'pending'};attempts.push(attempt);let client:PoolClient;try{client=await real.connect();}catch(error){attempt.state='rejected';throw error;}const record={pid:backendPid(client),commands:[] as string[],releases:[] as boolean[]};records.push(record);attempt.record=record;if(afterAcquire)await afterAcquire();attempt.state='returned';return {
  query(text:string,values?:unknown[]){record.commands.push(text);const run=()=>client.query(text,values);return hook?hook(client,text,values,run):run();},
  release(error?:Error){record.releases.push(Boolean(error));client.release(error);},
  on(name:string,fn:any){client.on(name as 'error'|'end',fn);return this;},removeListener(name:string,fn:any){client.removeListener(name,fn);return this;}
  };},end:()=>real.end(),on(name:string,fn:any){real.on(name as 'error',fn);return this;},removeListener(name:string,fn:any){real.removeListener(name,fn);return this;}};
- return {repository:create(facade),records,real};}
+ return {repository:create(facade),records,attempts,real};}
 function receipt(out:any){assert.equal(out.kind,'committed');assert.equal(out.delivery,'receipt');assert.equal(out.receipt.confirmed,false);return out.receipt;}
 function failed(out:any,code?:string):asserts out is {kind:'failed';code:string;transaction:string;backendMayStillRun:boolean}{assert.equal(out.kind,'failed');if(code)assert.equal(out.code,code);assert.equal('receipt' in out,false);}
 async function phase(ready:Promise<void>,outcome:Promise<unknown>,label:string){let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([ready,outcome.then(value=>{throw Error(label+' returned before fixture phase: '+JSON.stringify(value));}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error(label+' fixture phase timeout')),4000);})]);}finally{if(timer)clearTimeout(timer);}}
@@ -21,7 +22,14 @@ function deferred(){let resolve!:()=>void;const promise=new Promise<void>(r=>res
 const isCommit=(text:string)=>text.trim().toUpperCase()==='COMMIT';
 const c=await observer();const resources:Array<()=>Promise<unknown>>=[];const errors:unknown[]=[];
 const unhandled=(error:unknown)=>errors.push(error);process.on('unhandledRejection',unhandled);
-function make(hook?:Hook,real=pool()){const result=tracked(real,hook);resources.push(()=>result.repository.close());return result;}
+function make(hook?:Hook,real=pool(),afterAcquire?:()=>Promise<void>){const result=tracked(real,hook,afterAcquire);resources.push(()=>result.repository.close());return result;}
+/** Queue removal is earlier than facade checkout resolution and adapter disposal. */
+async function checkoutDrained(t:ReturnType<typeof make>){
+ await observe(async()=>t.attempts.length===1&&t.real.waitingCount===0&&(t.attempts[0]!.state==='rejected'||(t.attempts[0]!.state==='returned'&&t.attempts[0]!.record!.releases.length>0)),'checkout rejected or returned client disposed');
+ const attempt=t.attempts[0]!;
+ if(attempt.state==='rejected'){assert.equal(attempt.record,undefined);assert.deepEqual(t.records,[]);}
+ else{assert.equal(attempt.state,'returned');assert.equal(t.records.length,1);assert.deepEqual(attempt.record!.commands,[]);assert.deepEqual(attempt.record!.releases,[true]);}
+}
 async function hasNoState(f:Fixture){const s=await state(c,f);for(const key of ['heads','groups','capacity','resources','workers','workerManifest','resourceManifest'])assert.deepEqual(s[key],[],key);assert.equal(s.booking.state,'draft');assert.equal(s.booking.payment_id,null);}
 async function waitPid(t:ReturnType<typeof make>){await observe(async()=>t.records.length>0,'adapter acquired PID');return t.records.at(-1)!.pid;}
 /** Parse actual server protocol frames. Drop COMMIT completion and ensuing ReadyForQuery;
@@ -57,11 +65,20 @@ try{
  console.log('PASS observed SQL lock timeout, poisoned-client nonreuse and eventual rollback');
 
  // Actual acquisition subdeadline while both fixed pool slots are occupied.
- const saturated=await seed(c);const saturatedRepo=make();const reserved=[await saturatedRepo.real.connect(),await saturatedRepo.real.connect()];try{const started=performance.now();const out=await saturatedRepo.repository.allocate(actor(saturated),request(saturated));failed(out,'ACQUISITION_TIMEOUT');assert.equal(out.transaction,'not_started');assert.ok(performance.now()-started>=2800&&performance.now()-started<4500);assert.equal(saturatedRepo.records.length,0);await hasNoState(saturated);}finally{for(const held of reserved)held.release();}await observe(async()=>saturatedRepo.real.waitingCount===0,'expired acquisition queue drained');if(saturatedRepo.records.length){assert.deepEqual(saturatedRepo.records[0]!.commands,[]);assert.deepEqual(saturatedRepo.records[0]!.releases,[true]);}
+ const saturated=await seed(c);const saturatedRepo=make();const reserved=[await saturatedRepo.real.connect(),await saturatedRepo.real.connect()];try{const started=performance.now();const out=await saturatedRepo.repository.allocate(actor(saturated),request(saturated));failed(out,'ACQUISITION_TIMEOUT');assert.equal(out.transaction,'not_started');assert.ok(performance.now()-started>=2800&&performance.now()-started<4500);assert.equal(saturatedRepo.records.length,0);await hasNoState(saturated);}finally{for(const held of reserved)held.release();}await checkoutDrained(saturatedRepo);
  console.log('PASS real saturated pool respects original3s acquisition subdeadline without transaction');
- // Saturate the real pool; external abort does not remove driver's pending checkout.
- const late=await seed(c);const rlate=make();const held=[await rlate.real.connect(),await rlate.real.connect()];const controller=new AbortController();const pending=rlate.repository.allocate(actor(late),request(late),{signal:controller.signal});await observe(async()=>rlate.real.waitingCount===1,'pending checkout');controller.abort();failed(await pending,'ABORTED');held[0]!.release();await observe(async()=>rlate.records.length===1&&rlate.records[0]!.releases.length===1,'late acquired client discarded');assert.deepEqual(rlate.records[0]!.commands,[]);assert.deepEqual(rlate.records[0]!.releases,[true]);held[1]!.release();await hasNoState(late);
- console.log('PASS real queued late acquisition is consumed without BEGIN and discarded');
+ // Actual driver rejection branch: shorter test-only checkout timeout, no fabricated result.
+ const rejected=await seed(c);const rreject=make(undefined,new Pool({...config(),connectionTimeoutMillis:1000}));const rejectHeld=[await rreject.real.connect(),await rreject.real.connect()];try{const out=await rreject.repository.allocate(actor(rejected),request(rejected));failed(out,'CONNECTION_FAILED');assert.equal(out.transaction,'not_started');await checkoutDrained(rreject);assert.equal(rreject.attempts[0]!.state,'rejected');await hasNoState(rejected);}finally{for(const client of rejectHeld)client.release();}
+ console.log('PASS actual driver checkout rejection is terminal without a client or transaction');
+ // Hold facade return after actual PG dequeue, deterministically exposing the old observer race.
+ const late=await seed(c);const acquired=deferred(),returnClient=deferred();const rlate=make(undefined,pool(),async()=>{acquired.resolve();await returnClient.promise;});const held=[await rlate.real.connect(),await rlate.real.connect()];const controller=new AbortController();let firstReleased=false;try{
+ const pending=rlate.repository.allocate(actor(late),request(late),{signal:controller.signal});await observe(async()=>rlate.real.waitingCount===1,'pending checkout');controller.abort();failed(await pending,'ABORTED');held[0]!.release();firstReleased=true;await phase(acquired.promise,new Promise(()=>{}),'real dequeue gate');
+ assert.equal(rlate.real.waitingCount,0);assert.equal(rlate.records.length,1);assert.deepEqual(rlate.records[0]!.releases,[]);
+ // Immutable snapshot proves the prior queue-empty assertion would be red here.
+ assert.throws(()=>assert.deepEqual([...rlate.records[0]!.releases],[true]),assert.AssertionError);console.log('RED reproduced old queue-empty assertion: actual release snapshot=[] while facade return gated');
+ let drained=false;const drain=checkoutDrained(rlate).then(()=>{drained=true;});await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(drained,false,'drain observer returned before facade checkout/disposal');returnClient.resolve();await drain;assert.deepEqual(rlate.records[0]!.commands,[]);assert.deepEqual(rlate.records[0]!.releases,[true]);await gone(c,rlate.records[0]!.pid);await hasNoState(late);
+ }finally{returnClient.resolve();if(!firstReleased)held[0]!.release();held[1]!.release();}
+ console.log('PASS real dequeued late acquisition remains pending until returned, discarded once without BEGIN, and backend disappears');
 
  // Reverse source ordering: pause only at test boundary before COMMIT (< idle1s).
  const source=await seed(c);await c.query('update public.service_resources set quantity_required=2 where service_id=$1',[source.service]);const ready=deferred(),resume=deferred();const rs=make(async(_client,text,_v,run)=>{if(isCommit(text)){ready.resolve();await resume.promise;}return run();});const sourceOut=rs.repository.allocate(actor(source),request(source));await phase(ready.promise,sourceOut,'source');const writer=await blocker();try{const writing=writer.query('update public.resources set capacity=0+1 where id=$1',[source.resource]);await blocked(c,backendPid(writer),rs.records[0]!.pid);resume.resolve();receipt(await sourceOut);await writing;await writer.query('commit');const saved=await state(c,source);
