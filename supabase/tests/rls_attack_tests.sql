@@ -122,6 +122,29 @@ values
    now() + interval '9 days', now() + interval '9 days 2 hours',
    'a0000000-0000-0000-0000-00000000c001', 'idem-key-tenant-a-cf02');
 
+-- RISK-4 fixtures for ATTACK 14: a Tenant-A refund against A's succeeded
+-- payment, one Tenant-A per-tenant audit row, and one PLATFORM-LEVEL audit row
+-- (tenant_id IS NULL). These prove, after 0013, that a platform admin can read
+-- neither raw payments/refunds nor per-tenant audit rows, yet still reads
+-- platform-level audit events; and that tenant members still read their own.
+-- The refund adds refunded_amount only (never GMV), so ATTACK 9's USD GMV total
+-- of 16200 is preserved.
+insert into public.refunds
+  (id, tenant_id, booking_id, payment_id, amount, currency, reason,
+   provider, provider_refund_id)
+values
+  ('a0000000-0000-0000-0000-00000000f001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'a0000000-0000-0000-0000-00000000b001', 'a0000000-0000-0000-0000-00000000d001',
+   500, 'USD', 'goodwill partial', 'mock', 're_mock_0001');
+
+insert into public.audit_events (id, tenant_id, name, data) values
+  -- per-tenant audit row (tenant A) — must stay invisible to a platform admin.
+  ('a0000000-0000-0000-0000-0000000a0001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'payment.succeeded', '{}'),
+  -- platform-level audit row (tenant_id NULL) — platform admin MAY read this.
+  ('00000000-0000-0000-0000-0000000a0002', null,
+   'tenant.created', '{}');
+
 -- ============================================================================
 -- ATTACK 1 — Tenant B's owner tries to read Tenant A's data. Expect 0 rows
 -- everywhere, while B's own rows stay visible (positive control).
@@ -756,6 +779,91 @@ begin
   select count(*) into n from public.platform_economics;
   if n <> 0 then raise exception 'FAIL 13f: non-admin saw % platform_economics rows', n; end if;
   raise notice 'PASS 13e: definer aggregate views remain empty for non-admins';
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 14 (RISK-4 / SI-11) — a PLATFORM_ADMIN no longer has routine raw reads
+-- of financial + audit base tables. SELECT on payments and refunds must return
+-- ZERO rows (member-only policies), and SELECT on per-tenant audit_events
+-- (tenant_id NOT NULL) must also return ZERO rows. Platform-level audit events
+-- (tenant_id IS NULL) stay readable by the platform admin, and the Command
+-- Center aggregate views still return figures. Tenant members still read their
+-- own tenant's payments / refunds / audit rows (positive controls).
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated","email":"platform-admin@example.test"}',
+  true);
+set local role authenticated;
+
+do $t$
+declare
+  n bigint;
+begin
+  -- No raw financial data: payments / refunds base tables are member-only.
+  select count(*) into n from public.payments;
+  if n <> 0 then raise exception 'FAIL 14a: platform admin read % raw payment row(s)', n; end if;
+  raise notice 'PASS 14a: platform admin has no raw access to payments (0 rows)';
+
+  select count(*) into n from public.refunds;
+  if n <> 0 then raise exception 'FAIL 14b: platform admin read % raw refund row(s)', n; end if;
+  raise notice 'PASS 14b: platform admin has no raw access to refunds (0 rows)';
+
+  -- No raw per-tenant audit rows for the platform admin.
+  select count(*) into n from public.audit_events where tenant_id is not null;
+  if n <> 0 then raise exception 'FAIL 14c: platform admin read % per-tenant audit row(s)', n; end if;
+  raise notice 'PASS 14c: platform admin has no raw per-tenant audit reads (0 rows)';
+
+  -- Platform-level observability preserved: tenant_id IS NULL rows stay visible.
+  select count(*) into n from public.audit_events where tenant_id is null;
+  if n < 1 then raise exception 'FAIL 14d: platform admin saw no platform-level audit rows'; end if;
+  -- and every audit row the admin CAN see is platform-level (never per-tenant).
+  select count(*) into n from public.audit_events;
+  if n <> (select count(*) from public.audit_events where tenant_id is null) then
+    raise exception 'FAIL 14d: platform admin saw a per-tenant audit row via NULL policy';
+  end if;
+  raise notice 'PASS 14d: platform admin still reads platform-level audit events (tenant_id IS NULL)';
+
+  -- Command Center aggregate views unaffected by the tighter base policies.
+  select coalesce(sum(merchant_gmv), 0) into n from public.platform_economics
+    where currency = 'USD';
+  if n <> 16200 then raise exception 'FAIL 14e: platform_economics USD GMV = % (expected 16200)', n; end if;
+  raise notice 'PASS 14e: Command Center aggregate views still return figures (USD GMV = %)', n;
+end;
+$t$;
+
+reset role;
+
+-- Positive controls: a Tenant-A member still reads their own tenant's payments,
+-- refunds and per-tenant audit rows, and does NOT see platform-level audit rows.
+select set_config('request.jwt.claims',
+  '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated","email":"owner-a@example.test"}',
+  true);
+set local role authenticated;
+
+do $t$
+declare
+  n bigint;
+begin
+  select count(*) into n from public.payments
+    where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n < 1 then raise exception 'FAIL 14f: tenant member saw none of their own payments'; end if;
+
+  select count(*) into n from public.refunds
+    where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n < 1 then raise exception 'FAIL 14g: tenant member saw none of their own refunds'; end if;
+
+  select count(*) into n from public.audit_events
+    where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n < 1 then raise exception 'FAIL 14h: tenant member saw none of their own audit rows'; end if;
+
+  -- A tenant owner does NOT get the platform-level (tenant_id NULL) audit rows.
+  select count(*) into n from public.audit_events where tenant_id is null;
+  if n <> 0 then raise exception 'FAIL 14i: tenant member read % platform-level audit row(s)', n; end if;
+
+  raise notice 'PASS 14f: tenant members still read their own payments/refunds/audit; not platform-level rows';
 end;
 $t$;
 

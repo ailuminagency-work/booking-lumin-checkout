@@ -36,8 +36,12 @@ A candidate that violates any accepted invariant is BLOCKED and returned to its 
   bundles, public env, client logs, or browser-readable DB rows. `*_connection_secrets`
   unreachable by anon/authenticated.
 - **R7 Platform ≠ tenant trust** — `platform_admins` and `tenant_members` are disjoint;
-  a platform admin has no tenant write powers and (post RC-2) no routine raw customer/
-  booking PII read; Command Center analytics are aggregate-only.
+  a platform admin has no tenant write powers and no routine raw base-table read of tenant
+  data: no customer/booking PII (post RC-2 / 0009) and no `payments`/`refunds`/per-tenant
+  `audit_events` (post 0013 / RISK-4). Routine platform access is aggregate-only (Command
+  Center SECURITY DEFINER views) or audited-only (a SECURITY DEFINER RPC that writes an
+  `audit_events` row) — never a base-table policy. Platform admins retain only platform-level
+  `audit_events` (rows where `tenant_id IS NULL`) for observability.
 - **R8 Webhook authenticity** — provider webhooks are signature-verified server-side;
   duplicate/replayed webhooks are harmless (idempotent).
 - **R9 Audit integrity** — `audit_events` is append-only; `booking_state_history` is
@@ -48,9 +52,18 @@ A candidate that violates any accepted invariant is BLOCKED and returned to its 
 - **RUNTIME-04 (open):** real Supabase Auth/PostgREST *HTTPS-transport* isolation testing
   is not yet performed (egress to the project host was blocked). Not closed indirectly by
   any other milestone.
-- **RISK-4 (open, tracked):** platform admin still has raw read of `payments`/`refunds`/
-  `audit_events` (financial/audit, not customer PII); `audit_events.data` PII-minimization
-  is a runtime (SI-11) duty. No RC-3+ change may WIDEN platform-admin access.
+- **RISK-4 (closed in repo — migration `0013_platform_pii_hardening.sql`):** platform
+  admins no longer have raw base-table read of `payments`, `refunds`, or per-tenant
+  `audit_events`. The `payments`/`refunds` SELECT policies are now member-only (mirroring
+  0009's customers/bookings tightening); the `audit_events` SELECT policy gives a tenant
+  owner only their own tenant's events and a platform admin only platform-level rows
+  (`tenant_id IS NULL`). Analytics are unaffected — no aggregate view reads `payments` or
+  `audit_events`, and the only view over `refunds` (`platform_economics`) is SECURITY
+  DEFINER (0009), so Command Center figures still flow. Proven by new attack cases (ATTACK
+  14) in `supabase/tests/rls_attack_tests.sql`. **Live-apply to project
+  `pplwyfbxrnodimhzlvdl` is a follow-up step** (closed in repo/CI only). `audit_events.data`
+  PII-minimization remains a runtime (SI-11) duty. No later change may WIDEN platform-admin
+  access.
 
 ## Process compensations (see GOVERNANCE.md)
 
