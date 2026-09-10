@@ -170,7 +170,7 @@
       ],
       "status": "blocked",
       "scope": "staging",
-      "blocker": "Reviewed Netlify demo deployment is verified at PR45 commitbea04b4. Hosted API/database/authenticated pilot acceptance remains unresolved: no Booking Lumin Render service and Supabase migration ledger still0001..0009 versus reviewed0001..0025.",
+      "blocker": "Reviewed Netlify demo deployment is verified at PR45 commitbea04b4. Hosted API/database/authenticated pilot acceptance remains unresolved: no Booking Lumin Render service and Supabase migration ledger still0001..0009 versus reviewed0001..0026 (PR46; not applied live).",
       "deployment": "not_deployed",
       "requires": [
         "W8.integrated_pilot"

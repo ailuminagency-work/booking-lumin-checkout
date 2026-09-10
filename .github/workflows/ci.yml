@@ -83,6 +83,24 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/carrier_direct_write_tests.sql
       - name: Verify sealed planning groups and atomic release boundaries
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_lifecycle_tests.sql
+      - name: Verify managed planning financial exclusion
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_financial_boundary_tests.sql
+      - name: Verify financial boundary migration preflight and rollback
+        timeout-minutes: 4
+        env:
+          PGDATABASE: lumin_financial_preflight
+          GROUP_FINANCIAL_TEST_DISPOSABLE: "1"
+          GROUP_FINANCIAL_MIGRATION_FILE: supabase/migrations/0027_group_financial_boundary.sql
+          GROUP_FINANCIAL_TEST_FILE: supabase/tests/group_financial_boundary_tests.sql
+          GROUP_FINANCIAL_FIXTURE_FILE: supabase/tests/group_lifecycle_fixture.sql
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_financial_preflight;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            if [ "$f" = supabase/migrations/0027_group_financial_boundary.sql ]; then break; fi
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          python3 supabase/tests/group_financial_boundary_preflight.py
       - name: Verify cryptographic binding in the default extension layout
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/crypto_extension_binding_tests.sql
       - name: Verify cryptographic preflight and atomic rollback in both layouts
@@ -217,3 +235,18 @@ jobs:
           PGDATABASE: lumin_group_races
           GROUP_LIFECYCLE_TEST_DISPOSABLE: "1"
         run: python3 supabase/tests/group_lifecycle_concurrency.py
+      - name: Verify financial exclusion races in the extensions layout
+        timeout-minutes: 4
+        env:
+          PGDATABASE: lumin_group_financial_races
+          GROUP_FINANCIAL_TEST_DISPOSABLE: "1"
+          GROUP_FINANCIAL_FIXTURE_FILE: supabase/tests/group_lifecycle_fixture.sql
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_group_financial_races;'
+          psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/group_financial_boundary_tests.sql
+          python3 supabase/tests/group_financial_boundary_concurrency.py
