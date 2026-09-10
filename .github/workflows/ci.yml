@@ -297,3 +297,26 @@ jobs:
             done
             npm run test:planning-allocation --workspace @lumin/action-api
           done
+      - name: Verify explicit installation owner operations and races in both crypto layouts
+        timeout-minutes: 10
+        env:
+          LOCAL_HARNESS: "1"
+          FLOW_TEST_DISPOSABLE: "1"
+          MODE_INSTALLATIONS_TEST_DISPOSABLE: "1"
+        run: |
+          for layout in public extensions; do
+            export PGDATABASE="lumin_installation_s1_${layout}"
+            export MODE_INSTALLATIONS_CRYPTO_LAYOUT="$layout"
+            psql -v ON_ERROR_STOP=1 -d postgres -c "create database ${PGDATABASE};"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do
+              psql -v ON_ERROR_STOP=1 -f "$f"
+            done
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/mode_installations_tests.sql
+            npm run test:mode-installations --workspace @lumin/action-api
+          done
