@@ -58,3 +58,25 @@ describe('true end-of-input boundaries',()=>{
   expect(()=>parseInstallationMessage({...msg(),instanceId:'b'.repeat(32)+suffix})).toThrow();
  });
 });
+
+
+describe('literal wildcard distribution origin denial',()=>{
+ it.each(['https://*.example','https://mer*chant.example','https://*','https://a.*.example'])('rejects wildcard %s in origin/profile/parent',origin=>{
+  expect(()=>parseInstallationOrigin(origin)).toThrow();
+  expect(()=>parseInstallationProfile({...profile(),apiOrigin:origin})).toThrow();
+  expect(()=>parseInstallationProfile({...profile(),portalOrigin:origin})).toThrow();
+  expect(()=>parseInstallationProfile({...profile(),rendererOrigin:origin,loaderUrl:origin+'/assets/booking-lumin-loader.'+'a'.repeat(64)+'.js'})).toThrow();
+  expect(()=>contracts().parsePolicy({...policy(),allowedParentOrigins:[origin]})).toThrow();
+ });
+});
+
+
+describe('reviewed supported-host vocabulary',()=>{
+ const maxHost='a'.repeat(63)+'.'+'b'.repeat(63)+'.'+'c'.repeat(63)+'.'+'d'.repeat(61);
+ it.each(['https://localhost','https://xn--bcher-kva.test','https://127.0.0.1','https://[2001:db8::1]:9441','https://'+'a'.repeat(63)+'.test','https://'+maxHost])('accepts bounded supported host %s',origin=>expect(parseInstallationOrigin(origin)).toBe(origin));
+ it.each(["https://a'b.test",'https://a;b.test','https://under_score.test','https://-edge.test','https://edge-.test','https://a..test','https://'+'a'.repeat(64)+'.test','https://'+maxHost+'e'])('rejects unsupported host %s',origin=>{
+  expect(()=>parseInstallationOrigin(origin)).toThrow();
+  expect(()=>parseInstallationProfile({...profile(),apiOrigin:origin})).toThrow();
+  expect(()=>contracts().parsePolicy({...policy(),allowedParentOrigins:[origin]})).toThrow();
+ });
+});

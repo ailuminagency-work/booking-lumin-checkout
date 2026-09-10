@@ -34,7 +34,11 @@ function bounded(value:object,bytes:number):void{if(encoder.encode(JSON.stringif
 export function parseInstallationOrigin(value:unknown):string{
  if(typeof value!=='string'||value.length>2048)return fail();
  let u:URL;try{u=new URL(value);}catch{return fail();}
- if(u.protocol!=='https:'||u.origin!==value||u.username||u.password||!u.hostname||u.hostname.length>253||u.hostname.endsWith('.'))return fail();
+ if(u.protocol!=='https:'||u.origin!==value||u.username||u.password||!u.hostname||u.hostname.length>253||u.hostname.endsWith('.')||u.hostname.includes('*'))return fail();
+ // Conservative supported host vocabulary, safe for later exact CSP source expressions.
+ // URL already validates bracketed IPv6 and exact origin equality rejects normalized aliases.
+ const bracketed=u.hostname.startsWith('[')&&u.hostname.endsWith(']');
+ if(!bracketed&&!u.hostname.split('.').every(label=>label.length>=1&&label.length<=63&&/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)))return fail();
  return value;
 }
 /** Syntax and topology validation only; registry membership is enforced by createInstallationContracts. */
