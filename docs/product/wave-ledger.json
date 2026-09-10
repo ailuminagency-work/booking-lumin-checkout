@@ -261,7 +261,7 @@
       "id": "W3.publication_and_installation",
       "kind": "capability",
       "owner": "W3",
-      "status": "planned",
+      "status": "building",
       "dependsOn": [
         "W3.1.local_candidate"
       ],

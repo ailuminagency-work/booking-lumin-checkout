@@ -24,3 +24,21 @@ export * from "./events";
 export const CONTRACTS_VERSION = "1.0.0";
 export * from "./worker";
 export * from "./roster";
+
+// Pure installation representations; profile registry configuration is trusted composition.
+export {
+  INSTALLATION_LIMITS,
+  InstallationContractError,
+  createInstallationContracts,
+  parseInstallationOrigin,
+  parseInstallationProfile,
+  parseInstallationRoute,
+  parseInstallationMessage,
+} from "./installation";
+export type {
+  InstallationMode,
+  InstallationProfile,
+  InstallationPolicy,
+  InstallationMessage,
+  InstallationOutput,
+} from "./installation";

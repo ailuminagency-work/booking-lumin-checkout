@@ -1,0 +1,17 @@
+# Installation protocol contracts
+
+This W3 increment defines pure contracts for explicit hosted and iframe installations. It is a prerequisite for operational installation, not a deployed installation feature. The preceding reviewed candidate is draft PR53,472faeaed6cd4065d486e71296d77cd3e1adfed1, CI34523275544.
+
+The existing Portal editors combine a customer website origin with a platform checkout path. That assumes the merchant serves the platform application. The target design assigns separate merchant, renderer, API and privileged Portal origins. A trusted deployment profile selects renderer/API/Portal origins and an immutable loader asset; public policy cannot substitute them. This first supported topology requires all three platform origins to differ and merchant origins to differ from each.
+
+Hosted installations have a shareable renderer URL. Iframe installations require the approved parent controller, either packaged in the loader or a future reviewed companion-controller output. A bare iframe cannot complete this protocol and is not advertised as operational. Public parent-origin metadata is distribution context, not authentication or private tenant authority.
+
+This leaf contains strict profile/policy/message representation, canonical path and URL composition and safe installation output helpers. It does not modify existing publication, session issuance, SQL, Portal links, browser mount behavior or route registration. No real deployment profile is registered. Strict validation is not authorization: future server composition must supply a trusted registry and enforce tenant/session/policy rules transactionally.
+
+Separate target and policy revisions preserve immutable session version pinning while allowing distribution revocation. The later SQL/API leaf must independently freeze locking, idempotency, owner authorization and current-policy checks. The document adapter and loader must demonstrate dynamic framing headers, fail-closed routing, initialization before session creation, message origin/source binding and real HTTPS browser behavior. Pure message validation cannot establish those runtime properties.
+
+Owner: allocator_harness_builder implements isolated contracts/tests; allocator_harness_review independently reviews and attacks them; allocator_source_review reviewed the design and audits the dependent SQL/API scope; root owns shared exports, integration and Release. Every code candidate still needs unit, domain, independent, adversarial, integration, Runtime, exact-candidate CI and Release evidence. Draft PR receipts establish the accepted revision; this document alone does not.
+
+Full W3/W4 remain open. Hosted authentication, least-privilege database access, migration reconciliation and Netlify/Render/Supabase certification are separate unfinished gates. No provider activation, live migration or deployment is authorized by this leaf.
+
+Supported origins use canonical HTTPS with ASCII DNS labels (including punycode), canonical IPv4 or bracketed IPv6. Wildcards, empty labels, trailing dots and hostname delimiters are rejected. This conservative grammar does not prove DNS ownership, reachability or browser framing-policy enforcement.
