@@ -165,5 +165,37 @@ try:
     assert state(f)==before,'Expired lead time allocated partial state'
     print('PASS fresh admission lead time crosses observed wait and rejects without allocation',flush=True)
 
+
+    f=p.identities();p.seed(f)
+    second_resource=str(__import__('uuid').uuid4())
+    p.query(f"""insert into public.resources(id,tenant_id,name,capacity) values('{second_resource}','{f['t']}','Second resource',3);
+      insert into public.service_resources(tenant_id,service_id,resource_id,quantity_required) values('{f['t']}','{f['s']}','{second_resource}',1);""")
+    before=state(f)
+    resource_fault="""create function pg_temp.fail_last_resource() returns trigger language plpgsql as $$begin
+      if (select count(*) from public.resource_reservations where group_id=new.group_id)=1 then
+        raise exception 'INDEPENDENT_LAST_RESOURCE' using errcode='55000';end if;return new;end$$;
+      create trigger zzz_last_resource before insert on public.resource_reservations for each row execute function pg_temp.fail_last_resource();"""
+    failed=p.start(resource_fault+'set local role service_role;'+p.allocate(f),role=None)
+    p.finish(failed,error=('55000','INDEPENDENT_LAST_RESOURCE'))
+    assert state(f)==before,'Last resource failure leaked first resource or partial allocation'
+    recovered=p.allocate_commit(f)
+    assert recovered['usable'] and len(state(f)['resources'])==2,'Clean two-resource allocation failed'
+    print('PASS forced second/last resource insert failure rolls back first resource and complete state',flush=True)
+
+    f=p.identities();p.seed(f,resource_capacity=3,quantity=2)
+    holder=p.start(p.allocate(f));p.ready(holder)
+    writer=p.start(f"update public.resources set capacity=1 where id='{f['r']}';",role=None)
+    p.blocked(writer,holder)
+    committed=p.receipt(p.finish(holder)[0])
+    held_state=state(f)
+    p.finish(writer)
+    assert p.query(f"select capacity from public.resources where id='{f['r']}';")=='1'
+    assert state(f)==held_state,'Source mutation altered committed group or expiry'
+    current_retry=p.start(p.allocate(f))
+    p.finish(current_retry,error=('P0001','ALLOCATION_UNAVAILABLE'))
+    assert state(f)==held_state,'Failed current retry renewed expiry or altered history'
+    assert committed['usable'] and len(held_state['groups'])==1
+    print('PASS allocation first blocks resource source writer; changed capacity makes retry fail without renewal or history mutation',flush=True)
+
 finally:
     p.cleanup()
