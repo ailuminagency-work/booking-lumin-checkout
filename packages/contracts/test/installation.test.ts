@@ -44,3 +44,17 @@ describe('canonical routes and bounded message schemas',()=>{
  it('rejects missing-fourth-group UUID in policy and message',()=>{const bad='12345678-1234-4234-123456789abc';expect(()=>contracts().parsePolicy({...policy(),installationId:bad})).toThrow();expect(()=>parseInstallationMessage({...msg(),installationId:bad})).toThrow();});
  it('freezes lifecycle constants without claiming controller implementation',()=>{expect(Object.isFrozen(INSTALLATION_LIMITS)).toBe(true);expect(INSTALLATION_LIMITS.handshakeMs).toBe(5000);expect(INSTALLATION_LIMITS.initRetryMs).toBe(500);expect(INSTALLATION_LIMITS.maxInitSends).toBe(10);expect(INSTALLATION_LIMITS.policyFetchMs).toBe(2000);expect(INSTALLATION_LIMITS.maxPendingInit).toBe(1);});
 });
+
+
+describe('true end-of-input boundaries',()=>{
+ it.each(['\n','\r','\r\n','\u2028','\u2029'])('rejects trailing line terminator %j across all identifiers/routes',suffix=>{
+  expect(()=>parseInstallationProfile({...profile(),profileVersion:'local-v1'+suffix})).toThrow();
+  expect(()=>parseInstallationProfile({...profile(),loaderUrl:profile().loaderUrl+suffix})).toThrow();
+  expect(()=>contracts().parsePolicy({...policy(),installationId:id+suffix})).toThrow();
+  expect(()=>contracts().parsePolicy({...policy(),currentVersionId:id+suffix})).toThrow();
+  expect(()=>contracts().parsePolicy({...policy(),deploymentProfileVersion:'local-v1'+suffix})).toThrow();
+  expect(()=>parseInstallationRoute('/embed/flow/'+id+suffix)).toThrow();
+  expect(()=>parseInstallationMessage({...msg(),installationId:id+suffix})).toThrow();
+  expect(()=>parseInstallationMessage({...msg(),instanceId:'b'.repeat(32)+suffix})).toThrow();
+ });
+});
