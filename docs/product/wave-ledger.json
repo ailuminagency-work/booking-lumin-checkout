@@ -170,7 +170,7 @@
       ],
       "status": "blocked",
       "scope": "staging",
-      "blocker": "Reviewed Netlify demo deployment is verified at PR42 commit5b8108e. Hosted API/database/authenticated pilot acceptance remains unresolved: no Booking Lumin Render service and Supabase migration ledger still0001..0009 versus reviewed0001..0024.",
+      "blocker": "Reviewed Netlify demo deployment is verified at PR45 commitbea04b4. Hosted API/database/authenticated pilot acceptance remains unresolved: no Booking Lumin Render service and Supabase migration ledger still0001..0009 versus reviewed0001..0025.",
       "deployment": "not_deployed",
       "requires": [
         "W8.integrated_pilot"
@@ -245,7 +245,7 @@
       "status": "blocked",
       "dependsOn": [],
       "acceptance": "Independent authorized hosting/database access, trusted HTTPS and genuine test identities; no provider activation.",
-      "blocker": "Netlify GitHub linkage and a clean branch-scoped HTTPS demo are verified at PR42 commit5b8108e. Hosted API/database migration reconciliation and genuine authenticated pilot identities remain unevidenced. This external prerequisite does not wait for W7/W8; see increments/NETLIFY_PREVIEW_WORKFLOW.md."
+      "blocker": "Netlify GitHub linkage and a clean branch-scoped HTTPS demo are verified at PR45 commitbea04b4. Hosted API/database migration reconciliation and genuine authenticated pilot identities remain unevidenced. This external prerequisite does not wait for W7/W8; see increments/NETLIFY_PREVIEW_WORKFLOW.md."
     },
     {
       "id": "W3.fields_and_workflows",

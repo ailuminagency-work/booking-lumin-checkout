@@ -1,0 +1,11 @@
+# Cryptographic extension binding
+
+The accepted capacity and resource quantity kernels called `public.gen_random_bytes(16)`. A fresh database with pgcrypto installed in `extensions` applied all 25 migrations but both first reservations failed with SQLSTATE 42883. The same fixtures succeeded with pgcrypto in `public`. This is a runtime compatibility defect, not evidence of an applied hosted fix.
+
+Migration 0026 binds exactly four calls in the two existing kernels to the vetted extension schema. It accepts only the supported public/extensions layouts, the exact postgres-owned pgcrypto member and expected native function properties. Full accepted body hashes, signatures and properties must match before either target changes. Every other definition byte and catalog property is preserved; public layout is a validated no-op. Any failed precondition or postcondition aborts the entire transaction. No helper, public shim, privilege expansion, extension relocation or historical migration edit is introduced.
+
+The validation boundary includes both layouts, first reservation, idempotent retry, expired/released replacement keys, existing capacity/resource races, wrong-owner/member/native-function and body-drift attacks, and complete rollback after an injected postcondition failure. Random values stay synthetic and are not provider credentials. Exact candidate reviews and CI are recorded in its draft PR; this specification alone is not a passing receipt.
+
+The next hosted prerequisites remain session-fenced owner operations, restricted database logins, genuine Auth race evidence and staged migration reconciliation. The reviewed Netlify demo is independent of these SQL changes. No live migration or payment/provider activation follows from this candidate.
+
+The prior runtime candidate PR45 at `bea04b4fde8b3b709104f455148bc7f28f339150` passed [exact CI34503193692](https://github.com/ailuminagency-work/booking-lumin-checkout/actions/runs/34503193692). Netlify reviewed branch deploy `6aa2ddb228d4a60008cac7ca` was verified on Node24.21.0 with a clean exact manifest, 11 public file hashes and six routes. Production remained main152bb909/deploy6aa192e8086cda53325a9010. This is in-memory demo acceptance, not completion of W3, W4 or W8.
