@@ -85,6 +85,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_lifecycle_tests.sql
       - name: Verify managed planning financial exclusion
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_financial_boundary_tests.sql
+      - name: Verify combined planning allocator and retained generations
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/planning_allocator_tests.sql
       - name: Verify financial boundary migration preflight and rollback
         timeout-minutes: 4
         env:
@@ -250,3 +252,26 @@ jobs:
           done
           psql -v ON_ERROR_STOP=1 -f supabase/tests/group_financial_boundary_tests.sql
           python3 supabase/tests/group_financial_boundary_concurrency.py
+      - name: Verify actual allocator races and attacks in both crypto layouts
+        timeout-minutes: 8
+        env:
+          ALLOCATOR_TEST_DISPOSABLE: "1"
+          ALLOCATOR_PARENT_FIXTURE_FILE: supabase/tests/group_lifecycle_fixture.sql
+        run: |
+          for layout in public extensions; do
+            export PGDATABASE="lumin_allocator_attack_${layout}"
+            psql -v ON_ERROR_STOP=1 -d postgres -c "create database ${PGDATABASE};"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do
+              psql -v ON_ERROR_STOP=1 -f "$f"
+            done
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/planning_allocator_tests.sql
+            python3 supabase/tests/planning_allocator_concurrency.py
+            python3 supabase/tests/planning_allocator_authority.py
+            python3 supabase/tests/planning_allocator_adversarial.py
+          done
