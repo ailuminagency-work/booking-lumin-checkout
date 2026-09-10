@@ -342,3 +342,25 @@ jobs:
             done
             npm run test:mode-installation-transport --workspace @lumin/action-api
           done
+
+      - name: Verify mode session issuance requests and races in both crypto layouts
+        timeout-minutes: 10
+        env:
+          LOCAL_HARNESS: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          MODE_SESSIONS_TEST_DISPOSABLE: '1'
+        run: |
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_session_${layout}"
+            export MODE_SESSIONS_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/mode_flow_session_tests.sql
+            npm run test:mode-flow-session --workspace @lumin/action-api
+          done
