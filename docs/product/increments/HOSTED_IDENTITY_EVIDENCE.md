@@ -1,0 +1,9 @@
+# Supabase identity evidence prerequisite
+
+This is an unused server adapter, not a hosted authentication rollout. It returns a frozen user/session/expiry tuple only after the configured Supabase Auth endpoint accepts the same bearer and returns a matching nonanonymous user. The fixed project origin, canonical bounded claims, duplicate-key rejection, strict response status, identity content encoding, streamed response limit, five-second deadline and cleanup are part of its contract.
+
+The verifier does not implement owner authorization or current-session revocation. Before any owner operation, the future hosted composition must acquire the reviewed current-session database fence, recheck fresh request/token deadlines after waits, preserve tenant and membership authorization, and validate the action receipt before commit. No decode-only fallback or synthetic local identity may enter the hosted graph.
+
+The initial builder6801502 failed independent review: native fetch negotiated a compressed response that was rejected, HTTP206 was accepted, and a response arriving after timeout could leave a stream open. The corrected26ab571 explicitly requests identity encoding, requires200, and cancels late or rejected unread responses. A provider that ignores identity negotiation and sends encoded content remains denied. Offline and loopback tests do not establish actual Supabase authentication or session-revocation behavior.
+
+No existing HTTP server, repository, frontend, database, environment, credential or deployment is wired by this prerequisite. The current preview remains demo-in-memory. W3/W4 remain building and hosted acceptance stays blocked until its separate dependencies pass. The application supplies configuration only when the future hosted composition has been reviewed; no real provider credentials are activated here.
