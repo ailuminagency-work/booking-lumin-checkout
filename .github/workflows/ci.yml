@@ -83,6 +83,47 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/carrier_direct_write_tests.sql
       - name: Verify sealed planning groups and atomic release boundaries
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_lifecycle_tests.sql
+      - name: Verify cryptographic binding in the default extension layout
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/crypto_extension_binding_tests.sql
+      - name: Verify cryptographic preflight and atomic rollback in both layouts
+        timeout-minutes: 4
+        env:
+          CRYPTO_BINDING_TEST_DISPOSABLE: "1"
+          CRYPTO_BINDING_MIGRATION_FILE: supabase/migrations/0026_crypto_extension_binding.sql
+          CRYPTO_BINDING_TEST_FILE: supabase/tests/crypto_extension_binding_tests.sql
+        run: |
+          for layout in public extensions; do
+            export PGDATABASE="lumin_crypto_preflight_${layout}"
+            psql -v ON_ERROR_STOP=1 -d postgres -c "create database $PGDATABASE;"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do
+              if [ "$f" = supabase/migrations/0026_crypto_extension_binding.sql ]; then break; fi
+              psql -v ON_ERROR_STOP=1 -f "$f"
+            done
+            python3 supabase/tests/crypto_extension_binding_preflight.py
+          done
+      - name: Verify Supabase extension layout and allocation races
+        timeout-minutes: 4
+        env:
+          PGDATABASE: lumin_crypto_extensions
+          RESOURCE_QUANTITY_TEST_DISPOSABLE: "1"
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_crypto_extensions;'
+          psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/crypto_extension_binding_tests.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/capacity_tests.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/resource_quantity_tests.sql
+          python3 supabase/tests/resource_quantity_concurrency.py
+          bash supabase/tests/capacity_concurrency_harness.sh
       - name: Verify carrier privilege migration preflight and atomic rollback
         timeout-minutes: 2
         env:
