@@ -5,7 +5,7 @@
  *   MoneyContract v1, TenantContextContract v1, ServiceConfigContract v1,
  *   PricingContract v1, AvailabilityContract v1, BookingContract v1,
  *   PaymentProviderContract v1, IntegrationAdapterContract v1,
- *   ErrorContract v1, EventContract v1.
+ *   ErrorContract v1, EventContract v1, WebhookContract v1.
  *
  * Breaking changes require Architecture Governor review (see docs/DECISIONS.md).
  */
@@ -22,3 +22,5 @@ export * from "./errors";
 export * from "./events";
 
 export const CONTRACTS_VERSION = "1.0.0";
+
+export * from "./webhooks";
