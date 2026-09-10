@@ -1,9 +1,9 @@
 [build]
-  command = "npm run typecheck && npm run test && npm run build:preview"
+  command = "node --version && npm --version && npm run typecheck && npm run test && npm run build:preview"
   publish = "dist/preview"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "24"
 
 # Redirects are generated into dist/preview/_redirects so manual preview uploads
 # and Git-connected builds have identical SPA routing.
