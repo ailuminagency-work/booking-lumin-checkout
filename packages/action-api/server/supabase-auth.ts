@@ -86,10 +86,11 @@ export function createSupabaseIdentityVerifier(config: SupabaseAuthConfig, depen
    const deadline = now() + 5000;
    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error(FAILURE)); }, 5000); });
    const work = async (): Promise<IdentityEvidence> => {
-    const response = await request(endpoint, { method: 'GET', headers: { apikey: publicKey, Authorization: `Bearer ${bearer}` }, redirect: 'error', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal });
-    if (!response.ok || response.redirected || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') || (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity')) fail();
+    const response = await request(endpoint, { method: 'GET', headers: { 'Accept-Encoding': 'identity', apikey: publicKey, Authorization: `Bearer ${bearer}` }, redirect: 'error', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal });
+    if (controller.signal.aborted || now() >= deadline) { void response.body?.cancel().catch(() => {}); fail(); }
+    if (response.status !== 200 || response.redirected || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') || (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity')) { void response.body?.cancel().catch(() => {}); fail(); }
     const length = response.headers.get('content-length');
-    if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) fail();
+    if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) { void response.body?.cancel().catch(() => {}); fail(); }
     if (!response.body) fail(); reader = response.body!.getReader();
     const chunks: Uint8Array[] = []; let size = 0;
     for (;;) { const chunk = await reader.read(); if (controller.signal.aborted || now() >= deadline) fail(); if (chunk.done) break; size += chunk.value.byteLength; if (size > 65536 || chunks.length >= 65536) fail(); chunks.push(chunk.value); }
