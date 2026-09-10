@@ -20,5 +20,6 @@ export * from "./payment";
 export * from "./integrations";
 export * from "./errors";
 export * from "./events";
+export * from "./notifications";
 
 export const CONTRACTS_VERSION = "1.0.0";
