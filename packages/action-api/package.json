@@ -11,7 +11,8 @@
     "local:serve": "tsx server/local.ts",
     "local:seed": "tsx server/seed.ts",
     "test:flow-http": "tsx server/pg-http.integration.ts",
-    "test:roster-http": "tsx server/roster-http.integration.ts"
+    "test:roster-http": "tsx server/roster-http.integration.ts",
+    "test:planning-allocation": "tsx server/planning-allocation.integration.ts"
   },
   "dependencies": {
     "@lumin/contracts": "*",
