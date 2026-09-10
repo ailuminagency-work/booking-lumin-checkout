@@ -1,0 +1,13 @@
+# Local planning allocation transport
+
+Status: local-only implementation. Exact acceptance receipts belong to its stacked draft PR; this document does not authorize deployment. The reviewed prerequisite is draftPR52 at24e4fc2a36fc6279fbf3d77817f251779a48e6fd, exactCI34519525424. The UTC-only database allocator resolves authoritative service/resource/crew capacity and seals one temporary planning group; it does not confirm bookings or collect payments.
+
+This increment supplies a dedicated server-only local transaction adapter around that allocator. Its request contains tenant, booking, crew and target generation; trusted synthetic actor context is injected separately. The adapter must preserve exact receipt identity/expiry, validate the actual COMMIT acknowledgement, and distinguish committed, failed-with-no-COMMIT-submitted, and unknown-COMMIT outcomes. No automatic generation advance or hold renewal follows from uncertainty.
+
+A monotonic caller deadline includes connection acquisition and every command. Separately armed database statement/lock limits remain mandatory. Discarding a driver connection does not prove immediate database cancellation; actual probes demonstrated the server may keep running after the client is removed. Missing COMMIT acknowledgement therefore stays uncertain. Success requires strict request-bound receipt validation and normal COMMIT completion.
+
+Actual ownership: allocator_harness_builder owns new contracts/repository/unit files in an isolated worktree; allocator_source_review independently authors actual PostgreSQL integration tests; allocator_harness_review independently reviews both. Root owns integration, test registration, CI and program evidence. No reviewer may approve their own source. Earlier frozen design and exact-candidate SQL acceptance are prerequisites, not evidence that this adapter already passes its gates.
+
+The local-only factory remains guarded by explicit disposable loopback settings. Existing FlowRepository, HTTP composition, browser exports and migrations are outside this increment. Hosted current-session authentication, least-privilege logins, TLS deployment and genuine tenant/worker acceptance remain unverified. All real provider connections remain disconnected.
+
+Required acceptance includes separate command sequencing, strict immutable input/receipt validation, microsecond/calendar boundaries, abort/deadline at every await, late acquisitions, connection/listener cleanup, uncertain and rolled-back COMMIT responses, actual driver waits/disconnections/reconciliation in both crypto layouts, accepted flow/roster regressions, independent Runtime review and exact-candidate CI. Full W3/W4 and later waves are not completed by this bounded adapter.
