@@ -79,6 +79,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/planning_policy_tests.sql
       - name: Verify direct carrier writes are denied and legacy RPCs remain usable
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/carrier_direct_write_tests.sql
+      - name: Verify sealed planning groups and atomic release boundaries
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/group_lifecycle_tests.sql
       - name: Verify carrier privilege migration preflight and atomic rollback
         timeout-minutes: 2
         env:
@@ -157,3 +159,16 @@ jobs:
           LOCAL_HARNESS: "1"
           FLOW_TEST_DISPOSABLE: "1"
         run: npm run test:roster-http --workspace @lumin/action-api
+      - name: Create isolated database for retained planning group race fixtures
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_group_races;'
+          psql -v ON_ERROR_STOP=1 -d lumin_group_races -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -d lumin_group_races -f "$f"
+          done
+      - name: Verify observed planning group lifecycle races
+        timeout-minutes: 4
+        env:
+          PGDATABASE: lumin_group_races
+          GROUP_LIFECYCLE_TEST_DISPOSABLE: "1"
+        run: python3 supabase/tests/group_lifecycle_concurrency.py
