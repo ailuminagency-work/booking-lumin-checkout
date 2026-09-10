@@ -58,8 +58,11 @@ begin
  end loop;
  replacement:=pg_catalog.format('%I.gen_random_bytes(16)',ns);
  for i in 1..2 loop
-  expected:=pg_catalog.replace(bodies[i],'public.gen_random_bytes(16)',replacement);
   if ns<>'public' then execute pg_catalog.replace(definitions[i],'public.gen_random_bytes(16)',replacement);end if;
+ end loop;
+ -- Validate the entire final state after every DDL/event trigger has completed.
+ for i in 1..2 loop
+  expected:=pg_catalog.replace(bodies[i],'public.gen_random_bytes(16)',replacement);
   select * into after_fn from pg_catalog.pg_proc where oid=ids[i];
   if after_fn.oid is null or (pg_catalog.to_jsonb(after_fn)-'prosrc') is distinct from(snapshots[i]-'prosrc')
    or after_fn.prosrc is distinct from expected
@@ -67,6 +70,12 @@ begin
    raise exception 'CRYPTO_BINDING_POSTCONDITION' using errcode='55000';
   end if;
  end loop;
+ if (select nspname from pg_catalog.pg_namespace where oid=ext.extnamespace) is distinct from ns
+  or (select pg_catalog.to_jsonb(p) from pg_catalog.pg_proc p where p.oid=random_fn.oid) is distinct from pg_catalog.to_jsonb(random_fn)
+  or (select pg_catalog.to_jsonb(e) from pg_catalog.pg_extension e where e.oid=ext.oid) is distinct from pg_catalog.to_jsonb(ext)
+  or not exists(select 1 from pg_catalog.pg_depend d where d.classid='pg_catalog.pg_proc'::pg_catalog.regclass and d.objid=random_fn.oid and d.objsubid=0 and d.refclassid='pg_catalog.pg_extension'::pg_catalog.regclass and d.refobjid=ext.oid and d.deptype='e') then
+  raise exception 'CRYPTO_BINDING_POSTCONDITION' using errcode='55000';
+ end if;
 end;
 $binding$;
 commit;
