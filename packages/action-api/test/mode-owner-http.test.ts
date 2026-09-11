@@ -110,3 +110,45 @@ it('classifies a trailing-slash target as malformed while an unknown canonical t
  expect(s.owner.publish).not.toHaveBeenCalled();
  const valid=await s.call();expect(valid.status).toBe(200);
 });
+
+// These peers are injected by trusted test composition, never accepted from forwarded/request headers.
+function virtualPeer(s:Awaited<ReturnType<typeof setup>>){let peer='127.0.0.1';s.control.server.prependListener('request',req=>Object.defineProperty(req.socket,'remoteAddress',{configurable:true,value:peer}));return (value:string)=>{peer=value;};}
+describe('independent frozen admission coverage',()=>{
+ it('global600 includes address-denied attempts and rejects a fresh virtual peer at601',async()=>{
+  const s=await setup(),peer=virtualPeer(s);peer('192.0.2.1');
+  for(let i=0;i<600;i++)expect((await s.call()).status).toBe(i<120?403:429);
+  peer('192.0.2.2');expect((await s.call()).status).toBe(429);
+  s.setNow(60000);expect((await s.call()).status).toBe(403);expect(s.owner.publish).not.toHaveBeenCalled();
+ },20000);
+ it('combined1024 map bound retains active keys and prunes only expired windows',async()=>{
+  const s=await setup(),peer=virtualPeer(s);peer('seed');expect((await s.call()).status).toBe(403);
+  s.setNow(59999);for(let i=0;i<599;i++){peer('old-'+i);expect((await s.call()).status).toBe(403);}
+  s.setNow(60000);for(let i=0;i<424;i++){peer('new-'+i);expect((await s.call()).status).toBe(403);}
+  peer('capacity-overflow');const denied=await s.call();expect(denied.status).toBe(429);expect(denied.headers.get('retry-after')).toBe('60');
+  peer('new-0');expect((await s.call()).status).toBe(403);
+  peer('capacity-overflow');expect((await s.call()).status).toBe(429);
+  s.setNow(119999);expect((await s.call()).status).toBe(403);
+  peer('new-0');for(let i=0;i<118;i++)expect((await s.call()).status).toBe(403);
+  expect((await s.call()).status).toBe(429); // original active count survived map-cap denials/pruning
+  s.setNow(120000);expect((await s.call()).status).toBe(403);expect(s.owner.publish).not.toHaveBeenCalled();
+ },30000);
+ it('authenticated read120 is distinct from peer ingress and resets at its own window',async()=>{
+  const s=await setup(),peer=virtualPeer(s),body={tenantId:id(2),flowId:null,beforeCreatedAt:null,beforeBookingId:null,limit:100};
+  for(let i=0;i<120;i++){peer(i%2?'::1':'127.0.0.1');expect((await s.call('request-history',body)).status).toBe(200);}
+  peer('::ffff:127.0.0.1');expect((await s.call('request-history',body)).status).toBe(429);expect(s.owner.requestHistory).toHaveBeenCalledTimes(120);
+  expect((await s.call('request-history',{...body,tenantId:id(3)})).status).toBe(200);
+  s.setNow(60000);expect((await s.call('request-history',body)).status).toBe(200);
+ },15000);
+ it('duplicate raw Host is rejected and forwarded fields cannot change peer identity',async()=>{
+  const s=await setup(),payload=JSON.stringify(publish),host='127.0.0.1:'+s.port;
+  const response=await raw(s.port,['Host',host,'Host',host,'Origin',origin,'Authorization','Bearer '+token,'Content-Type','application/json','Content-Length',String(Buffer.byteLength(payload))]);expect(response.status).toBe(400);expect(response.body.phase).toBe('not_dispatched');expect(s.owner.publish).not.toHaveBeenCalled();
+  const peer=virtualPeer(s);peer('192.0.2.10');expect((await s.call('publish',publish,{headers:{Forwarded:'for=127.0.0.1;host='+host,'X-Forwarded-For':'127.0.0.1','X-Forwarded-Host':host}})).status).toBe(403);
+  peer('127.0.0.1');expect((await s.call('publish',publish,{headers:{Forwarded:'for=192.0.2.10','X-Forwarded-For':'192.0.2.10'}})).status).toBe(200);
+ });
+ it('disconnect retains pending repository mutation admission until its actual settlement',async()=>{
+  const s=await setup(),entered=deferred<void>(),gate=deferred<any>();s.owner.publish.mockImplementationOnce(()=>{entered.resolve();return gate.promise;});
+  const payload=JSON.stringify(publish),request=httpRequest({host:'127.0.0.1',port:s.port,path:prefix+'publish',method:'POST',headers:{Host:'127.0.0.1:'+s.port,Origin:origin,Authorization:'Bearer '+token,'Content-Type':'application/json','Content-Length':String(Buffer.byteLength(payload))}});request.on('error',()=>{});const closed=new Promise<void>(resolve=>request.once('close',()=>resolve()));request.end(payload);await entered.promise;request.destroy();await closed;
+  expect((await s.call()).status).toBe(429);expect((await s.call()).status).toBe(429);expect(s.owner.publish).toHaveBeenCalledTimes(1);
+  gate.resolve({kind:'committed',delivery:'receipt',receipt});await new Promise(resolve=>setTimeout(resolve,0));expect((await s.call()).status).toBe(200);expect(s.owner.publish).toHaveBeenCalledTimes(2);
+ });
+});
