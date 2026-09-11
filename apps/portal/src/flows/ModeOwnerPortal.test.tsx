@@ -186,3 +186,53 @@ it('queued old editor adapter cannot dispatch with either credential after a new
         expect(observed[0]!.body.tenantId).toBe(version);
     } finally { editor.mockRestore(); }
 });
+it('complete save publish install policy save publish cycle clears locks and permits explicit apply', async () => {
+    fixture();
+    const baseFetch = globalThis.fetch;
+    let savedRevision = 1, published = version, publishes = 0;
+    const rows: any[] = [], calls: string[] = [];
+    const nextVersion = '66666666-6666-4666-8666-666666666666';
+    const committed = (receipt: unknown) => new Response(JSON.stringify({ schemaVersion: 1, phase: 'repository_result', outcome: { kind: 'committed', delivery: 'receipt', receipt } }));
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = String(input), body = options?.body ? JSON.parse(options.body as string) : null;
+        if (url.includes('/draft') && options?.method === 'POST') {
+            expect(body.expectedRevision).toBe(savedRevision); savedRevision++; calls.push('save');
+            return reply({ flowId: flow, revision: savedRevision });
+        }
+        if (url.includes('/api/flows?') || url.includes('/api/configurable-flows?')) return reply({ flows: [{ flowId: flow, name: 'Cleaning form', revision: savedRevision, status: 'draft', serviceId: tenant, publishedVersionId: published }] });
+        const path = url.split('/').at(-1);
+        if (path === 'installations') return result({ installations: rows.map(r => ({ ...r })), nextCursor: null });
+        if (path === 'publish') {
+            expect(body.expectedDraftRevision).toBe(savedRevision); published = ++publishes === 1 ? version : nextVersion; calls.push('publish');
+            return committed({ schemaVersion: 1, actorId: tenant, flowId: flow, operation: 'publish', versionId: published, sourceRevision: savedRevision, renderSchemaVersion: 1 });
+        }
+        if (path === 'install') {
+            const row = { installationId: rows.length ? '55555555-5555-4555-8555-555555555555' : '44444444-4444-4444-8444-444444444444', flowId: flow, mode: body.mode, deploymentProfileVersion: body.deploymentProfileVersion, currentVersionId: body.versionId, targetRevision: 1, policyRevision: 1, enabled: true, allowedParentOrigins: body.allowedParentOrigins };
+            rows.push(row); calls.push('install'); return committed({ schemaVersion: 1, actorId: tenant, ...row, operation: 'install', changed: true });
+        }
+        if (path === 'update-policy') {
+            const row = rows.find(r => r.installationId === body.installationId)!; expect(body.expectedPolicyRevision).toBe(row.policyRevision);
+            row.policyRevision++; row.enabled = body.enabled; calls.push('policy');
+            return committed({ schemaVersion: 1, actorId: tenant, flowId: flow, operation: 'policy', installationId: row.installationId, currentVersionId: row.currentVersionId, targetRevision: row.targetRevision, policyRevision: row.policyRevision, enabled: row.enabled, allowedParentOrigins: row.allowedParentOrigins, changed: true });
+        }
+        if (path === 'apply-version') {
+            const row = rows.find(r => r.installationId === body.installationId)!, previousVersionId = row.currentVersionId;
+            expect(body.expectedTargetRevision).toBe(1); expect(body.newVersionId).toBe(nextVersion); row.currentVersionId = body.newVersionId; row.targetRevision++; calls.push('apply');
+            return committed({ schemaVersion: 1, actorId: tenant, flowId: flow, operation: 'apply', installationId: row.installationId, previousVersionId, currentVersionId: row.currentVersionId, targetRevision: row.targetRevision, policyRevision: row.policyRevision, changed: true });
+        }
+        return baseFetch(input, options);
+    });
+    mount(); await login(); await select();
+    const publish = () => screen.getByRole('button', { name: 'Publish saved version' });
+    async function saved(name: string) { fireEvent.change(screen.getByLabelText('Questionnaire name'), { target: { value: name } }); fireEvent.click(screen.getByRole('button', { name: 'Save questionnaire' })); await waitFor(() => expect(publish()).not.toBeDisabled()); }
+    async function unlocked() { await waitFor(() => expect(screen.queryByRole('button', { name: 'Check previous change' })).toBeNull()); await waitFor(() => expect(publish()).not.toBeDisabled()); }
+    await saved('First edit'); fireEvent.click(publish()); await unlocked();
+    fireEvent.click(screen.getByRole('button', { name: 'Create installation' })); await screen.findByRole('button', { name: /^hosted installation/ }); await unlocked();
+    fireEvent.change(screen.getByLabelText('Installation mode'), { target: { value: 'iframe' } }); fireEvent.change(screen.getByLabelText('Allowed parent origins'), { target: { value: 'https://merchant.example' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create installation' })); await screen.findByRole('button', { name: /^iframe installation/ }); await unlocked();
+    fireEvent.click(screen.getByRole('button', { name: /^hosted installation/ })); fireEvent.click(screen.getByLabelText('Distribution enabled')); fireEvent.click(screen.getByRole('button', { name: 'Save distribution policy' })); await unlocked();
+    await saved('Second edit'); fireEvent.click(publish()); await unlocked();
+    expect(publishes).toBe(2); expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^hosted installation/ })); fireEvent.click(screen.getByRole('button', { name: 'Apply published version' })); await unlocked();
+    expect(calls).toEqual(['save', 'publish', 'install', 'install', 'policy', 'save', 'publish', 'apply']);
+}, 15000);
