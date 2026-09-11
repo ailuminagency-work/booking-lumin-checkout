@@ -53,22 +53,31 @@
 -- Tenant members still read their own tenant's payments (positive path). No
 -- INSERT/UPDATE/DELETE policy exists for authenticated on payments (writes are
 -- service_role-only, SI-2) and none is added.
+--
+-- HYBRID (RISK-4 + codex financial-minimization): the SELECT is additionally
+-- gated on `lumin.tenant_is_active(tenant_id)`. Platform status alone never
+-- grants raw finance, AND membership of a SUSPENDED/inactive tenant does not
+-- either — a member of an inactive tenant reads ZERO raw payment rows. Active
+-- tenants' members keep reading their own payments unchanged.
 -- ----------------------------------------------------------------------------
 drop policy if exists "member_or_admin_select" on public.payments;
 create policy "member_select" on public.payments
   for select to authenticated
-  using (lumin.is_tenant_member(tenant_id));
+  using (lumin.is_tenant_member(tenant_id) and lumin.tenant_is_active(tenant_id));
 
 -- ----------------------------------------------------------------------------
 -- refunds — member-only SELECT (RISK-4). Same treatment as payments.
 --
 -- public.platform_economics reads refunds as a SECURITY DEFINER view (0009), so
 -- Command Center refund figures are unaffected by this tighter base policy.
+--
+-- HYBRID (RISK-4 + codex financial-minimization): same active-tenant gate as
+-- payments — a member of a SUSPENDED/inactive tenant reads ZERO raw refund rows.
 -- ----------------------------------------------------------------------------
 drop policy if exists "member_or_admin_select" on public.refunds;
 create policy "member_select" on public.refunds
   for select to authenticated
-  using (lumin.is_tenant_member(tenant_id));
+  using (lumin.is_tenant_member(tenant_id) and lumin.tenant_is_active(tenant_id));
 
 -- ----------------------------------------------------------------------------
 -- audit_events — remove raw cross-tenant audit reads for platform admins,
@@ -77,9 +86,10 @@ create policy "member_select" on public.refunds
 -- Old policy: a tenant owner read their tenant's events OR a platform admin
 -- read ALL events (including every per-tenant row) — raw cross-tenant audit.
 --
--- New policy:
---   * a tenant BUSINESS_OWNER reads their OWN tenant's events (tenant_id set),
---     exactly as before; and
+-- New policy (HYBRID — RISK-4 + codex financial-minimization):
+--   * a tenant BUSINESS_OWNER reads their OWN tenant's events (tenant_id set)
+--     ONLY WHILE that tenant is active (`lumin.tenant_is_active`) — an owner of
+--     a SUSPENDED/inactive tenant reads ZERO per-tenant audit rows; and
 --   * a platform admin reads ONLY platform-level events (tenant_id IS NULL).
 --     Per-tenant audit rows (tenant_id set) are no longer visible to a platform
 --     admin — those are tenant-scoped audit data.
@@ -94,9 +104,9 @@ drop policy if exists "owner_or_admin_select" on public.audit_events;
 create policy "owner_or_platform_select" on public.audit_events
   for select to authenticated
   using (
-    (tenant_id is not null and lumin.tenant_role(tenant_id) = 'BUSINESS_OWNER')
+    (tenant_id is not null and lumin.tenant_role(tenant_id) = 'BUSINESS_OWNER' and lumin.tenant_is_active(tenant_id))
     or (tenant_id is null and lumin.is_platform_admin())
   );
 
 comment on table public.audit_events is
-  'Append-only (UPDATE/DELETE revoked from every API role in 0007). data is redacted/PII-minimized before insert (SI-11). SELECT: a tenant owner reads their own tenant''s events; a platform admin reads ONLY platform-level events (tenant_id IS NULL) — no raw per-tenant audit reads (RC-2/RISK-4). Any per-tenant platform access must be a separate, audited SECURITY DEFINER RPC, never a base-table policy.';
+  'Append-only (UPDATE/DELETE revoked from every API role in 0007). data is redacted/PII-minimized before insert (SI-11). SELECT: a tenant owner reads their own tenant''s events ONLY while that tenant is active; a platform admin reads ONLY platform-level events (tenant_id IS NULL) — no raw per-tenant audit reads (RC-2/RISK-4). Any per-tenant platform access must be a separate, audited SECURITY DEFINER RPC, never a base-table policy.';
