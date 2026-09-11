@@ -22,6 +22,12 @@ export function validatePreviewEnvironment(environment) {
   if (environment.VITE_FLOW_API_URL) {
     throw new Error("VITE_FLOW_API_URL requires a separately reviewed hosted API integration");
   }
+  if (environment.VITE_MODE_OWNER_LOCAL_HARNESS !== undefined && environment.VITE_MODE_OWNER_LOCAL_HARNESS !== "false") {
+    throw new Error("Preview packaging cannot enable VITE_MODE_OWNER_LOCAL_HARNESS");
+  }
+  for (const name of ["VITE_MODE_OWNER_API_URL", "VITE_MODE_OWNER_DRAFT_API_URL"]) {
+    if (environment[name]) throw new Error(`${name} requires a separately reviewed hosted API integration`);
+  }
   const configuredMode = environment.VITE_RUNTIME_MODE;
   if (configuredMode === undefined && environment.NETLIFY === "true") {
     throw new Error("Netlify builds require explicit VITE_RUNTIME_MODE=mock or supabase");
