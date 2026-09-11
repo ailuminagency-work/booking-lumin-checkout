@@ -16,7 +16,8 @@
     "test:mode-installations": "tsx server/mode-installations.integration.ts",
     "test:mode-installation-transport": "tsx server/mode-installation-transport.integration.ts",
     "test:mode-flow-session": "tsx server/mode-flow-session.integration.ts",
-    "test:mode-session-transport": "tsx server/mode-session-transport.integration.ts"
+    "test:mode-session-transport": "tsx server/mode-session-transport.integration.ts",
+    "test:mode-owner-journey": "tsx server/mode-owner-journey.integration.ts"
   },
   "dependencies": {
     "@lumin/contracts": "*",

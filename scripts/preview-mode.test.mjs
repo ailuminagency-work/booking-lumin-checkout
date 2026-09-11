@@ -68,6 +68,22 @@ test("invalid connected configuration rejects without echoing values", () => {
   }
 });
 
+test("local owner APIs cannot become a published integration", () => {
+  assert.equal(validatePreviewEnvironment({ VITE_MODE_OWNER_LOCAL_HARNESS: "false", VITE_MODE_OWNER_API_URL: "", VITE_MODE_OWNER_DRAFT_API_URL: "" }).runtimeMode, "mock");
+  for (const value of ["true", "TRUE", "1", "", " false "]) {
+    assert.throws(() => validatePreviewEnvironment({ VITE_MODE_OWNER_LOCAL_HARNESS: value }), /VITE_MODE_OWNER_LOCAL_HARNESS/);
+  }
+  for (const name of ["VITE_MODE_OWNER_API_URL", "VITE_MODE_OWNER_DRAFT_API_URL"]) {
+    for (const value of ["http://127.0.0.1:45131", "https://api.example.test", "private-marker"]) {
+      assert.throws(() => validatePreviewEnvironment({ [name]: value }), error => {
+        assert.ok(error.message.includes(name));
+        assert.ok(!error.message.includes(value));
+        return true;
+      });
+    }
+  }
+});
+
 test("rejected Netlify configuration fails before touching an existing preview", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "lumin-preview-config-"));
   const fixtureScripts = join(fixture, "scripts");
@@ -87,14 +103,17 @@ test("rejected Netlify configuration fails before touching an existing preview",
       { ...connected, VITE_SUPABASE_PUBLISHABLE_KEY: "sb_secret_private-marker" },
       { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_FLOW_LOCAL_HARNESS: "true" },
       { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_FLOW_API_URL: "private-marker" },
+      { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_MODE_OWNER_LOCAL_HARNESS: "true" },
+      { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_MODE_OWNER_API_URL: "private-marker" },
+      { NETLIFY: "true", VITE_RUNTIME_MODE: "mock", VITE_MODE_OWNER_DRAFT_API_URL: "private-marker" },
     ]) {
       const environment = { ...process.env };
-      for (const name of ["NETLIFY", "VITE_RUNTIME_MODE", "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_TENANT_ID", "VITE_FLOW_LOCAL_HARNESS", "VITE_FLOW_API_URL"]) delete environment[name];
+      for (const name of ["NETLIFY", "VITE_RUNTIME_MODE", "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_TENANT_ID", "VITE_FLOW_LOCAL_HARNESS", "VITE_FLOW_API_URL", "VITE_MODE_OWNER_LOCAL_HARNESS", "VITE_MODE_OWNER_API_URL", "VITE_MODE_OWNER_DRAFT_API_URL"]) delete environment[name];
       const result = spawnSync(process.execPath, [join(fixtureScripts, "build-preview.mjs")], {
         cwd: fixture, env: { ...environment, ...overrides }, encoding: "utf8",
       });
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /VITE_RUNTIME_MODE|VITE_SUPABASE|VITE_FLOW_/);
+      assert.match(result.stderr, /VITE_RUNTIME_MODE|VITE_SUPABASE|VITE_FLOW_|VITE_MODE_OWNER_/);
       assert.ok(!result.stderr.includes("private-marker"));
       assert.equal(await readFile(marker, "utf8"), "unchanged accepted artifact");
     }

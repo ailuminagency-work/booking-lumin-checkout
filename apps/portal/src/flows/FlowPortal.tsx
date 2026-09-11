@@ -1,31 +1,231 @@
-import {RosterPanel} from '../roster/RosterPanel';
-import {ConfigurableEditor} from './ConfigurableEditor';
-import {useEffect,useMemo,useRef,useState,type FormEvent} from 'react';
-import {createFlowClient,FlowError,QuestionForm,type FlowClient,type ServiceRender,type FlowConfig,type FlowList,type Answers} from '@lumin/flow-ui';
-import {PortalShell} from '../components/Layout';
-import {PortalRoutes} from '../components/PortalRoutes';
-const safeError=(e:unknown)=>e instanceof FlowError?e.message:'The request could not be completed.';
-function Editor({client,token,tenant,services,initialFlows}:{client:FlowClient;token:string;tenant:string;services:ServiceRender[];initialFlows:FlowList['flows']}){
- const [flows,setFlows]=useState(initialFlows),[flowId,setFlowId]=useState(''),[name,setName]=useState(''),[service,setService]=useState<ServiceRender>(),[config,setConfig]=useState<FlowConfig>(),[revision,setRevision]=useState(0),[dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[origin,setOrigin]=useState(location.protocol==='https:'?location.origin:''),[hosted,setHosted]=useState(''),[answers,setAnswers]=useState<Answers>({});
- const generation=useRef(0);useEffect(()=>{const at=generation.current;void client.flows(token,tenant).then(result=>{if(at===generation.current)setFlows(result.flows);}).catch(e=>{if(at===generation.current)setError(safeError(e));});return()=>{generation.current++;};},[client,token,tenant]);
- async function task(work:()=>Promise<void>){const current=++generation.current;setBusy(true);setError('');setMessage('');try{await work();}catch(e){if(current===generation.current)setError(safeError(e));}finally{if(current===generation.current)setBusy(false);}}
- function choose(s:ServiceRender){setService(s);setConfig({key:'request',steps:s.questions.map((q,i)=>({key:'question-'+i,questionKey:q.id,kind:'question',required:q.required}))});setDirty(true);setHosted('');setAnswers({});}
- function fresh(){generation.current++;setFlowId(crypto.randomUUID());setRevision(0);setName('New request form');setHosted('');setMessage('');setError('');if(services[0])choose(services[0]);}
- async function reload(id=flowId){if(!id)return;await task(async()=>{const at=generation.current;const d=await client.draft(token,tenant,id);if(at!==generation.current)return;setFlowId(d.flowId);setName(d.name);setService(d.service);setConfig(d.config);setRevision(d.revision);setDirty(false);setHosted('');setAnswers({});setMessage('Loaded the saved questionnaire.');});}
- async function save(){if(!service||!config)return;await task(async()=>{const at=generation.current;const result=await client.save(token,tenant,flowId,{expectedRevision:revision,serviceId:service.id,name:name.trim(),config});if(at!==generation.current)return;setRevision(result.revision);setDirty(false);setMessage('Questionnaire saved. Refresh to load it from storage.');const next=await client.flows(token,tenant);if(at===generation.current)setFlows(next.flows);});}
- async function publish(){await task(async()=>{let checked:URL;try{checked=new URL(origin);}catch{throw Error('Enter an exact HTTPS customer origin.');}if(checked.protocol!=='https:'||checked.origin!==origin)throw Error('Enter an exact HTTPS customer origin.');const at=generation.current;const result=await client.publish(token,tenant,flowId,{expectedRevision:revision,allowedOrigins:[origin]});if(at!==generation.current)return;if(result.hostedPath!=='/checkout/flow/'+result.installationId)throw Error('The hosted link was invalid.');setHosted(origin+result.hostedPath);setMessage('Published an immutable questionnaire version.');});}
- return <section><h1>Embed Builder</h1><p>Build a hosted request form from an eligible service. Questions can be reordered. Required questions follow the service configuration.</p><fieldset disabled={busy}><label>Saved questionnaire<select value={flowId} onChange={e=>void reload(e.target.value)}><option value="">Choose a saved questionnaire</option>{flows.map(f=><option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" onClick={fresh} disabled={!services.length}>New questionnaire</button></fieldset>{!services.length&&<p>No compatible services are available.</p>}
- {flowId&&service&&config&&<><fieldset disabled={busy}><label>Questionnaire name<input value={name} maxLength={200} onChange={e=>{setName(e.target.value);setDirty(true);setHosted('');}}/></label><label>Service<select value={service.id} onChange={e=>{const s=services.find(s=>s.id===e.target.value);if(s)choose(s);}}>{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><ol>{config.steps.map((step,i)=><li key={step.key}>{service.questions.find(q=>q.id===step.questionKey)?.prompt} <button type="button" disabled={i===0} aria-label={`Move question ${i+1} up`} onClick={()=>{const steps=[...config.steps];[steps[i-1],steps[i]]=[steps[i]!,steps[i-1]!];setConfig({...config,steps});setDirty(true);setHosted('');}}>Move up</button></li>)}</ol><button type="button" onClick={()=>void save()} disabled={!name.trim()||!dirty}>Save questionnaire</button><button type="button" onClick={()=>void reload()} disabled={!revision}>Refresh saved version (discard edits)</button><p>{revision?`Saved revision ${revision}`:'Not saved'}{dirty?' · Unsaved changes':''}</p><label>Customer site origin (HTTPS)<input type="url" placeholder="https://your-customer-site.example" value={origin} onChange={e=>{setOrigin(e.target.value);setHosted('');}}/></label><button type="button" onClick={()=>void publish()} disabled={dirty||!revision||!origin}>Publish saved version</button></fieldset><h2>Customer question preview</h2><p>Preview only. Answers here are not submitted.</p><QuestionForm service={service} config={config} answers={answers} onChange={setAnswers}/></>}
- {busy&&<p role="status">Saving or loading…</p>}{error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}{hosted&&<p><a href={hosted} target="_blank" rel="noopener noreferrer">Open hosted request form</a></p>}<p>Requests remain unconfirmed. Publishing does not charge a customer or reserve availability.</p></section>;
+import type { ModeEditorAdapter } from '../../../../packages/flow-ui/src/modeOwnerTypes';
+import { RosterPanel } from '../roster/RosterPanel';
+import { ConfigurableEditor } from './ConfigurableEditor';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createFlowClient, FlowError, QuestionForm, type FlowClient, type ServiceRender, type FlowConfig, type FlowList, type Answers } from '@lumin/flow-ui';
+import { PortalShell } from '../components/Layout';
+import { PortalRoutes } from '../components/PortalRoutes';
+const safeError = (e: unknown) => e instanceof FlowError ? e.message : 'The request could not be completed.';
+export function Editor({ client, token, tenant, services, initialFlows, modeAdapter }: {
+    client: FlowClient;
+    token: string;
+    tenant: string;
+    services: ServiceRender[];
+    initialFlows: FlowList['flows'];
+    modeAdapter?: ModeEditorAdapter;
+}) {
+    const [flows, setFlows] = useState(initialFlows), [flowId, setFlowId] = useState(''), [name, setName] = useState(''), [service, setService] = useState<ServiceRender>(), [config, setConfig] = useState<FlowConfig>(), [revision, setRevision] = useState(0), [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [origin, setOrigin] = useState(location.protocol === 'https:' ? location.origin : ''), [hosted, setHosted] = useState(''), [answers, setAnswers] = useState<Answers>({});
+    useEffect(() => { modeAdapter?.selection(flowId, dirty); }, [flowId, dirty, modeAdapter?.selection]);
+    const generation = useRef(0);
+    useEffect(() => {
+        const at = generation.current;
+        void client.flows(token, tenant).then(result => {
+            if (at === generation.current)
+                setFlows(result.flows);
+        }).catch(e => {
+            if (at === generation.current)
+                setError(safeError(e));
+        });
+        return () => { generation.current++; };
+    }, [client, token, tenant]);
+    async function task(work: () => Promise<void>) {
+        const current = ++generation.current;
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+            await work();
+        }
+        catch (e) {
+            if (current === generation.current)
+                setError(safeError(e));
+        }
+        finally {
+            if (current === generation.current)
+                setBusy(false);
+        }
+    }
+    function choose(s: ServiceRender) { setService(s); setConfig({ key: 'request', steps: s.questions.map((q, i) => ({ key: 'question-' + i, questionKey: q.id, kind: 'question', required: q.required })) }); setDirty(true); setHosted(''); setAnswers({}); }
+    function fresh() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+            return;
+        generation.current++;
+        setFlowId(crypto.randomUUID());
+        setRevision(0);
+        setName('New request form');
+        setHosted('');
+        setMessage('');
+        setError('');
+        if (services[0])
+            choose(services[0]);
+    }
+    async function reload(id = flowId) {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (!id)
+            return;
+        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+            return;
+        await task(async () => {
+            const at = generation.current;
+            const d = await client.draft(token, tenant, id);
+            if (at !== generation.current)
+                return;
+            setFlowId(d.flowId);
+            setName(d.name);
+            setService(d.service);
+            setConfig(d.config);
+            setRevision(d.revision);
+            setDirty(false);
+            setHosted('');
+            setAnswers({});
+            setMessage('Loaded the saved questionnaire.');
+            await modeAdapter?.changed();
+        });
+    }
+    async function save() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (!service || !config)
+            return;
+        await task(async () => {
+            const at = generation.current;
+            let result;
+            try {
+                result = await client.save(token, tenant, flowId, { expectedRevision: revision, serviceId: service.id, name: name.trim(), config });
+            }
+            catch (e) {
+                if (modeAdapter && at === generation.current)
+                    setMessage('Save outcome unknown; reload and compare.');
+                throw e;
+            }
+            if (at !== generation.current)
+                return;
+            setRevision(result.revision);
+            setDirty(false);
+            setMessage('Questionnaire saved. Refresh to load it from storage.');
+            const next = await client.flows(token, tenant);
+            if (at === generation.current) {
+                setFlows(next.flows);
+                await modeAdapter?.changed();
+            }
+        });
+    }
+    async function publish() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (modeAdapter) {
+            await modeAdapter.publish(flowId, revision);
+            return;
+        }
+        await task(async () => {
+            let checked: URL;
+            try {
+                checked = new URL(origin);
+            }
+            catch {
+                throw Error('Enter an exact HTTPS customer origin.');
+            }
+            if (checked.protocol !== 'https:' || checked.origin !== origin)
+                throw Error('Enter an exact HTTPS customer origin.');
+            const at = generation.current;
+            const result = await client.publish(token, tenant, flowId, { expectedRevision: revision, allowedOrigins: [origin] });
+            if (at !== generation.current)
+                return;
+            if (result.hostedPath !== '/checkout/flow/' + result.installationId)
+                throw Error('The hosted link was invalid.');
+            setHosted(origin + result.hostedPath);
+            setMessage('Published an immutable questionnaire version.');
+        });
+    }
+    return <section><h1>Embed Builder</h1><p>Build a hosted request form from an eligible service. Questions can be reordered. Required questions follow the service configuration.</p><fieldset disabled={busy}><label>Saved questionnaire<select value={flowId} onChange={e => void reload(e.target.value)}><option value="">Choose a saved questionnaire</option>{flows.map(f => <option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" onClick={fresh} disabled={!services.length}>New questionnaire</button></fieldset>{!services.length && <p>No compatible services are available.</p>}
+ {flowId && service && config && <><fieldset disabled={busy}><label>Questionnaire name<input value={name} maxLength={200} onChange={e => { setName(e.target.value); setDirty(true); setHosted(''); }}/></label><label>Service<select value={service.id} onChange={e => {
+                const s = services.find(s => s.id === e.target.value);
+                if (s)
+                    choose(s);
+            }}>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><ol>{config.steps.map((step, i) => <li key={step.key}>{service.questions.find(q => q.id === step.questionKey)?.prompt} <button type="button" disabled={i === 0} aria-label={`Move question ${i + 1} up`} onClick={() => { const steps = [...config.steps]; [steps[i - 1], steps[i]] = [steps[i]!, steps[i - 1]!]; setConfig({ ...config, steps }); setDirty(true); setHosted(''); }}>Move up</button></li>)}</ol><button type="button" onClick={() => void save()} disabled={!name.trim() || !dirty}>Save questionnaire</button><button type="button" onClick={() => void reload()} disabled={!revision}>Refresh saved version (discard edits)</button><p>{revision ? `Saved revision ${revision}` : 'Not saved'}{dirty ? ' · Unsaved changes' : ''}</p>{!modeAdapter && <label>Customer site origin (HTTPS)<input type="url" placeholder="https://your-customer-site.example" value={origin} onChange={e => { setOrigin(e.target.value); setHosted(''); }}/></label>}<button type="button" onClick={() => void publish()} disabled={dirty || !revision || (modeAdapter ? modeAdapter.locked : !origin)}>Publish saved version</button></fieldset><h2>Customer question preview</h2><p>Preview only. Answers here are not submitted.</p><QuestionForm service={service} config={config} answers={answers} onChange={setAnswers}/></>}
+ {busy && <p role="status">Saving or loading…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}{hosted && <p><a href={hosted} target="_blank" rel="noopener noreferrer">Open hosted request form</a></p>}<p>Requests remain unconfirmed. Publishing does not charge a customer or reserve availability.</p></section>;
 }
-function VersionedEditor(props:Parameters<typeof Editor>[0]){const [version,setVersion]=useState<1|2>(1);return <><nav aria-label="Questionnaire version"><button onClick={()=>setVersion(1)}>Standard questionnaires</button><button onClick={()=>setVersion(2)}>Configurable questionnaires</button></nav>{version===1?<Editor {...props}/>:<ConfigurableEditor {...props}/>}</>;}
-export function FlowPortal({apiUrl}:{apiUrl:string}){
- const client=useMemo(()=>{try{if(!['localhost','127.0.0.1'].includes(location.hostname)||!['localhost','127.0.0.1'].includes(new URL(apiUrl).hostname))return null;return createFlowClient(apiUrl,true);}catch{return null;}},[apiUrl]);
- const [credential,setCredential]=useState(''),[tenantInput,setTenantInput]=useState(''),[session,setSession]=useState<{token:string;tenant:string;services:ServiceRender[];flows:FlowList['flows']}|null>(null),[requests,setRequests]=useState<Awaited<ReturnType<FlowClient['requests']>>['requests']>([]),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0);
- useEffect(()=>()=>{generation.current++;client?.invalidate();},[client]);
- function logout(){generation.current++;client?.invalidate();setSession(null);setCredential('');setTenantInput('');setRequests([]);setBusy(false);setError('');}
- async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;const at=++generation.current;setBusy(true);setError('');try{if(!/^[0-9a-f-]{36}$/i.test(tenantInput))throw Error('Enter the local test business ID.');const [s,f,r]=await Promise.all([client.services(credential,tenantInput),client.flows(credential,tenantInput),client.requests(credential,tenantInput)]);if(at!==generation.current)return;setSession({token:credential,tenant:tenantInput,services:s.services,flows:f.flows});setRequests(r.requests);setCredential('');}catch{if(at===generation.current)setError('Unable to open this business. Check the local credential and business ID.');}finally{if(at===generation.current)setBusy(false);}}
- async function refresh(){if(!client||!session||busy)return;const at=generation.current;setBusy(true);setError('');try{const r=await client.requests(session.token,session.tenant);if(at===generation.current)setRequests(r.requests);}catch(e){if(at===generation.current)setError(safeError(e));}finally{if(at===generation.current)setBusy(false);}}
- const bookings=<section><h1>Bookings</h1><h2>Unconfirmed requests</h2><button disabled={busy} onClick={()=>void refresh()}>Refresh requests</button>{requests.length?<ul>{requests.map(r=><li key={r.id}>{r.reference} · {new Date(r.slotStart).toLocaleString()} · Unconfirmed</li>)}</ul>:<p>No requests found.</p>}<p>Latest 100 requests. No payment or guaranteed availability.</p></section>;
- return <PortalShell mode="connected" tenantName="Local request journey" roleLabel={session?'Local test account':'Signed out'}><p role="note">Local harness · Synthetic credentials and test data only. This is not production authentication.</p>{!client?<p role="alert">Local flow mode is unavailable. Use an explicitly configured loopback API and page.</p>:!session?<section><h1>Open local test business</h1><form onSubmit={login}><fieldset disabled={busy}><label>Local test credential<input type="password" autoComplete="off" value={credential} onChange={e=>setCredential(e.target.value)} required/></label><label>Business ID<input value={tenantInput} onChange={e=>setTenantInput(e.target.value)} required/></label><button>Open business</button></fieldset></form></section>:<><button onClick={logout}>Sign out / change business</button><PortalRoutes mode="connected" workers={<RosterPanel key={session.tenant} apiUrl={apiUrl} token={session.token} tenant={session.tenant}/>} bookings={bookings} services={<section><h1>Services</h1><p>Compatible request services available to this test business.</p><ul>{session.services.map(s=><li key={s.id}>{s.name}</li>)}</ul></section>} embed={<VersionedEditor key={session.tenant} client={client} token={session.token} tenant={session.tenant} services={session.services} initialFlows={session.flows}/>}/></>}{error&&<p role="alert">{error}</p>}</PortalShell>;
+export function VersionedEditor(props: Parameters<typeof Editor>[0]) {
+    const [version, setVersion] = useState<1 | 2>(1);
+    return <><nav aria-label="Questionnaire version"><button onClick={() => {
+            if (!props.modeAdapter?.beforeDiscard || props.modeAdapter.beforeDiscard())
+                setVersion(1);
+        }}>Standard questionnaires</button><button onClick={() => {
+            if (!props.modeAdapter?.beforeDiscard || props.modeAdapter.beforeDiscard())
+                setVersion(2);
+        }}>Configurable questionnaires</button></nav>{version === 1 ? <Editor {...props}/> : <ConfigurableEditor {...props}/>}</>;
+}
+export function FlowPortal({ apiUrl }: {
+    apiUrl: string;
+}) {
+    const client = useMemo(() => {
+        try {
+            if (!['localhost', '127.0.0.1'].includes(location.hostname) || !['localhost', '127.0.0.1'].includes(new URL(apiUrl).hostname))
+                return null;
+            return createFlowClient(apiUrl, true);
+        }
+        catch {
+            return null;
+        }
+    }, [apiUrl]);
+    const [credential, setCredential] = useState(''), [tenantInput, setTenantInput] = useState(''), [session, setSession] = useState<{
+        token: string;
+        tenant: string;
+        services: ServiceRender[];
+        flows: FlowList['flows'];
+    } | null>(null), [requests, setRequests] = useState<Awaited<ReturnType<FlowClient['requests']>>['requests']>([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
+    const generation = useRef(0);
+    useEffect(() => () => { generation.current++; client?.invalidate(); }, [client]);
+    function logout() { generation.current++; client?.invalidate(); setSession(null); setCredential(''); setTenantInput(''); setRequests([]); setBusy(false); setError(''); }
+    async function login(e: FormEvent) {
+        e.preventDefault();
+        if (!client || busy)
+            return;
+        const at = ++generation.current;
+        setBusy(true);
+        setError('');
+        try {
+            if (!/^[0-9a-f-]{36}$/i.test(tenantInput))
+                throw Error('Enter the local test business ID.');
+            const [s, f, r] = await Promise.all([client.services(credential, tenantInput), client.flows(credential, tenantInput), client.requests(credential, tenantInput)]);
+            if (at !== generation.current)
+                return;
+            setSession({ token: credential, tenant: tenantInput, services: s.services, flows: f.flows });
+            setRequests(r.requests);
+            setCredential('');
+        }
+        catch {
+            if (at === generation.current)
+                setError('Unable to open this business. Check the local credential and business ID.');
+        }
+        finally {
+            if (at === generation.current)
+                setBusy(false);
+        }
+    }
+    async function refresh() {
+        if (!client || !session || busy)
+            return;
+        const at = generation.current;
+        setBusy(true);
+        setError('');
+        try {
+            const r = await client.requests(session.token, session.tenant);
+            if (at === generation.current)
+                setRequests(r.requests);
+        }
+        catch (e) {
+            if (at === generation.current)
+                setError(safeError(e));
+        }
+        finally {
+            if (at === generation.current)
+                setBusy(false);
+        }
+    }
+    const bookings = <section><h1>Bookings</h1><h2>Unconfirmed requests</h2><button disabled={busy} onClick={() => void refresh()}>Refresh requests</button>{requests.length ? <ul>{requests.map(r => <li key={r.id}>{r.reference} · {new Date(r.slotStart).toLocaleString()} · Unconfirmed</li>)}</ul> : <p>No requests found.</p>}<p>Latest 100 requests. No payment or guaranteed availability.</p></section>;
+    return <PortalShell mode="connected" tenantName="Local request journey" roleLabel={session ? 'Local test account' : 'Signed out'}><p role="note">Local harness · Synthetic credentials and test data only. This is not production authentication.</p>{!client ? <p role="alert">Local flow mode is unavailable. Use an explicitly configured loopback API and page.</p> : !session ? <section><h1>Open local test business</h1><form onSubmit={login}><fieldset disabled={busy}><label>Local test credential<input type="password" autoComplete="off" value={credential} onChange={e => setCredential(e.target.value)} required/></label><label>Business ID<input value={tenantInput} onChange={e => setTenantInput(e.target.value)} required/></label><button>Open business</button></fieldset></form></section> : <><button onClick={logout}>Sign out / change business</button><PortalRoutes mode="connected" workers={<RosterPanel key={session.tenant} apiUrl={apiUrl} token={session.token} tenant={session.tenant}/>} bookings={bookings} services={<section><h1>Services</h1><p>Compatible request services available to this test business.</p><ul>{session.services.map(s => <li key={s.id}>{s.name}</li>)}</ul></section>} embed={<VersionedEditor key={session.tenant} client={client} token={session.token} tenant={session.tenant} services={session.services} initialFlows={session.flows}/>}/></>}{error && <p role="alert">{error}</p>}</PortalShell>;
 }

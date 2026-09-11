@@ -3,12 +3,21 @@
   "private": true,
   "version": "0.1.0",
   "description": "Booking Lumin Checkout — multi-tenant booking & checkout platform (clean-room)",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
-    "build:preview": "node scripts/build-preview.mjs"
+    "build:preview": "node scripts/build-preview.mjs",
+    "test:mode-owner-browser": "node scripts/run-mode-owner-browser.mjs"
   },
-  "engines": { "node": ">=24 <25" }
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
 }

@@ -22,6 +22,7 @@ jobs:
         run: npm audit --audit-level=moderate
       - name: Validate execution workflow and gate ledger
         run: node --test scripts/program-status.test.mjs && node scripts/program-status.mjs
+      - run: node --test scripts/run-mode-owner-browser.test.mjs scripts/mode-owner-artifacts.test.mjs scripts/preview-mode.test.mjs
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
@@ -30,6 +31,7 @@ jobs:
 
   database:
     name: database (migrations + RLS attack suite)
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -385,3 +387,81 @@ jobs:
             for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
             npm run test:mode-session-transport --workspace @lumin/action-api
           done
+
+      - name: Verify local owner HTTP isolation and persistence in both crypto layouts
+        timeout-minutes: 10
+        env:
+          LOCAL_HARNESS: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          MODE_INSTALLATIONS_TEST_DISPOSABLE: '1'
+          MODE_SESSIONS_TEST_DISPOSABLE: '1'
+          MODE_OWNER_TEST_DISPOSABLE: '1'
+          MODE_OWNER_API_PORT: '45131'
+          MODE_OWNER_DRAFT_PORT: '45132'
+          MODE_OWNER_PORTAL_PORT: '45133'
+        run: |
+          set -euo pipefail
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_owner_journey_http_${layout}"
+            export MODE_OWNER_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            npm run test:mode-owner-journey --workspace @lumin/action-api
+          done
+      - name: Install pinned local owner browser runtime
+        timeout-minutes: 5
+        run: node scripts/install-mode-owner-browser.mjs
+      - name: Verify actual owner Portal journeys in both crypto layouts
+        timeout-minutes: 25
+        env:
+          LOCAL_HARNESS: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          MODE_INSTALLATIONS_TEST_DISPOSABLE: '1'
+          MODE_SESSIONS_TEST_DISPOSABLE: '1'
+          MODE_OWNER_TEST_DISPOSABLE: '1'
+          MODE_OWNER_API_PORT: '45131'
+          MODE_OWNER_DRAFT_PORT: '45132'
+          MODE_OWNER_PORTAL_PORT: '45133'
+          VITE_MODE_OWNER_LOCAL_HARNESS: 'true'
+          VITE_MODE_OWNER_API_URL: 'http://127.0.0.1:45131'
+          VITE_MODE_OWNER_DRAFT_API_URL: 'http://127.0.0.1:45132'
+          VITE_FLOW_LOCAL_HARNESS: 'false'
+          VITE_FLOW_API_URL: ''
+          VITE_RUNTIME_MODE: 'mock'
+          VITE_BASE_PATH: '/'
+        run: |
+          set -euo pipefail
+          npm run build --workspace @lumin/portal
+          mkdir -p .cache
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_owner_journey_browser_${layout}"
+            export MODE_OWNER_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            node scripts/run-mode-owner-browser.mjs > ".cache/mode-owner-browser-${layout}.json"
+          done
+      - name: Validate explicit owner evidence file list
+        id: owner_evidence
+        if: always()
+        run: node scripts/collect-mode-owner-artifacts.mjs
+      - name: Retain reviewed owner screenshots and fixed summary
+        if: always() && steps.owner_evidence.outputs.files != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, official ref verified
+        with:
+          name: local-owner-reviewed-evidence
+          path: ${{ steps.owner_evidence.outputs.files }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

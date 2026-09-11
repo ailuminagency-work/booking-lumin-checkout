@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { Component } from "react";
 import { FlowPortal } from "./flows/FlowPortal";
+import { ModeOwnerPortal } from "./flows/ModeOwnerPortal";
 import { ConnectedPortal } from "./connected/ConnectedPortal";
 import type { ErrorInfo, ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
@@ -42,7 +43,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 
 /** Shared route context; mode determines data access, never a fallback to demo. */
 export function PortalApplication() {
-  return <><LegacyRedirects />{import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true" ? <FlowPortal apiUrl={import.meta.env.VITE_FLOW_API_URL ?? ""} /> : import.meta.env.VITE_RUNTIME_MODE === "supabase" ?
+  return <><LegacyRedirects />{import.meta.env.VITE_MODE_OWNER_LOCAL_HARNESS === "true" ? <ModeOwnerPortal ownerApiUrl={import.meta.env.VITE_MODE_OWNER_API_URL ?? ""} draftApiUrl={import.meta.env.VITE_MODE_OWNER_DRAFT_API_URL ?? ""} /> : import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true" ? <FlowPortal apiUrl={import.meta.env.VITE_FLOW_API_URL ?? ""} /> : import.meta.env.VITE_RUNTIME_MODE === "supabase" ?
     <ConnectedPortal config={{
       url: import.meta.env.VITE_SUPABASE_URL ?? "",
       publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
