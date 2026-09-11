@@ -189,6 +189,12 @@ export function createModeDocumentHandler(options: ModeDocumentOptions): ModeDoc
         result = response(503, head);
         terminal();
       }
+      // Cleanup is part of the caller budget; a fresh sample can only withhold delivery.
+      if (status !== 503) {
+        try {
+          if (closed || request.signal.aborted || controller.signal.aborted || sample() - entry >= 2000) result = response(503, head);
+        } catch { result = response(503, head); }
+      }
       request.signal.removeEventListener('abort', stop);
       resolveResponse(result);
     }
