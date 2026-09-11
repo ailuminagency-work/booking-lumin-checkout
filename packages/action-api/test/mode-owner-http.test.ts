@@ -152,3 +152,10 @@ describe('independent frozen admission coverage',()=>{
   gate.resolve({kind:'committed',delivery:'receipt',receipt});await new Promise(resolve=>setTimeout(resolve,0));expect((await s.call()).status).toBe(200);expect(s.owner.publish).toHaveBeenCalledTimes(2);
  });
 });
+
+it('native parser closes headers above8192 bytes before repository dispatch with a normal neighboring control',async()=>{
+ const s=await setup(),payload=JSON.stringify(publish);
+ const denied=await raw(s.port,['Host','127.0.0.1:'+s.port,'Origin',origin,'Authorization','Bearer '+token,'Content-Type','application/json','Content-Length',String(Buffer.byteLength(payload)),'X-Header-Bound','x'.repeat(8192)]);
+ expect(denied.status).toBe(0);expect(s.owner.publish).not.toHaveBeenCalled();
+ expect((await s.call()).status).toBe(200);expect(s.owner.publish).toHaveBeenCalledTimes(1);
+});
