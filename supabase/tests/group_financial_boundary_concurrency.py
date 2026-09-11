@@ -123,18 +123,128 @@ def invariant(f, group_exists):
         assert result['payment'] or result['refund'] or result['link'], result
 
 
+# Application catalog identities/definitions, not backend-local pg_temp churn.
+# Scope triggers by their target relation, even when their handler is temporary.
+SNAPSHOT_SQL = """select jsonb_build_object(
+ 'data',jsonb_build_object(
+  'payments',(select count(*) from public.payments),
+  'refunds',(select count(*) from public.refunds),
+  'heads',(select count(*) from public.allocation_group_heads),
+  'linked_bookings',(select count(*) from public.bookings where payment_id is not null)),
+ 'catalog',jsonb_build_object(
+  'functions',(select coalesce(jsonb_agg(jsonb_build_object('schema',n.nspname,'row',to_jsonb(p)) order by n.nspname,p.proname,p.oid),'[]'::jsonb)
+   from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+   where n.nspname in ('public','lumin')),
+  'triggers',(select coalesce(jsonb_agg(jsonb_build_object(
+    'schema',n.nspname,'relation',c.relname,'relation_oid',c.oid,'row',to_jsonb(t),
+    'function_schema',fn.nspname,'function_row',to_jsonb(fp)) order by n.nspname,c.relname,t.tgname,t.oid),'[]'::jsonb)
+   from pg_catalog.pg_trigger t join pg_catalog.pg_class c on c.oid=t.tgrelid
+   join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+   join pg_catalog.pg_proc fp on fp.oid=t.tgfoid
+   join pg_catalog.pg_namespace fn on fn.oid=fp.pronamespace
+   where n.nspname in ('public','lumin') and c.relpersistence<>'t')));"""
+
+
+def snapshot():
+    return json.loads(sql(SNAPSHOT_SQL))
+
+
+def assert_snapshot_equal(before, after, label):
+    assert before['data'] == after['data'], ('Application data changed', label, before['data'], after['data'])
+    for component in ('functions', 'triggers'):
+        left = {row['row']['oid']: row for row in before['catalog'][component]}
+        right = {row['row']['oid']: row for row in after['catalog'][component]}
+        changed = [oid for oid in sorted(left.keys() | right.keys()) if left.get(oid) != right.get(oid)]
+        # Identity-only diagnostics: do not dump function bodies or trigger arguments.
+        identities = [(oid, (right.get(oid) or left[oid])['schema'],
+                       (right.get(oid) or left[oid])['row'].get('proname',
+                        (right.get(oid) or left[oid])['row'].get('tgname'))) for oid in changed[:20]]
+        assert not changed, ('Application catalog changed', label, component, len(changed), identities)
+
+
+def assert_catalog_difference(before, after, component, label):
+    try:
+        assert_snapshot_equal(before, after, label)
+    except AssertionError as error:
+        detail = error.args[0]
+        assert isinstance(detail, tuple) and detail[0] == 'Application catalog changed' and detail[2] == component, (label, detail)
+    else:
+        raise AssertionError(('Snapshot assertion missed changed catalog', label))
+
+
+def catalog_snapshot_controls():
+    # A committed temporary helper in another backend must disappear without
+    # changing this application's catalog. Readiness and disappearance are observed.
+    baseline = snapshot()
+    name = 'financial_snapshot_' + uuid.uuid4().hex
+    holder = session('commit;create function pg_temp.' + name
+                     + '() returns integer language sql as $$select 1$$;begin;select 1;')
+    observe("select exists(select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace "
+            + f"where p.proname='{name}' and n.nspname like 'pg_temp_%');", 'committed temporary sentinel exists')
+    ready(holder)
+    oid = sql("select p.oid from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace "
+              + f"where p.proname='{name}' and n.nspname like 'pg_temp_%';")
+    assert oid.isdecimal(), ('Temporary sentinel not observed', oid)
+    global_before = sql('select count(*) from pg_catalog.pg_proc;')
+    during = snapshot()
+    assert_snapshot_equal(baseline, during, 'unrelated temporary helper creation')
+    finish(holder, 'rollback;')
+    observe(f'select not exists(select 1 from pg_catalog.pg_proc where oid={int(oid)});', 'temporary sentinel removed')
+    after = snapshot()
+    assert_snapshot_equal(during, after, 'unrelated temporary helper cleanup')
+    global_after = sql('select count(*) from pg_catalog.pg_proc;')
+    # Counts are diagnostic only: concurrent unrelated helpers are exactly why
+    # equality/delta assertions against global catalogs were unsafe.
+    print('PASS snapshot temporary cleanup', 'oid=' + oid,
+          'global_proc_before=' + global_before, 'global_proc_after=' + global_after, flush=True)
+
+    # All sentinel DDL is rolled back. No payment or application data is written.
+    function = 'public.' + name
+    trigger = 'snapshot_' + uuid.uuid4().hex
+    temp_handler = 'pg_temp.' + name
+    statements = [
+        'begin;', SNAPSHOT_SQL,
+        f'create function {function}() returns integer language sql as $$select 1$$;', SNAPSHOT_SQL,
+        f'create or replace function {function}() returns integer language sql as $$select 2$$;', SNAPSHOT_SQL,
+        f'create function {temp_handler}() returns trigger language plpgsql as $$begin return new;end$$;', SNAPSHOT_SQL,
+        f'create trigger {trigger} before insert on public.payments for each row execute function {temp_handler}();', SNAPSHOT_SQL,
+        f'alter table public.payments disable trigger {trigger};', SNAPSHOT_SQL,
+        f'create or replace function {temp_handler}() returns trigger language plpgsql as $$begin perform 1;return new;end$$;', SNAPSHOT_SQL,
+        'rollback;', SNAPSHOT_SQL]
+    values = [json.loads(line) for line in sql(''.join(statements)).splitlines()]
+    assert len(values) == 8, ('Expected all catalog control snapshots', len(values))
+    initial, created, replaced, temp, attached, disabled, handler_changed, restored = values
+    for value in values:
+        assert value['data'] == initial['data'], 'Catalog control unexpectedly changed application data'
+    assert len(created['catalog']['functions']) == len(initial['catalog']['functions']) + 1
+    assert len(replaced['catalog']['functions']) == len(created['catalog']['functions'])
+    assert_catalog_difference(initial, created, 'functions', 'permanent function creation')
+    assert_catalog_difference(created, replaced, 'functions', 'same-count permanent function replacement')
+    assert_snapshot_equal(replaced, temp, 'unattached temporary handler ignored')
+    assert len(attached['catalog']['triggers']) == len(temp['catalog']['triggers']) + 1
+    assert len(disabled['catalog']['triggers']) == len(attached['catalog']['triggers'])
+    assert_catalog_difference(temp, attached, 'triggers', 'temporary handler attached to application table')
+    assert_catalog_difference(attached, disabled, 'triggers', 'same-count trigger disable')
+    assert len(handler_changed['catalog']['triggers']) == len(disabled['catalog']['triggers'])
+    assert_catalog_difference(disabled, handler_changed, 'triggers', 'same-count attached temporary handler replacement')
+    assert_snapshot_equal(initial, restored, 'catalog control rollback')
+    assert_snapshot_equal(baseline, snapshot(), 'all snapshot controls restored')
+    print('PASS snapshot permanent function/trigger definition changes and rollback controls', flush=True)
+
+
 def denied_transaction(label, body, code, message, marker=None):
-    before = sql("select jsonb_build_array((select count(*) from public.payments),(select count(*) from public.refunds),(select count(*) from public.allocation_group_heads),(select count(*) from public.bookings where payment_id is not null),(select count(*) from pg_trigger),(select count(*) from pg_proc));")
+    before = snapshot()
     r = subprocess.run(args, input=prefix + fixture + 'begin;' + body + 'commit;', text=True, capture_output=True, timeout=20)
     assert r.returncode and code in r.stderr and message in r.stderr, (label,r.stderr)
     if marker:
         assert marker in r.stderr, (label,'rewrite not observed',r.stderr)
-    after = sql("select jsonb_build_array((select count(*) from public.payments),(select count(*) from public.refunds),(select count(*) from public.allocation_group_heads),(select count(*) from public.bookings where payment_id is not null),(select count(*) from pg_trigger),(select count(*) from pg_proc));")
-    assert before == after, ('Partial transaction survived', label)
+    after = snapshot()
+    assert_snapshot_equal(before, after, label)
     print('PASS rollback',label,flush=True)
 
 
 try:
+    catalog_snapshot_controls()
     f, other = parents(), parents()
     f['p'], other['p'] = str(uuid.uuid4()), str(uuid.uuid4())
     sql(pay(other))

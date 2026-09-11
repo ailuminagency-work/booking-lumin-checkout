@@ -41,7 +41,22 @@ begin
   end loop;
   perform pg_temp.mode_assert(not has_function_privilege(role_name,'lumin.mode_finish(uuid,uuid,uuid,text,text,jsonb,jsonb)','EXECUTE'),'helper denied');
  end loop;
- perform pg_temp.mode_assert((select count(*)=8 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'mode\_%' escape '\' and has_function_privilege('service_role',p.oid,'EXECUTE') and not has_function_privilege('authenticated',p.oid,'EXECUTE') and not has_function_privilege('anon',p.oid,'EXECUTE') and p.prosecdef and p.proconfig=array['search_path=pg_catalog']),'exact eight RPC grants');
+ -- Scope this retained S1 assertion by exact signatures; S2 units verify the complete combined namespace.
+ perform pg_temp.mode_assert((with expected(signature) as (values
+  ('public.mode_publish_flow(uuid,uuid,uuid,bigint,text)'),
+  ('public.mode_install_flow(uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text)'),
+  ('public.mode_apply_flow_version(uuid,uuid,uuid,uuid,bigint,uuid,uuid,text)'),
+  ('public.mode_update_flow_policy(uuid,uuid,uuid,uuid,bigint,boolean,jsonb,text)'),
+  ('public.mode_public_installation_policy(uuid)'),
+  ('public.mode_owner_operation(uuid,uuid,uuid,text,text)'),
+  ('public.mode_owner_installations(uuid,uuid,uuid,uuid,integer)'),
+  ('public.mode_owner_installation_history(uuid,uuid,uuid,uuid,bigint,integer)'))
+ select bool_and(coalesce(p.prosecdef and p.proconfig=array['search_path=pg_catalog']
+  and has_function_privilege('service_role',p.oid,'EXECUTE')
+  and not has_function_privilege('authenticated',p.oid,'EXECUTE')
+  and not has_function_privilege('anon',p.oid,'EXECUTE'),false))
+ from expected e left join pg_proc p on p.oid=to_regprocedure(e.signature)),
+ 'exact eight S1 RPC signatures and grants');
  perform pg_temp.mode_assert(not exists(select 1 from pg_attribute where attrelid in('lumin.installation_profiles'::regclass,'public.mode_flow_installations'::regclass,'public.mode_flow_installation_history'::regclass,'public.mode_flow_owner_operations'::regclass) and attnum>0 and not attisdropped and not attnotnull),'all columns NOT NULL');
  insert into lumin.installation_profiles values('unit-v1','https://renderer.test','https://api.test','https://portal.test',repeat('a',64));
  perform pg_temp.mode_reject($q$update lumin.installation_profiles set loader_sha256=repeat('b',64)$q$,'55000');perform pg_temp.mode_reject($q$delete from lumin.installation_profiles$q$,'55000');
