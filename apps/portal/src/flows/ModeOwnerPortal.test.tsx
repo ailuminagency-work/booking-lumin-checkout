@@ -236,3 +236,60 @@ it('complete save publish install policy save publish cycle clears locks and per
     fireEvent.click(screen.getByRole('button', { name: /^hosted installation/ })); fireEvent.click(screen.getByRole('button', { name: 'Apply published version' })); await unlocked();
     expect(calls).toEqual(['save', 'publish', 'install', 'install', 'policy', 'save', 'publish', 'apply']);
 }, 15000);
+
+it.each([false, true])('selecting a saved flow (v2=%s) does not occupy both owner slots with duplicate installation reads before publish', async (v2) => {
+    fixture(); const baseFetch = globalThis.fetch;
+    let activeReads = 0, peakReads = 0, publishReads = -1, draftLoaded = false;
+    let releaseLists!: () => void;
+    const listsGate = new Promise<void>(resolve => { releaseLists = resolve; });
+    const releaseReads: (() => void)[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/installations')) {
+            activeReads++; peakReads = Math.max(peakReads, activeReads);
+            await new Promise<void>(resolve => releaseReads.push(resolve)); activeReads--;
+            return result({ installations: [], nextCursor: null });
+        }
+        if (url.endsWith('/publish')) {
+            publishReads = activeReads;
+            // Fixed rejection settles this controlled call; assertions inspect actual concurrent reads, not a fabricated commit.
+            return new Response(JSON.stringify({ schemaVersion: 1, phase: 'not_dispatched', error: { code: 'RATE_LIMITED' } }), { status: 429 });
+        }
+        if (url.includes('/draft') && options?.method === 'GET') { const response = v2 ? reply({ flowId: flow, revision: 1, name: 'Cleaning form', serviceId: tenant, authoring: { authoringVersion: 2, config, questionOverrides: {} }, effectiveService: service }) : await baseFetch(input, options); draftLoaded = true; return response; }
+        if (draftLoaded && (url.includes('/api/flows?') || url.includes('/api/configurable-flows?'))) await listsGate;
+        return baseFetch(input, options);
+    });
+    try {
+        mount(); await login();
+        if (v2) fireEvent.click(screen.getByRole('button', { name: 'Configurable questionnaires' }));
+        await waitFor(() => expect((screen.getByLabelText(v2 ? 'Saved configurable questionnaire' : 'Saved questionnaire') as HTMLSelectElement).options.length).toBe(2));
+        fireEvent.change(screen.getByLabelText(v2 ? 'Saved configurable questionnaire' : 'Saved questionnaire'), { target: { value: flow } });
+        const publish = await screen.findByRole('button', { name: v2 ? 'Publish configurable saved version' : 'Publish saved version' });
+        await waitFor(() => expect(activeReads).toBe(1));
+        await act(async () => { releaseLists(); await Promise.resolve(); });
+        await waitFor(() => expect(publish).not.toBeDisabled());
+        fireEvent.click(publish);
+        await waitFor(() => expect(publishReads).toBeGreaterThanOrEqual(0));
+        expect(peakReads).toBe(1);
+        expect(publishReads).toBe(1);
+    } finally { await act(async () => { releaseLists(); for (const release of releaseReads) release(); }); }
+});
+
+it('draft-only save cannot clear a failed authoritative installation refresh after conflict', async () => {
+    let conflict = false, failInstallationRead = true;
+    fixture(async () => { conflict = true; return new Response(JSON.stringify({ schemaVersion: 1, phase: 'repository_result', outcome: { kind: 'failed', code: 'CONFLICT', transaction: 'rolled_back', backendMayStillRun: false } })); });
+    const baseFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, options?: RequestInit) => conflict && failInstallationRead && String(input).endsWith('/installations') ? new Response('lost') : baseFetch(input, options));
+    mount(); await login(); await select();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish saved version' }));
+    await screen.findByText('Current settings unavailable. Refresh before making a change.');
+    expect(screen.getByRole('button', { name: 'Create installation' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Questionnaire name'), { target: { value: 'Safe draft edit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save questionnaire' }));
+    await waitFor(() => expect(screen.getByText(/Saved revision 2/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Questionnaire name')).not.toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Create installation' })).toBeDisabled();
+    failInstallationRead = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create installation' })).not.toBeDisabled());
+});

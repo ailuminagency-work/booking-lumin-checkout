@@ -156,9 +156,12 @@ export function ModeOwnerPortal({ ownerApiUrl, draftApiUrl }: {
                 throw Error();
         }
         setSession(old => old ? { ...old, flows: f.flows, configurable: c.flows } : old);
-        setRefreshVersion(v => v + 1);
-        currentUnavailableRef.current = false;
-        setCurrentUnavailable(false);
+        // Draft reads/saves do not alter installations; only an explicit current-state refresh remounts the panel.
+        if (selectedFlow) {
+            setRefreshVersion(v => v + 1);
+            currentUnavailableRef.current = false;
+            setCurrentUnavailable(false);
+        }
     }
     async function record(p: Pending, r: OperationReceipt, s: Session, at: number) {
         if (!current(at, s) || getPending() !== p)
