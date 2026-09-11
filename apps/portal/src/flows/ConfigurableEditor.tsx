@@ -1,26 +1,193 @@
-import {ConfigurablePreview} from './ConfigurablePreview';
-import {useEffect,useRef,useState} from 'react';
-import {ConfigurableAuthoringV2,normalizeConfigurablePublication,FlowError,type FlowClient,type ServiceRender,type FlowList,type Answers,ConfigurableRender} from '@lumin/flow-ui';
-const errorText=(e:unknown)=>e instanceof FlowError?e.message:'Check the question settings and try again.';
-export function ConfigurableEditor({client,token,tenant,services}:{client:FlowClient;token:string;tenant:string;services:ServiceRender[]}){
- const [flows,setFlows]=useState<FlowList['flows']>([]),[flowId,setFlowId]=useState(''),[name,setName]=useState(''),[serviceId,setServiceId]=useState(''),[authoring,setAuthoring]=useState<ConfigurableAuthoringV2>(),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false),[dirty,setDirty]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[origin,setOrigin]=useState(''),[hosted,setHosted]=useState(''),[answers,setAnswers]=useState<Answers>({});
- const generation=useRef(0),service=services.find(s=>s.id===serviceId);
- useEffect(()=>{const at=++generation.current;void client.configurableFlows(token,tenant).then(r=>{if(at===generation.current)setFlows(r.flows);}).catch(e=>{if(at===generation.current)setError(errorText(e));});return()=>{generation.current++;};},[client,token,tenant]);
- let preview:ConfigurableRender|undefined;try{if(service&&authoring)preview=ConfigurableRender.parse({...normalizeConfigurablePublication(service,authoring).snapshot,versionId:flowId});}catch{}
- function edit(next:ConfigurableAuthoringV2){setAuthoring(next);setDirty(true);setHosted('');setMessage('');setAnswers({});setError('');}
- function selectService(s:ServiceRender){setServiceId(s.id);edit({authoringVersion:2,config:{key:'request',steps:s.questions.filter(q=>q.required).map(q=>({key:q.id,questionKey:q.id,kind:'question',required:true}))},questionOverrides:{}});}
- function fresh(){generation.current++;setFlowId(crypto.randomUUID());setName('New configurable request form');setRevision(0);if(services[0])selectService(services[0]);}
- async function task(work:(at:number)=>Promise<void>){const at=++generation.current;setBusy(true);setError('');setMessage('');try{await work(at);}catch(e){if(at===generation.current)setError(errorText(e));}finally{if(at===generation.current)setBusy(false);}}
- async function reload(id=flowId){if(!id)return;await task(async at=>{const d=await client.configurableDraft(token,tenant,id);if(at!==generation.current)return;if(!services.some(s=>s.id===d.serviceId))throw Error('Unavailable service');setFlowId(d.flowId);setServiceId(d.serviceId);setName(d.name);setAuthoring(d.authoring);setRevision(d.revision);setDirty(false);setHosted('');setAnswers({});setMessage('Loaded the saved configurable questionnaire.');});}
- async function save(){if(!service||!authoring)return;await task(async at=>{const normalized=normalizeConfigurablePublication(service,authoring);const r=await client.saveConfigurable(token,tenant,flowId,{expectedRevision:revision,serviceId,name:name.trim(),authoring:ConfigurableAuthoringV2.parse(normalized.authoring)});if(at!==generation.current)return;setAuthoring(ConfigurableAuthoringV2.parse(normalized.authoring));setRevision(r.revision);setDirty(false);setMessage('Configurable questionnaire saved.');const list=await client.configurableFlows(token,tenant);if(at===generation.current)setFlows(list.flows);});}
- async function publish(){await task(async at=>{const url=new URL(origin);if(url.protocol!=='https:'||url.origin!==origin)throw Error('Invalid origin');const r=await client.publishConfigurable(token,tenant,flowId,{expectedRevision:revision,allowedOrigins:[origin]});if(at!==generation.current)return;if(r.hostedPath!=='/checkout/flow/'+r.installationId)throw Error('Invalid link');setHosted(origin+r.hostedPath);setMessage('Published an immutable configurable questionnaire.');});}
- function updateField(id:string,change:(next:ConfigurableAuthoringV2)=>void){if(!authoring)return;const next=structuredClone(authoring);change(next);edit(next);}
- function move(index:number){if(!authoring||!service)return;const next=structuredClone(authoring);[next.config.steps[index-1],next.config.steps[index]]=[next.config.steps[index]!,next.config.steps[index-1]!];try{normalizeConfigurablePublication(service,next);edit(next);}catch{setError('A condition must follow its source question. Remove that condition before reordering.');}}
- return <section><h2>Configurable questionnaires</h2><p>Choose optional questions, adjust labels and allowed quantities, and show follow-up questions based on earlier answers. Required service questions always remain.</p><fieldset disabled={busy}><label>Saved configurable questionnaire<select value={flowId} onChange={e=>void reload(e.target.value)}><option value="">Choose a configurable questionnaire</option>{flows.map(f=><option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" disabled={!services.length} onClick={fresh}>New configurable questionnaire</button></fieldset>
- {flowId&&service&&authoring&&<><fieldset disabled={busy}><label>Configurable questionnaire name<input value={name} maxLength={200} onChange={e=>{setName(e.target.value);setDirty(true);setHosted('');setMessage('');}}/></label><label>Service for configurable questionnaire<select value={serviceId} onChange={e=>{const s=services.find(s=>s.id===e.target.value);if(s)selectService(s);}}>{services.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><h3>Available questions</h3>{service.questions.map(q=>{const included=authoring.config.steps.some(s=>s.questionKey===q.id);const used=authoring.config.steps.some(s=>s.visibleWhen?.field===q.id);return <label key={q.id} style={{display:'block'}}><input type="checkbox" checked={included} disabled={q.required||used} onChange={e=>updateField(q.id,next=>{if(e.target.checked)next.config.steps.push({key:q.id,questionKey:q.id,kind:'question',required:false});else{next.config.steps=next.config.steps.filter(s=>s.questionKey!==q.id);delete next.questionOverrides[q.id];}})}/>{q.prompt}{q.required?' · Required by service':used?' · Used by a condition':''}</label>;})}
- <ol>{authoring.config.steps.map((step,i)=>{const q=service.questions.find(q=>q.id===step.questionKey)!;const override=Object.hasOwn(authoring.questionOverrides,q.id)?authoring.questionOverrides[q.id]! : {};const sources=authoring.config.steps.slice(0,i).filter(s=>!s.visibleWhen).map(s=>service.questions.find(q=>q.id===s.questionKey)!).filter(q=>q.kind!=='quantity');const used=authoring.config.steps.some(s=>s.visibleWhen?.field===q.id);const patch=(values:typeof override)=>updateField(q.id,next=>{const prev=Object.hasOwn(next.questionOverrides,q.id)?next.questionOverrides[q.id]! : {};Object.defineProperty(next.questionOverrides,q.id,{value:{...prev,...values},writable:true,enumerable:true,configurable:true});});return <li key={step.key}><h3>{q.prompt}</h3><button type="button" disabled={i===0} onClick={()=>move(i)}>Move {q.prompt} up</button><label>Prompt for {q.prompt}<input maxLength={500} value={override.prompt??q.prompt} onChange={e=>patch({prompt:e.target.value})}/></label><label><input type="checkbox" checked={step.required} disabled={q.required} onChange={e=>updateField(q.id,next=>{next.config.steps[i]!.required=e.target.checked;})}/>Required when visible: {q.prompt}</label>
- {q.kind==='quantity'?<><label>Minimum for {q.prompt}<input type="number" min={q.minQty} max={q.maxQty} step="1" value={override.minQty??q.minQty} onChange={e=>patch({minQty:e.target.value===''?undefined:Number(e.target.value)})}/></label><label>Maximum for {q.prompt}<input type="number" min={q.minQty} max={q.maxQty} step="1" value={override.maxQty??q.maxQty} onChange={e=>patch({maxQty:e.target.value===''?undefined:Number(e.target.value)})}/></label></>:q.choices.map(c=><label key={c.id}>Label for {q.prompt}: {c.label}<input maxLength={200} value={override.choiceLabels&&Object.hasOwn(override.choiceLabels,c.id)?override.choiceLabels[c.id]:c.label} onChange={e=>patch({choiceLabels:{...override.choiceLabels,[c.id]:e.target.value}})}/></label>)}
- <label>Show {q.prompt} when<select disabled={q.required||used} value={step.visibleWhen?.field??''} onChange={e=>updateField(q.id,next=>{const source=sources.find(q=>q.id===e.target.value);if(!source)delete next.config.steps[i]!.visibleWhen;else next.config.steps[i]!.visibleWhen={field:source.id,op:source.kind==='single_choice'?'eq':'includes',value:source.choices[0]!.id};})}><option value="">Always visible</option>{sources.map(s=><option key={s.id} value={s.id}>{s.prompt}</option>)}</select></label>{step.visibleWhen&&<label>Answer that shows {q.prompt}<select value={step.visibleWhen.value} onChange={e=>updateField(q.id,next=>{next.config.steps[i]!.visibleWhen!.value=e.target.value;})}>{sources.find(s=>s.id===step.visibleWhen!.field)?.choices.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}</select></label>}</li>;})}</ol>
- {!preview&&<p role="alert">Check included questions, conditions, labels and quantity limits before saving.</p>}<button type="button" disabled={!dirty||!preview||!name.trim()} onClick={()=>void save()}>Save configurable questionnaire</button><button type="button" disabled={!revision} onClick={()=>void reload()}>Refresh configurable saved version (discard edits)</button><p>{revision?`Saved revision ${revision}`:'Not saved'}{dirty?' · Unsaved changes':''}</p><label>Configurable customer site origin (HTTPS)<input type="url" value={origin} onChange={e=>{setOrigin(e.target.value);setHosted('');setMessage('');}}/></label><button type="button" disabled={dirty||!revision||!origin} onClick={()=>void publish()}>Publish configurable saved version</button></fieldset>{preview&&<ConfigurablePreview key={JSON.stringify([flowId,serviceId,revision,authoring])} render={preview} answers={answers} onChange={setAnswers}/>}</>}
- {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}{busy&&<p role="status">Saving or loading…</p>}{hosted&&<a href={hosted} target="_blank" rel="noopener noreferrer">Open configurable hosted request form</a>}<p>Requests remain unconfirmed. No payment or availability reservation.</p></section>;
+import type { ModeEditorAdapter } from '../../../../packages/flow-ui/src/modeOwnerTypes';
+import { ConfigurablePreview } from './ConfigurablePreview';
+import { useEffect, useRef, useState } from 'react';
+import { ConfigurableAuthoringV2, normalizeConfigurablePublication, FlowError, type FlowClient, type ServiceRender, type FlowList, type Answers, ConfigurableRender } from '@lumin/flow-ui';
+const errorText = (e: unknown) => e instanceof FlowError ? e.message : 'Check the question settings and try again.';
+export function ConfigurableEditor({ client, token, tenant, services, modeAdapter }: {
+    client: FlowClient;
+    token: string;
+    tenant: string;
+    services: ServiceRender[];
+    modeAdapter?: ModeEditorAdapter;
+}) {
+    const [flows, setFlows] = useState<FlowList['flows']>([]), [flowId, setFlowId] = useState(''), [name, setName] = useState(''), [serviceId, setServiceId] = useState(''), [authoring, setAuthoring] = useState<ConfigurableAuthoringV2>(), [revision, setRevision] = useState(0), [busy, setBusy] = useState(false), [dirty, setDirty] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [origin, setOrigin] = useState(''), [hosted, setHosted] = useState(''), [answers, setAnswers] = useState<Answers>({});
+    useEffect(() => { modeAdapter?.selection(flowId, dirty); }, [flowId, dirty, modeAdapter?.selection]);
+    const generation = useRef(0), service = services.find(s => s.id === serviceId);
+    useEffect(() => {
+        const at = ++generation.current;
+        void client.configurableFlows(token, tenant).then(r => {
+            if (at === generation.current)
+                setFlows(r.flows);
+        }).catch(e => {
+            if (at === generation.current)
+                setError(errorText(e));
+        });
+        return () => { generation.current++; };
+    }, [client, token, tenant]);
+    let preview: ConfigurableRender | undefined;
+    try {
+        if (service && authoring)
+            preview = ConfigurableRender.parse({ ...normalizeConfigurablePublication(service, authoring).snapshot, versionId: flowId });
+    }
+    catch { }
+    function edit(next: ConfigurableAuthoringV2) { setAuthoring(next); setDirty(true); setHosted(''); setMessage(''); setAnswers({}); setError(''); }
+    function selectService(s: ServiceRender) { setServiceId(s.id); edit({ authoringVersion: 2, config: { key: 'request', steps: s.questions.filter(q => q.required).map(q => ({ key: q.id, questionKey: q.id, kind: 'question', required: true })) }, questionOverrides: {} }); }
+    function fresh() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+            return;
+        generation.current++;
+        setFlowId(crypto.randomUUID());
+        setName('New configurable request form');
+        setRevision(0);
+        if (services[0])
+            selectService(services[0]);
+    }
+    async function task(work: (at: number) => Promise<void>) {
+        const at = ++generation.current;
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+            await work(at);
+        }
+        catch (e) {
+            if (at === generation.current)
+                setError(errorText(e));
+        }
+        finally {
+            if (at === generation.current)
+                setBusy(false);
+        }
+    }
+    async function reload(id = flowId) {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (!id)
+            return;
+        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+            return;
+        await task(async (at) => {
+            const d = await client.configurableDraft(token, tenant, id);
+            if (at !== generation.current)
+                return;
+            if (!services.some(s => s.id === d.serviceId))
+                throw Error('Unavailable service');
+            setFlowId(d.flowId);
+            setServiceId(d.serviceId);
+            setName(d.name);
+            setAuthoring(d.authoring);
+            setRevision(d.revision);
+            setDirty(false);
+            setHosted('');
+            setAnswers({});
+            setMessage('Loaded the saved configurable questionnaire.');
+            await modeAdapter?.changed();
+        });
+    }
+    async function save() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (!service || !authoring)
+            return;
+        await task(async (at) => {
+            const normalized = normalizeConfigurablePublication(service, authoring);
+            let r;
+            try {
+                r = await client.saveConfigurable(token, tenant, flowId, { expectedRevision: revision, serviceId, name: name.trim(), authoring: ConfigurableAuthoringV2.parse(normalized.authoring) });
+            }
+            catch (e) {
+                if (modeAdapter && at === generation.current)
+                    setMessage('Save outcome unknown; reload and compare.');
+                throw e;
+            }
+            if (at !== generation.current)
+                return;
+            setAuthoring(ConfigurableAuthoringV2.parse(normalized.authoring));
+            setRevision(r.revision);
+            setDirty(false);
+            setMessage('Configurable questionnaire saved.');
+            const list = await client.configurableFlows(token, tenant);
+            if (at === generation.current) {
+                setFlows(list.flows);
+                await modeAdapter?.changed();
+            }
+        });
+    }
+    async function publish() {
+        if (modeAdapter?.active && !modeAdapter.active())
+            return;
+        if (modeAdapter) {
+            await modeAdapter.publish(flowId, revision);
+            return;
+        }
+        await task(async (at) => {
+            const url = new URL(origin);
+            if (url.protocol !== 'https:' || url.origin !== origin)
+                throw Error('Invalid origin');
+            const r = await client.publishConfigurable(token, tenant, flowId, { expectedRevision: revision, allowedOrigins: [origin] });
+            if (at !== generation.current)
+                return;
+            if (r.hostedPath !== '/checkout/flow/' + r.installationId)
+                throw Error('Invalid link');
+            setHosted(origin + r.hostedPath);
+            setMessage('Published an immutable configurable questionnaire.');
+        });
+    }
+    function updateField(id: string, change: (next: ConfigurableAuthoringV2) => void) {
+        if (!authoring)
+            return;
+        const next = structuredClone(authoring);
+        change(next);
+        edit(next);
+    }
+    function move(index: number) {
+        if (!authoring || !service)
+            return;
+        const next = structuredClone(authoring);
+        [next.config.steps[index - 1], next.config.steps[index]] = [next.config.steps[index]!, next.config.steps[index - 1]!];
+        try {
+            normalizeConfigurablePublication(service, next);
+            edit(next);
+        }
+        catch {
+            setError('A condition must follow its source question. Remove that condition before reordering.');
+        }
+    }
+    return <section><h2>Configurable questionnaires</h2><p>Choose optional questions, adjust labels and allowed quantities, and show follow-up questions based on earlier answers. Required service questions always remain.</p><fieldset disabled={busy}><label>Saved configurable questionnaire<select value={flowId} onChange={e => void reload(e.target.value)}><option value="">Choose a configurable questionnaire</option>{flows.map(f => <option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" disabled={!services.length} onClick={fresh}>New configurable questionnaire</button></fieldset>
+ {flowId && service && authoring && <><fieldset disabled={busy}><label>Configurable questionnaire name<input value={name} maxLength={200} onChange={e => { setName(e.target.value); setDirty(true); setHosted(''); setMessage(''); }}/></label><label>Service for configurable questionnaire<select value={serviceId} onChange={e => {
+                const s = services.find(s => s.id === e.target.value);
+                if (s)
+                    selectService(s);
+            }}>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><h3>Available questions</h3>{service.questions.map(q => {
+                const included = authoring.config.steps.some(s => s.questionKey === q.id);
+                const used = authoring.config.steps.some(s => s.visibleWhen?.field === q.id);
+                return <label key={q.id} style={{ display: 'block' }}><input type="checkbox" checked={included} disabled={q.required || used} onChange={e => updateField(q.id, next => {
+                        if (e.target.checked)
+                            next.config.steps.push({ key: q.id, questionKey: q.id, kind: 'question', required: false });
+                        else {
+                            next.config.steps = next.config.steps.filter(s => s.questionKey !== q.id);
+                            delete next.questionOverrides[q.id];
+                        }
+                    })}/>{q.prompt}{q.required ? ' · Required by service' : used ? ' · Used by a condition' : ''}</label>;
+            })}
+ <ol>{authoring.config.steps.map((step, i) => {
+                const q = service.questions.find(q => q.id === step.questionKey)!;
+                const override = Object.hasOwn(authoring.questionOverrides, q.id) ? authoring.questionOverrides[q.id]! : {};
+                const sources = authoring.config.steps.slice(0, i).filter(s => !s.visibleWhen).map(s => service.questions.find(q => q.id === s.questionKey)!).filter(q => q.kind !== 'quantity');
+                const used = authoring.config.steps.some(s => s.visibleWhen?.field === q.id);
+                const patch = (values: typeof override) => updateField(q.id, next => { const prev = Object.hasOwn(next.questionOverrides, q.id) ? next.questionOverrides[q.id]! : {}; Object.defineProperty(next.questionOverrides, q.id, { value: { ...prev, ...values }, writable: true, enumerable: true, configurable: true }); });
+                return <li key={step.key}><h3>{q.prompt}</h3><button type="button" disabled={i === 0} onClick={() => move(i)}>Move {q.prompt} up</button><label>Prompt for {q.prompt}<input maxLength={500} value={override.prompt ?? q.prompt} onChange={e => patch({ prompt: e.target.value })}/></label><label><input type="checkbox" checked={step.required} disabled={q.required} onChange={e => updateField(q.id, next => { next.config.steps[i]!.required = e.target.checked; })}/>Required when visible: {q.prompt}</label>
+ {q.kind === 'quantity' ? <><label>Minimum for {q.prompt}<input type="number" min={q.minQty} max={q.maxQty} step="1" value={override.minQty ?? q.minQty} onChange={e => patch({ minQty: e.target.value === '' ? undefined : Number(e.target.value) })}/></label><label>Maximum for {q.prompt}<input type="number" min={q.minQty} max={q.maxQty} step="1" value={override.maxQty ?? q.maxQty} onChange={e => patch({ maxQty: e.target.value === '' ? undefined : Number(e.target.value) })}/></label></> : q.choices.map(c => <label key={c.id}>Label for {q.prompt}: {c.label}<input maxLength={200} value={override.choiceLabels && Object.hasOwn(override.choiceLabels, c.id) ? override.choiceLabels[c.id] : c.label} onChange={e => patch({ choiceLabels: { ...override.choiceLabels, [c.id]: e.target.value } })}/></label>)}
+ <label>Show {q.prompt} when<select disabled={q.required || used} value={step.visibleWhen?.field ?? ''} onChange={e => updateField(q.id, next => {
+                        const source = sources.find(q => q.id === e.target.value);
+                        if (!source)
+                            delete next.config.steps[i]!.visibleWhen;
+                        else
+                            next.config.steps[i]!.visibleWhen = { field: source.id, op: source.kind === 'single_choice' ? 'eq' : 'includes', value: source.choices[0]!.id };
+                    })}><option value="">Always visible</option>{sources.map(s => <option key={s.id} value={s.id}>{s.prompt}</option>)}</select></label>{step.visibleWhen && <label>Answer that shows {q.prompt}<select value={step.visibleWhen.value} onChange={e => updateField(q.id, next => { next.config.steps[i]!.visibleWhen!.value = e.target.value; })}>{sources.find(s => s.id === step.visibleWhen!.field)?.choices.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>}</li>;
+            })}</ol>
+ {!preview && <p role="alert">Check included questions, conditions, labels and quantity limits before saving.</p>}<button type="button" disabled={!dirty || !preview || !name.trim()} onClick={() => void save()}>Save configurable questionnaire</button><button type="button" disabled={!revision} onClick={() => void reload()}>Refresh configurable saved version (discard edits)</button><p>{revision ? `Saved revision ${revision}` : 'Not saved'}{dirty ? ' · Unsaved changes' : ''}</p>{!modeAdapter && <label>Configurable customer site origin (HTTPS)<input type="url" value={origin} onChange={e => { setOrigin(e.target.value); setHosted(''); setMessage(''); }}/></label>}<button type="button" disabled={dirty || !revision || (modeAdapter ? modeAdapter.locked : !origin)} onClick={() => void publish()}>Publish configurable saved version</button></fieldset>{preview && <ConfigurablePreview key={JSON.stringify([flowId, serviceId, revision, authoring])} render={preview} answers={answers} onChange={setAnswers}/>}</>}
+ {error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}{busy && <p role="status">Saving or loading…</p>}{hosted && <a href={hosted} target="_blank" rel="noopener noreferrer">Open configurable hosted request form</a>}<p>Requests remain unconfirmed. No payment or availability reservation.</p></section>;
 }
