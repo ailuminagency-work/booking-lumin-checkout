@@ -1,6 +1,7 @@
 import type { Reporter, TestCase, TestResult, FullResult, TestError } from '@playwright/test/reporter';
 import fs from 'node:fs';
 import path from 'node:path';
+import { hostedFailurePhase } from '../../scripts/runtime-hosted-diagnostics.mjs';
 const ids = new Set(Array.from({ length: 16 }, (_, i) => 'runtime-' + String(i + 1).padStart(2, '0')));
 const pngs = new Set(['runtime-01-1440.png','runtime-02-768.png','runtime-05-1440.png','runtime-16-320.png','runtime-16-768.png','runtime-16-1440.png']);
 /** Every ancestor is checked before creation or file access; junctions are never followed. */
@@ -30,6 +31,7 @@ export default class SafeReporter implements Reporter {
         id: string;
         status: string;
         durationMs: number;
+        failurePhase?: string;
     }[] = [];
     private unsafe = false;
     private errors = 0;
@@ -45,7 +47,7 @@ export default class SafeReporter implements Reporter {
     onTestEnd(test: TestCase, result: TestResult) { if (this.events.length >= 16) {
         this.overflow = true;
         return;
-    } const id = test.title.match(/^runtime-\d{2}(?=\s|$)/)?.[0] ?? 'unclassified'; const safeId = ids.has(id) ? id : 'unclassified'; const status = ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(result.status) ? result.status : 'failed'; this.events.push({ id: safeId, status, durationMs: Math.max(0, Math.min(600000, Math.round(result.duration))) }); }
+    } const id = test.title.match(/^runtime-\d{2}(?=\s|$)/)?.[0] ?? 'unclassified'; const safeId = ids.has(id) ? id : 'unclassified'; const status = ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(result.status) ? result.status : 'failed'; this.events.push({ id: safeId, status, durationMs: Math.max(0, Math.min(600000, Math.round(result.duration))), ...(safeId === 'runtime-01' && status === 'failed' ? { failurePhase: hostedFailurePhase(result.errors) } : {}) }); }
     async onEnd(result: FullResult) {
         const root = artifactDirectory(), approved: string[] = [];
         let count = 0;
@@ -67,7 +69,7 @@ export default class SafeReporter implements Reporter {
             approved.push(name);
         }
         if (result.status === 'passed' && (this.events.length !== 16 || new Set(this.events.map(e => e.id)).size !== 16 || this.events.some(e => !ids.has(e.id) || e.status !== 'passed') || approved.length !== 6)) this.overflow = true;
-        const summary = { schemaVersion: 1, status: this.unsafe || this.errors || this.overflow ? 'failed' : result.status, category: this.unsafe ? 'OUTPUT_SENTINEL_DETECTED' : this.overflow ? 'EVENT_BOUND' : this.errors ? 'RUNNER_ERROR' : 'COMPLETE', events: this.events, screenshots: approved };
+        const summary = { schemaVersion: 2, status: this.unsafe || this.errors || this.overflow ? 'failed' : result.status, category: this.unsafe ? 'OUTPUT_SENTINEL_DETECTED' : this.overflow ? 'EVENT_BOUND' : this.errors ? 'RUNNER_ERROR' : 'COMPLETE', events: this.events, screenshots: approved };
         const bytes = Buffer.from(JSON.stringify(summary));
         if (bytes.length > 65536)
             throw Error('SUMMARY_BOUND');

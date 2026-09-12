@@ -390,6 +390,28 @@ jobs:
             npm run test:mode-session-transport --workspace @lumin/action-api
           done
 
+      - name: Verify session admission with actual PostgreSQL in both crypto layouts
+        timeout-minutes: 7
+        env:
+          LOCAL_HARNESS: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          MODE_SESSIONS_TEST_DISPOSABLE: '1'
+        run: |
+          set -euo pipefail
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_session_transport_admission_${layout}"
+            export MODE_SESSION_TRANSPORT_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            timeout --signal=TERM --kill-after=10s 180s npm run test:mode-session-admission --workspace @lumin/action-api
+          done
+
       - name: Verify local owner HTTP isolation and persistence in both crypto layouts
         timeout-minutes: 10
         env:
@@ -604,7 +626,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Validate runtime build, runner and evidence boundaries
-        run: node --test scripts/build-mode-runtime.test.mjs scripts/mode-runtime-artifacts.test.mjs scripts/collect-mode-runtime-artifacts.test.mjs scripts/run-mode-runtime-browser.test.mjs scripts/install-mode-runtime-browser.test.mjs
+        run: node --test scripts/runtime-hosted-diagnostics.test.mjs scripts/build-mode-runtime.test.mjs scripts/mode-runtime-artifacts.test.mjs scripts/collect-mode-runtime-artifacts.test.mjs scripts/run-mode-runtime-browser.test.mjs scripts/install-mode-runtime-browser.test.mjs
       - name: Record local test runtime versions
         run: node --version && npm --version && psql --version && /usr/bin/openssl version
       - name: Typecheck runtime entries and browser fixtures
