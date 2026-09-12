@@ -23,6 +23,8 @@ jobs:
       - name: Validate execution workflow and gate ledger
         run: node --test scripts/program-status.test.mjs && node scripts/program-status.mjs
       - run: node --test scripts/run-mode-owner-browser.test.mjs scripts/mode-owner-artifacts.test.mjs scripts/preview-mode.test.mjs
+      - name: Verify document TLS, runner and artifact boundaries
+        run: node --test scripts/mode-document-tls.test.mjs scripts/mode-document-artifacts.test.mjs scripts/run-mode-document-browser.test.mjs scripts/collect-mode-document-artifacts.test.mjs
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
@@ -462,6 +464,101 @@ jobs:
         with:
           name: local-owner-reviewed-evidence
           path: ${{ steps.owner_evidence.outputs.files }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  document:
+    name: document (public policy + HTTPS + browser)
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      LOCAL_HARNESS: '1'
+      FLOW_TEST_DISPOSABLE: '1'
+      MODE_INSTALLATIONS_TEST_DISPOSABLE: '1'
+      MODE_DOCUMENT_TEST_DISPOSABLE: '1'
+      MODE_DOCUMENT_API_PORT: '45231'
+      MODE_DOCUMENT_RENDERER_PORT: '45232'
+      MODE_DOCUMENT_PORTAL_PORT: '45233'
+      MODE_DOCUMENT_MERCHANT_PORT: '45234'
+      MODE_DOCUMENT_SECOND_PORT: '45235'
+      MODE_DOCUMENT_FORBIDDEN_PORT: '45236'
+      MODE_DOCUMENT_UNTRUSTED_PORT: '45237'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Record local test runtime versions
+        run: node --version && npm --version && psql --version && /usr/bin/openssl version
+      - name: Typecheck document HTTP and browser fixtures
+        run: node node_modules/typescript/bin/tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler --jsx react-jsx --strict --esModuleInterop --skipLibCheck tests/mode-document/fixtures.ts tests/mode-document/document.integration.ts tests/mode-document/browser-fixtures.ts tests/mode-document/document.spec.ts tests/mode-document/safe-reporter.ts playwright.mode-document.config.ts
+      - name: Verify actual policy HTTP and TLS in both crypto layouts
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_document_http_${layout}"
+            export MODE_DOCUMENT_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            node scripts/run-mode-document-http.mjs
+          done
+      - name: Install accepted pinned browser runtime
+        timeout-minutes: 5
+        run: node scripts/install-mode-owner-browser.mjs
+      - name: Verify actual document browser journeys in both crypto layouts
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          mkdir -p .cache
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_document_browser_${layout}"
+            export MODE_DOCUMENT_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            node scripts/run-mode-document-browser.mjs > ".cache/mode-document-browser-${layout}.json"
+          done
+      - name: Validate explicit document evidence file list
+        id: document_evidence
+        if: always()
+        run: node scripts/collect-mode-document-artifacts.mjs
+      - name: Retain reviewed document screenshots and fixed summaries
+        if: always() && steps.document_evidence.outputs.files != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, accepted pinned action
+        with:
+          name: local-document-reviewed-evidence
+          path: ${{ steps.document_evidence.outputs.files }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

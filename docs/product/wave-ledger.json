@@ -170,7 +170,7 @@
       ],
       "status": "blocked",
       "scope": "staging",
-      "blocker": "Last verified Netlify demo is PR45 commitbea04b4. Hosted API, database reconciliation and authenticated pilot acceptance remain unverified. Last observed Supabase ledger was0001..0009; reviewed migrations extend through0030, with no live application performed. Local owner publication/installation Portal journey passed bounded draft review at PR59 head5206d93cfec907041926ebb5833d3ef909872502 and both required jobs in CI34561367747. Next portable dedicated document/reader subleaf is building; see increments/MODE_DOCUMENT.md. Real public-policy API, HTTPS/database/browser and hosted acceptance remain required. No capability or hosted acceptance promotion is claimed.",
+      "blocker": "Last verified Netlify demo is PR45 commitbea04b4. Hosted API, database reconciliation and authenticated pilot acceptance remain unverified. Last observed Supabase ledger was0001..0009; reviewed migrations extend through0030, with no live application performed. Portable document predecessor PR60 head88f7d6f82f79492f24261057f4a8957d8f71fc9b passed both jobs in exact CI34564995159 and bounded draft review. The new public-policy API, guarded disposable SQL composition and local HTTPS/browser subleaf is in verification; see increments/MODE_POLICY_API.md. This candidate also repairs a separately reproduced final-cleanup deadline defect without rewriting PR60. Hosted acceptance remains required. No capability or hosted acceptance promotion is claimed.",
       "deployment": "not_deployed",
       "requires": [
         "W8.integrated_pilot"
