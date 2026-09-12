@@ -1,6 +1,6 @@
 # Dedicated installation runtime: T4
 
-Status: BUILDING / local tests, artifacts and independent Runtime review passed; exact-candidate CI and Release pending. Full W3 capability and hosted acceptance remain incomplete.
+Status: BUILDING / PR70 exact-candidate CI and bounded draft Release review passed. No merge or deployment. Full W3 capability and hosted acceptance remain incomplete.
 
 ## Protected foundation
 
@@ -18,7 +18,7 @@ Independent child review reproduced success delivered before a throwing stream r
 
 ## Remaining gates
 
-Local unit verification covers 1,737 distinct passing tests across the retained failed default-parallel run and unchanged one-worker replays of its two affected packages. Both layouts passed nine native HTTP groups and all 16 browser cases. Types, builds, independent adversarial controls and forced privacy controls passed. The unchanged collector and independent Runtime review passed for all fourteen fixed artifacts and final canonical source mappings. See MODE_RUNTIME_LOCAL_EVIDENCE.md for actual identities, returned failures and proof boundaries. All four exact-candidate CI jobs and bounded Release review remain required. Full W3 and hosted acceptance remain open.
+Local unit verification covers 1,737 distinct passing tests across the retained failed default-parallel run and unchanged one-worker replays of its two affected packages. Both layouts passed nine native HTTP groups and all 16 browser cases. Types, builds, independent adversarial controls and forced privacy controls passed. The unchanged collector and independent Runtime review passed for all fourteen fixed artifacts and final canonical source mappings. See MODE_RUNTIME_LOCAL_EVIDENCE.md for actual identities, returned failures and proof boundaries. PR70 candidate 4fe929e220bec4064ceeb771bdd0d86cfcbbbaf0 passed all four jobs and 112 steps in CI34696095883. The actual merge checkout is f93fada8c192220b43ec615279907535907fc6c8 with base PR69 and candidate parents; its tree matches the reviewed candidate. Fourteen uploaded fixed files contain two complete sixteen-case passing runtime summaries. Chandrasekhar independently verified all four actual checkouts, all 112 successful steps and the exact fourteen-file artifact; root completed bounded draft Release review. Per-UUID layout labels are not inferred because wrapper receipts are excluded from the upload; both-layout execution is established by the successful required loop. This does not complete W3 or hosted acceptance. Full W3 and hosted acceptance remain open.
 
 The next independent W4 leaf is a persisted owner dated-shift editor using existing roster endpoints. Its exact contract is under review; no worker Auth, DST scheduling or full W4 completion is implied.
 
