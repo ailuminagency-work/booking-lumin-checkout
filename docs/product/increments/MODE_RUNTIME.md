@@ -18,7 +18,7 @@ Independent child review reproduced success delivered before a throwing stream r
 
 ## Remaining gates
 
-Child cleanup/single-owner controls and independent review passed. Integrated1688 unit tests, workspace types and application builds pass. Finish all16 actual-browser cases and real SQL/HTTPS controls in both fresh disposable layouts; validate private-output failure controls; verify unchanged document regressions; complete integrated tests, Runtime Guardian, all four exact-candidate CI jobs and Release review. Only then publish the tested stacked draft candidate. Changes reopen affected gates.
+Child cleanup/single-owner controls and independent review passed. Integrated1688 unit tests, workspace types and application builds pass. Finish all16 actual-browser cases and real SQL/HTTPS controls in both fresh disposable layouts; validate private-output failure controls; verify unchanged document regressions; complete integrated tests and local Runtime Guardian review. Then push the tested review branch and open its stacked draft PR to trigger the pull-request CI workflow. Bounded Release review requires all four exact-candidate CI jobs to pass. Changes reopen affected gates.
 
 ## Infrastructure evidence
 
