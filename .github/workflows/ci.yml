@@ -626,7 +626,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Validate runtime build, runner and evidence boundaries
-        run: node --test scripts/build-mode-runtime.test.mjs scripts/mode-runtime-artifacts.test.mjs scripts/collect-mode-runtime-artifacts.test.mjs scripts/run-mode-runtime-browser.test.mjs scripts/install-mode-runtime-browser.test.mjs
+        run: node --test scripts/runtime-hosted-diagnostics.test.mjs scripts/build-mode-runtime.test.mjs scripts/mode-runtime-artifacts.test.mjs scripts/collect-mode-runtime-artifacts.test.mjs scripts/run-mode-runtime-browser.test.mjs scripts/install-mode-runtime-browser.test.mjs
       - name: Record local test runtime versions
         run: node --version && npm --version && psql --version && /usr/bin/openssl version
       - name: Typecheck runtime entries and browser fixtures

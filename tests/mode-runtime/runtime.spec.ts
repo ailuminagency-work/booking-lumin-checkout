@@ -95,26 +95,37 @@ async function publicStorage(page: Page) {
 const parent = (origin: string, frame: string) => origin + '/frame?frame=' + encodeURIComponent(frame);
 
 test('runtime-01 hosted V1 and V2 execute registered child without parent channel', async ({ journey: j }) => guarded(async () => {
-  phase='HOSTED';
+  phase='HOSTED_SETUP';
   for (const w of [j.w, await seed(j.db, true)]) {
+    phase = w === j.w ? 'HOSTED_V_ONE_SNAPSHOT' : 'HOSTED_V_TWO_SNAPSHOT';
     const saved = await snapshot(j.db, w.f);
+    phase = w === j.w ? 'HOSTED_V_ONE_INITIAL_READY' : 'HOSTED_V_TWO_INITIAL_READY';
     await observe(j.page); await j.page.goto(j.local.addresses.renderer + '/checkout/flow/' + w.hosted.installationId); await ready(j.page.mainFrame());
+    phase = w === j.w ? 'HOSTED_V_ONE_SHAPE' : 'HOSTED_V_TWO_SHAPE';
     expect(await messages(j.page)).toEqual([]); expect(await j.page.locator('script').count()).toBe(1); expect(await j.page.locator('form,iframe').count()).toBe(0);
+    phase = w === j.w ? 'HOSTED_V_ONE_HEADERS' : 'HOSTED_V_TWO_HEADERS';
     const response = await wire(j.local.addresses.renderer, '/checkout/flow/' + w.hosted.installationId, j.tls);
     expect(response.status).toBe(200); expect(response.headers['x-frame-options']).toBe('DENY');
     expect(response.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    phase = w === j.w ? 'HOSTED_V_ONE_BOOTSTRAP' : 'HOSTED_V_TWO_BOOTSTRAP';
     const bootstrap = await j.page.locator('#lumin-mode-bootstrap').evaluate(e => JSON.parse((e as HTMLTemplateElement).content.textContent!));
     expect(bootstrap.policy.installationId).toBe(w.hosted.installationId);
     expect(bootstrap.policy.deploymentProfileVersion).toBe(profile().profileVersion);
+    phase = w === j.w ? 'HOSTED_V_ONE_FRAME_DENIAL' : 'HOSTED_V_TWO_FRAME_DENIAL';
     let framingDenied = false;
     const onConsole = (m: import('@playwright/test').ConsoleMessage) => { if(m.text().includes('frame-ancestors')) framingDenied=true; };
     j.page.on('console',onConsole);
     await j.page.goto(parent(j.local.addresses.merchant,j.local.addresses.renderer+'/checkout/flow/'+w.hosted.installationId));
     await expect.poll(()=>framingDenied).toBe(true); j.page.off('console',onConsole);
+    phase = w === j.w ? 'HOSTED_V_ONE_RETURN_READY' : 'HOSTED_V_TWO_RETURN_READY';
     await j.page.goto(j.local.addresses.renderer+'/checkout/flow/'+w.hosted.installationId); await ready(j.page.mainFrame());
+    phase = w === j.w ? 'HOSTED_V_ONE_SNAPSHOT' : 'HOSTED_V_TWO_SNAPSHOT';
     expect(await snapshot(j.db, w.f)).toEqual(saved);
   }
-  await j.capture('runtime-01-1440.png',1440); await j.unchanged();
+  phase = 'HOSTED_CAPTURE';
+  await j.capture('runtime-01-1440.png',1440);
+  phase = 'HOSTED_FINAL_SNAPSHOT';
+  await j.unchanged();
 }));
 test('runtime-02 literal unchanged snippets initialize real V1 and V2 channels', async ({ journey: j }) => guarded(async () => {
   phase='SNIPPET';

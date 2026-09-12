@@ -1,3 +1,4 @@
+import { HOSTED_FAILURE_PHASES } from './runtime-hosted-diagnostics.mjs';
 import { lstat, readdir, open, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { constants } from 'node:fs';
@@ -38,9 +39,10 @@ export async function validateRuntimeArtifacts(workspace, runId) {
   const summaryBytes = await boundedFile(summaryPath,65536);
   if (summaryBytes.length > 65536) fixed();
   const s = JSON.parse(summaryBytes.toString('utf8'));
-  if (!keys(s,['schemaVersion','status','category','events','screenshots']) || s.schemaVersion !== 1 || !['passed','failed','timedout','interrupted'].includes(s.status) || !['COMPLETE','OUTPUT_SENTINEL_DETECTED','EVENT_BOUND','RUNNER_ERROR'].includes(s.category) || !Array.isArray(s.events) || s.events.length > 16 || !Array.isArray(s.screenshots) || s.screenshots.length > 6) fixed();
+  if (!keys(s,['schemaVersion','status','category','events','screenshots']) || ![1,2].includes(s.schemaVersion) || !['passed','failed','timedout','interrupted'].includes(s.status) || !['COMPLETE','OUTPUT_SENTINEL_DETECTED','EVENT_BOUND','RUNNER_ERROR'].includes(s.category) || !Array.isArray(s.events) || s.events.length > 16 || !Array.isArray(s.screenshots) || s.screenshots.length > 6) fixed();
   for (const event of s.events) {
-    if (!keys(event,['id','status','durationMs']) || !RUNTIME_CASE_IDS.includes(event.id) || !['passed','failed','timedOut','skipped','interrupted'].includes(event.status) || !Number.isSafeInteger(event.durationMs) || event.durationMs < 0 || event.durationMs > 900000) fixed();
+    const phased = s.schemaVersion === 2 && event?.id === 'runtime-01' && event?.status === 'failed';
+    if (!keys(event,phased ? ['id','status','durationMs','failurePhase'] : ['id','status','durationMs']) || (phased && !HOSTED_FAILURE_PHASES.includes(event.failurePhase)) || !RUNTIME_CASE_IDS.includes(event.id) || !['passed','failed','timedOut','skipped','interrupted'].includes(event.status) || !Number.isSafeInteger(event.durationMs) || event.durationMs < 0 || event.durationMs > 900000) fixed();
   }
   if (new Set(s.events.map(e=>e.id)).size !== s.events.length) fixed();
   if (s.status === 'passed' && (s.category !== 'COMPLETE' || s.events.length !== 16 || s.events.some(e=>e.status !== 'passed') || s.screenshots.length !== 6)) fixed();

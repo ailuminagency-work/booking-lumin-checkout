@@ -26,6 +26,19 @@ test('runtime artifacts require every reviewed case and exact file inventory', a
     await t.test('PNG signature and size cap are enforced',async()=>{const file=join(directory,RUNTIME_SCREENSHOTS[0]);await writeFile(file,'not png');await reject();await writeFile(file,Buffer.alloc(5*1024*1024+1));await reject();await writeFile(file,png);});
     await t.test('summary bound and run path grammar are enforced',async()=>{await writeFile(join(directory,'summary.json'),'x'.repeat(65537));await reject();await assert.rejects(validateRuntimeArtifacts(root,'../other'));await summary(initial);});
     await t.test('explicit failure remains failure even when its bounded inventory validates',async()=>{await summary({...initial,status:'failed',events:initial.events.map((e,i)=>i?e:{...e,status:'failed'})});assert.equal((await validateRuntimeArtifacts(root,run)).status,'failed');});
+    await t.test('schema2 limits fixed phase to failed hosted case and retains schema1',async()=>{
+      const phased={...initial.events[0],status:'failed',failurePhase:'HOSTED_V_ONE_INITIAL_READY'};
+      const version2={...initial,schemaVersion:2,status:'failed',events:[phased,...initial.events.slice(1)]};
+      for(const failurePhase of ['HOSTED_V_ONE_INITIAL_READY','UNKNOWN']){await summary({...version2,events:[{...phased,failurePhase},...initial.events.slice(1)]});assert.equal((await validateRuntimeArtifacts(root,run)).status,'failed');}
+      for(const invalid of [
+        {...version2,schemaVersion:1}, {...version2,schemaVersion:3}, {...version2,status:'passed'},
+        {...version2,events:[{id:'runtime-01',status:'failed',durationMs:1},...initial.events.slice(1)]},
+        ...['PRIVATE_SENTINEL','HOSTED_UNKNOWN',null].map(failurePhase=>({...version2,events:[{...phased,failurePhase},...initial.events.slice(1)]})),
+        ...['passed','timedOut','skipped','interrupted'].map(status=>({...version2,events:[{...phased,status},...initial.events.slice(1)]})),
+        {...version2,events:[{...phased,id:'runtime-02'},initial.events[0],...initial.events.slice(2)]},
+      ]){await summary(invalid);await reject();}
+      await summary({...initial,schemaVersion:2});assert.equal((await validateRuntimeArtifacts(root,run)).status,'passed');
+    });
     await t.test('complete neighboring case remains valid after negative controls',async()=>{await summary(initial);assert.equal((await validateRuntimeArtifacts(root,run)).status,'passed');});
   } finally {const actual=await realpath(root);assert.equal(actual,resolve(root));assert.ok(actual.startsWith(temp+sep+'lumin-runtime-artifacts-'));await rm(actual,{recursive:true,force:false});}
 });
