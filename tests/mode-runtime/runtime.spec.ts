@@ -65,13 +65,27 @@ async function appendSnippet(page: Page, snippet: string) {
     });
   }, snippet);
 }
-async function eightReady(page: Page, origin: string, route: string, snippet: string) {
-  await page.goto(origin + route); await ready(await child(page));
+async function freshRuntimeFrame(page: Page, index: number, expectedUrl: string): Promise<Frame> {
+  const handle = await page.locator('iframe').nth(index).elementHandle();
+  const frame = await handle!.contentFrame(); expect(frame).not.toBeNull();
+  // Loader completion/frame insertion can precede navigation out of about:blank.
+  await frame!.waitForURL(expectedUrl, {timeout:5000});
+  await frame!.waitForLoadState('domcontentloaded', {timeout:5000});
+  return frame!;
+}
+async function eightReady(page: Page, origin: string, route: string, snippet: string, expectedUrl: string) {
+  const callerPhase = phase;
+  const primePhases = ['PRIME_ONE','PRIME_TWO','PRIME_THREE','PRIME_FOUR','PRIME_FIVE','PRIME_SIX','PRIME_SEVEN','PRIME_EIGHT'] as const;
+  phase = primePhases[0];
+  await page.goto(origin + route); await expect(page.locator('iframe')).toHaveCount(1);
+  await ready(await freshRuntimeFrame(page, 0, expectedUrl));
   // Real unchanged snippets are admitted sequentially; the API's two-read per-installation cap stays intact.
   for (let count = 2; count <= 8; count++) {
+    phase = primePhases[count - 1]!;
     await appendSnippet(page, snippet); await expect(page.locator('iframe')).toHaveCount(count);
-    const handle = await page.locator('iframe').last().elementHandle(); await ready((await handle!.contentFrame())!);
+    await ready(await freshRuntimeFrame(page, count - 1, expectedUrl));
   }
+  phase = callerPhase;
 }
 async function publicStorage(page: Page) {
   for (const f of page.frames()) expect(await f.evaluate(() => ({ local: Object.entries(localStorage), session: Object.entries(sessionStorage), cookie: document.cookie }))).toEqual({ local: [], session: [], cookie: '' });
@@ -185,12 +199,7 @@ test('runtime-03 duplicate and late scripts preserve independent channels', asyn
   phase='CHANNEL_LATE_OLD_ZERO'; await ready(frames[0]!);
   phase='CHANNEL_LATE_OLD_ONE'; await ready(frames[1]!);
   phase='CHANNEL_LATE_NAVIGATION';
-  const lateHandle = await j.page.locator('iframe').nth(2).elementHandle();
-  const lateFrame = await lateHandle!.contentFrame(); expect(lateFrame).not.toBeNull();
-  // An inserted iframe can still be about:blank when its parent loader's load event fires.
-  // Observe its real document navigation before evaluating controller state in that realm.
-  await lateFrame!.waitForURL(j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId, {timeout:5000});
-  await lateFrame!.waitForLoadState('domcontentloaded', {timeout:5000});
+  const lateFrame = await freshRuntimeFrame(j.page, 2, j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId);
   phase='CHANNEL_LATE_CHILD_READY'; await ready(lateFrame!);
   phase='CHANNEL_LATE_READY_MESSAGES';
   await expect.poll(async () => (await messages(j.page)).filter(x => x.type === 'lumin:ready').length).toBe(3);
@@ -417,7 +426,7 @@ test('runtime-09 eight slots deny allocation and explicit replacement creates a 
     Crypto.prototype.getRandomValues = function<T extends ArrayBufferView | null>(array: T): T { counter.calls++; return original.call(this, array) as T; };
   });
   const snippet = await j.local.snippet(j.w);
-  await eightReady(j.page, j.local.addresses.merchant, j.local.registerPage(snippet), snippet);
+  await eightReady(j.page, j.local.addresses.merchant, j.local.registerPage(snippet), snippet, j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId);
   await appendSnippet(j.page, snippet);
   await expect(j.page.locator('iframe')).toHaveCount(8);
   for (const f of j.page.frames().slice(1)) await ready(f);
@@ -447,7 +456,7 @@ test('runtime-10 actual blocked policy backends remain bounded through repeated 
   phase='BACKEND_PRIME';
   await observe(j.page);
   const snippet = await j.local.snippet(j.w);
-  await eightReady(j.page, j.local.addresses.merchant, j.local.registerPage(snippet), snippet);
+  await eightReady(j.page, j.local.addresses.merchant, j.local.registerPage(snippet), snippet, j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId);
   await expect(j.page.locator('iframe')).toHaveCount(8);
   for (const f of j.page.frames().slice(1)) await ready(f);
   const initialReady = (await messages(j.page)).filter(x => x.type === 'lumin:ready').length;
