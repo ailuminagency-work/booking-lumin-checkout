@@ -279,3 +279,34 @@ describe('bounded reader and configuration', () => {
    if(finishTime===2000)expect(await result.text()).not.toContain('lumin-mode-bootstrap');
    await h.close();
  });
+
+
+describe('trusted optional runtime document registration', () => {
+ it('emits one exact external script with matching SHA256 integrity and restrictive executable CSP',async()=>{
+  const digest='ab'.repeat(32);const h=createModeDocumentHandler({profiles:[profile],fetch:async()=>json(),runtime:{controllerSha256:digest}});
+  const r=await h.handle(request());const html=await r.text();const dom=new DOMParser().parseFromString(html,'text/html');
+  const scripts=dom.querySelectorAll('script');expect(scripts).toHaveLength(1);const script=scripts[0]!;
+  const integrity='sha256-'+btoa(String.fromCharCode(...Array(32).fill(171)));
+  expect(script.getAttribute('src')).toBe(profile.rendererOrigin+'/assets/booking-lumin-controller.'+digest+'.js');
+  expect(script.getAttribute('integrity')).toBe(integrity);expect(script.getAttribute('crossorigin')).toBe('anonymous');expect(script.hasAttribute('defer')).toBe(true);expect(script.textContent).toBe('');
+  expect(r.headers.get('content-security-policy')).toContain("script-src '"+integrity+"'");expect(r.headers.get('content-security-policy')).toContain('connect-src '+profile.apiOrigin);
+  expect(r.headers.get('content-security-policy')).not.toContain("'unsafe-inline'");expect(r.headers.get('cache-control')).toBe('no-store,max-age=0');
+  const head=await h.handle(request(undefined,{method:'HEAD'}));expect([...head.headers]).toEqual([...r.headers]);expect(await head.text()).toBe('');await h.close();
+ });
+ it.each([null,{}, {controllerSha256:'A'.repeat(64)}, {controllerSha256:'a'.repeat(63)}, {controllerSha256:'a'.repeat(64),extra:true}, {controllerSha256:'a'.repeat(64)+'\n'}])('rejects malformed runtime registration %j',runtime=>{
+  expect(()=>createModeDocumentHandler({profiles:[profile],runtime:runtime as never})).toThrow();
+ });
+ it('snapshots runtime own data without invoking accessors or later mutation',async()=>{
+  const getter=vi.fn();expect(()=>createModeDocumentHandler({profiles:[profile],runtime:Object.defineProperty({},'controllerSha256',{get:getter,enumerable:true}) as never})).toThrow();expect(getter).not.toHaveBeenCalled();
+  const runtime={controllerSha256:'c'.repeat(64)};const h=createModeDocumentHandler({profiles:[profile],runtime,fetch:async()=>json()});runtime.controllerSha256='d'.repeat(64);
+  expect(await(await h.handle(request())).text()).toContain('controller.'+'c'.repeat(64)+'.js');await h.close();
+ });
+ it('never emits executable success content on unavailable or malformed routes',async()=>{
+  const h=createModeDocumentHandler({profiles:[profile],runtime:{controllerSha256:'a'.repeat(64)},fetch:async()=>new Response(null,{status:404})});
+  for(const path of ['/checkout/flow/'+id,'/checkout/flow/'+id+'?x=1']){const r=await h.handle(request(path));expect(r.status).not.toBe(200);expect(await r.text()).not.toContain('<script');expect(r.headers.get('content-security-policy')).toContain("script-src 'none'");expect(r.headers.get('content-security-policy')).toContain("connect-src 'none'");}await h.close();
+ });
+ it('runtime projection still withholds a complete document at final cleanup deadline',async()=>{
+  let now=0;const clock:ModeDocumentClock={now:()=>now,setTimer:()=>0,clearTimer:()=>{now=2000}};
+  const h=createModeDocumentHandler({profiles:[profile],runtime:{controllerSha256:'a'.repeat(64)},clock,fetch:async()=>json()});const r=await h.handle(request());expect(r.status).toBe(503);expect(await r.text()).not.toContain('<script');await h.close();
+ });
+});
