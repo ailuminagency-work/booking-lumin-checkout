@@ -1,18 +1,13 @@
+/// <reference types="vite/client" />
 import { Component } from "react";
+import { FlowPortal } from "./flows/FlowPortal";
+import { ModeOwnerPortal } from "./flows/ModeOwnerPortal";
+import { ConnectedPortal } from "./connected/ConnectedPortal";
 import type { ErrorInfo, ReactNode } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PortalProvider } from "./components/PortalProvider";
-import { AvailabilityPage } from "./pages/Availability";
-import { BookingsPage } from "./pages/Bookings";
-import { CheckoutConfigPage } from "./pages/CheckoutConfig";
-import { CustomersPage } from "./pages/Customers";
-import { DashboardPage } from "./pages/Dashboard";
-import { IntegrationsPage } from "./pages/Integrations";
-import { MediaLibraryPage } from "./pages/MediaLibrary";
-import { ResourcesPage } from "./pages/Resources";
-import { ServiceDetailPage, ServicesPage } from "./pages/Services";
-import { SettingsPage } from "./pages/Settings";
+import { LegacyRedirects, PortalRoutes } from "./components/PortalRoutes";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -46,36 +41,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   }
 }
 
+/** Shared route context; mode determines data access, never a fallback to demo. */
+export function PortalApplication() {
+  return <><LegacyRedirects />{import.meta.env.VITE_MODE_OWNER_LOCAL_HARNESS === "true" ? <ModeOwnerPortal ownerApiUrl={import.meta.env.VITE_MODE_OWNER_API_URL ?? ""} draftApiUrl={import.meta.env.VITE_MODE_OWNER_DRAFT_API_URL ?? ""} /> : import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true" ? <FlowPortal apiUrl={import.meta.env.VITE_FLOW_API_URL ?? ""} /> : import.meta.env.VITE_RUNTIME_MODE === "supabase" ?
+    <ConnectedPortal config={{
+      url: import.meta.env.VITE_SUPABASE_URL ?? "",
+      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
+      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+    }} /> : <PortalProvider><Layout><PortalRoutes mode="demo" /></Layout></PortalProvider>}</>;
+}
+
 export function App() {
-  return (
-    <ErrorBoundary>
-      <PortalProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<DashboardPage />} />
-              <Route path="bookings" element={<BookingsPage />} />
-              <Route path="customers" element={<CustomersPage />} />
-              <Route path="services" element={<ServicesPage />} />
-              <Route path="services/:serviceId" element={<ServiceDetailPage />} />
-              <Route path="availability" element={<AvailabilityPage />} />
-              <Route path="resources" element={<ResourcesPage />} />
-              <Route path="media" element={<MediaLibraryPage />} />
-              <Route path="checkout" element={<CheckoutConfigPage />} />
-              <Route path="integrations" element={<IntegrationsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route
-                path="*"
-                element={
-                  <div className="empty-state" role="status">
-                    <p className="empty-state-title">Page not found</p>
-                  </div>
-                }
-              />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </PortalProvider>
-    </ErrorBoundary>
-  );
+  return <ErrorBoundary><BrowserRouter basename={import.meta.env.BASE_URL}><PortalApplication /></BrowserRouter></ErrorBoundary>;
 }

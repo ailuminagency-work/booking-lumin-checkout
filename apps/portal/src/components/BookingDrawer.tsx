@@ -133,7 +133,7 @@ export function BookingDrawer({ bookingId, onClose }: { bookingId: string; onClo
       <section aria-labelledby={`bd-actions-${booking.id}`} className="drawer-actions">
         <h3 id={`bd-actions-${booking.id}`}>Actions</h3>
         {nextStates.length === 0 ? (
-          <p className="muted">This booking is in a terminal state — no further transitions.</p>
+          <p className="muted">No manual actions are available. Payment states are managed by the payment system.</p>
         ) : (
           <div className="action-row" data-testid="transition-actions">
             {nextStates.map((to) => (
@@ -153,3 +153,4 @@ export function BookingDrawer({ bookingId, onClose }: { bookingId: string; onClo
     </aside>
   );
 }
+
