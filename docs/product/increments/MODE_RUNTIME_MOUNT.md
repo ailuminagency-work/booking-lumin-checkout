@@ -1,4 +1,6 @@
-# T4 classic loader mount and ownership proposal
+# T4 classic loader mount and ownership annex
+
+Status: adopted by consolidated design review8ab1fe and the Root implementation freeze in MODE_RUNTIME_CONTRACT.md. Actual runtime acceptance remains pending. The original proposal introduction is retained below as history.
 
 Author: Curie `/root/allocator_harness_builder`. Proposal only, for root incorporation and independent review; no implementation, file reservation, session action or acceptance claim. Read actual root HEAD `5f41292a35a745b9607f2af7d1c943eebcc35195`, `packages/contracts/src/installation.ts`, handoff EE454B2B80BE9CE64AECF742F985CFC395B20DA325D2F2B7E5ADB36F2ADEA516 and its independent next-runtime review. Root identifies that predecessor as accepted; older pending-CI wording in the historical handoff is not this proposal's current status.
 

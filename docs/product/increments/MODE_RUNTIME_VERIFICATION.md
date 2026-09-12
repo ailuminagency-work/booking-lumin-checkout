@@ -1,4 +1,6 @@
-# T4 runtime verification proposal
+# T4 runtime verification annex
+
+Status: frozen acceptance requirements under consolidated design review8ab1fe, the Root implementation freeze and the explicit redirect correction below. Actual runtime, CI and Release gates remain pending. The original proposal introduction and decision prompts are retained as history; the consolidated contract and its later clarifications govern.
 
 Author Maxwell, independent verifier. Design only; no code, package, registry, database, browser run or acceptance change. Exclusive external document. Read mode-policy-next-runtime-handoff.md and mode-policy-next-runtime-review.md, actual composeInstall/message contracts, accepted document artifact validator and final PR69 CI review.
 

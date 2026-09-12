@@ -1,6 +1,8 @@
 # T4 executable runtime contract proposal — revision 1
 
-Status: proposed, not frozen. Root Program/Integration Governor, based on reviewed PR69 candidate5f41292a35a745b9607f2af7d1c943eebcc35195. Fresh remote28333a confirms protectedmain152bb, PR69open/draft/exact5f41292 and all3CIjobsSUCCESS. No production source edits or next implementation dispatch until independent review closes the six decisions. Preserve T1 protocol and all PR69 regression tests. This parent increment must deliver actual assets, documents and browser integration, not claim completion from controller unit tests.
+Status: frozen implementation design under consolidated review8ab1fe and the Root implementation freeze below. Runtime, CI and Release acceptance remain pending.
+
+Historical revision1 introduction, superseded by the later freeze: proposed, not frozen. Root Program/Integration Governor, based on reviewed PR69 candidate5f41292a35a745b9607f2af7d1c943eebcc35195. Fresh remote28333a confirms protectedmain152bb, PR69open/draft/exact5f41292 and all3CIjobsSUCCESS. No production source edits or next implementation dispatch until independent review closes the six decisions. Preserve T1 protocol and all PR69 regression tests. This parent increment must deliver actual assets, documents and browser integration, not claim completion from controller unit tests.
 
 ## Asset graph and trusted authority
 
