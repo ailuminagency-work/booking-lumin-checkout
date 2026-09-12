@@ -173,10 +173,25 @@ test('runtime-03 duplicate and late scripts preserve independent channels', asyn
   });
   await expect(j.page.locator('iframe')).toHaveCount(2);
   expect((await messages(j.page)).filter(x => x.type === 'lumin:ready')).toHaveLength(2);
-  phase='CHANNEL_LATE_INSERTION';
-  await appendSnippet(j.page, snippet);
+  phase='CHANNEL_LATE_SCRIPT';
+  try { await appendSnippet(j.page, snippet); }
+  catch (error) {
+    if (error instanceof Error && error.message.includes('SCRIPT_LOAD_TIMEOUT')) phase='CHANNEL_LATE_SCRIPT_TIMEOUT';
+    else if (error instanceof Error && error.message.includes('SCRIPT_LOAD_FAILED')) phase='CHANNEL_LATE_SCRIPT_FAILED';
+    throw error;
+  }
+  phase='CHANNEL_LATE_FRAME_COUNT';
   await expect(j.page.locator('iframe')).toHaveCount(3);
-  for (const f of j.page.frames().slice(1)) await ready(f);
+  phase='CHANNEL_LATE_OLD_ZERO'; await ready(frames[0]!);
+  phase='CHANNEL_LATE_OLD_ONE'; await ready(frames[1]!);
+  phase='CHANNEL_LATE_NAVIGATION';
+  const lateHandle = await j.page.locator('iframe').nth(2).elementHandle();
+  const lateFrame = await lateHandle!.contentFrame(); expect(lateFrame).not.toBeNull();
+  // An inserted iframe can still be about:blank when its parent loader's load event fires.
+  // Observe its real document navigation before evaluating controller state in that realm.
+  await lateFrame!.waitForURL(j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId, {timeout:5000});
+  await lateFrame!.waitForLoadState('domcontentloaded', {timeout:5000});
+  phase='CHANNEL_LATE_CHILD_READY'; await ready(lateFrame!);
   phase='CHANNEL_LATE_READY_MESSAGES';
   await expect.poll(async () => (await messages(j.page)).filter(x => x.type === 'lumin:ready').length).toBe(3);
   const final = (await messages(j.page)).filter(x => x.type === 'lumin:ready');
