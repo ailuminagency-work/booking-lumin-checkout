@@ -1,6 +1,6 @@
 # Dedicated installation runtime: T4
 
-Status: BUILDING / actual browser verification pending. Full W3 capability and hosted acceptance remain incomplete.
+Status: BUILDING / local tests, artifacts and independent Runtime review passed; exact-candidate CI and Release pending. Full W3 capability and hosted acceptance remain incomplete.
 
 ## Protected foundation
 
@@ -14,11 +14,13 @@ Contract: MODE_RUNTIME_CONTRACT.md with MODE_RUNTIME_MOUNT.md and MODE_RUNTIME_V
 
 Parent author83445f2fca3c21d92f128fc598264d743e84e028 integrated asb985c84 after54 controlled tests and Maxwell independent/domain review08b5cc. Root asset boundary22 tests and build/evidence/runner45 tests pass locally. Curie independently approved build/assets with actual emitted-code and size/junction controls; Chandrasekhar independently approved the runner/evidence/CI tooling scope.
 
-Independent child review reproduced success delivered before a throwing stream release. Repaired by Chandrasekhar and independently replayed by Curie; a second diagnostic-write startup defect was also fixed before independent approval. Child author8ebbb41ad24b2d55549c6d5e181daa7eaaba4ebe integrated as5007ba3 after final source/domain review905931. The owned-browser noDefaults fixture subsequently passed actual runtime13 visibility/navigation checks (cb67ae), including native privacy checks after shutdown. A later all-case diagnostic executed all16 cases with14 passed and03/15 failed. Both test corrections passed independent source review; corrected full runs remain pending. No substituted visibility or partial-suite acceptance is claimed.
+Independent child review reproduced success delivered before a throwing stream release. Repaired by Chandrasekhar and independently replayed by Curie; a second diagnostic-write startup defect was also fixed before independent approval. Child author8ebbb41ad24b2d55549c6d5e181daa7eaaba4ebe integrated as5007ba3 after final source/domain review905931. The final browser suite passed all 16 cases in each fresh disposable database layout, including real visibility, native privacy, source/correlation attacks and SQL checks. Returned observation defects and partial runs are retained in MODE_RUNTIME_LOCAL_EVIDENCE.md; partial runs are not acceptance evidence.
 
 ## Remaining gates
 
-Child cleanup/single-owner controls and independent review passed. Integrated1688 unit tests, workspace types and application builds pass. Finish all16 actual-browser cases and real SQL/HTTPS controls in both fresh disposable layouts; validate private-output failure controls; verify unchanged document regressions; complete integrated tests and local Runtime Guardian review. Then push the tested review branch and open its stacked draft PR to trigger the pull-request CI workflow. Bounded Release review requires all four exact-candidate CI jobs to pass. Changes reopen affected gates.
+Local unit verification covers 1,737 distinct passing tests across the retained failed default-parallel run and unchanged one-worker replays of its two affected packages. Both layouts passed nine native HTTP groups and all 16 browser cases. Types, builds, independent adversarial controls and forced privacy controls passed. The unchanged collector and independent Runtime review passed for all fourteen fixed artifacts and final canonical source mappings. See MODE_RUNTIME_LOCAL_EVIDENCE.md for actual identities, returned failures and proof boundaries. All four exact-candidate CI jobs and bounded Release review remain required. Full W3 and hosted acceptance remain open.
+
+The next independent W4 leaf is a persisted owner dated-shift editor using existing roster endpoints. Its exact contract is under review; no worker Auth, DST scheduling or full W4 completion is implied.
 
 ## Infrastructure evidence
 
