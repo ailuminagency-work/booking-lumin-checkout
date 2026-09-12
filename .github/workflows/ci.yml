@@ -48,7 +48,7 @@ jobs:
         run: psql -h localhost -U postgres -d postgres -c 'create database lumin_test;'
       - name: Apply local harness
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/local_harness.sql
-      - name: Apply migrations 0001..0009 in order (excluding _deferred)
+      - name: Apply all active migrations 0001..0030 in order (excluding _deferred)
         run: |
           for f in supabase/migrations/0*.sql; do
             echo "applying $f"
@@ -56,3 +56,28 @@ jobs:
           done
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
+      - name: Run domain security suites (each transactional; fails on any FAIL)
+        run: |
+          for s in \
+            platform_financial_minimization_tests \
+            capacity_tests \
+            resource_rls_tests \
+            resource_tenant_integrity_tests \
+            resource_quantity_tests \
+            worker_roster_tests \
+            owner_roster_snapshot_tests \
+            planning_policy_tests \
+            carrier_direct_write_tests \
+            group_lifecycle_tests \
+            group_financial_boundary_tests \
+            planning_allocator_tests \
+            crypto_extension_binding_tests \
+            bound_flow_tests \
+            configurable_flow_tests \
+            flow_storage_tests \
+            outbox_tests \
+            mode_installations_tests \
+            mode_flow_session_tests; do
+            echo "running $s"
+            psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
+          done
