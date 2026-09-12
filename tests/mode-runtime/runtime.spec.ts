@@ -85,6 +85,8 @@ async function eightReady(page: Page, origin: string, route: string, snippet: st
     await appendSnippet(page, snippet); await expect(page.locator('iframe')).toHaveCount(count);
     await ready(await freshRuntimeFrame(page, count - 1, expectedUrl));
   }
+  phase='PRIME_READY_MESSAGES';
+  await expect.poll(async () => (await messages(page)).filter(x=>x.type==='lumin:ready').length).toBe(8);
   phase = callerPhase;
 }
 async function publicStorage(page: Page) {
@@ -298,7 +300,7 @@ test('runtime-06 delayed real init traffic converges once and expired delivery c
   expect((await messages(j.page)).filter(x => x.type === 'lumin:ready')).toHaveLength(0); await j.unchanged();
 }));
 test('runtime-07 actual child, sibling and stale-source attacks leave the live channel intact', async ({ journey: j }) => guarded(async () => {
-  phase='SOURCE_ATTACKS';
+  phase='SOURCE_SETUP';
   await observe(j.page);
   await j.page.addInitScript(() => {
     addEventListener('message', event => {
@@ -310,46 +312,61 @@ test('runtime-07 actual child, sibling and stale-source attacks leave the live c
     });
   });
   await j.page.goto(j.local.addresses.merchant + j.local.registerPage(await j.local.snippet(j.w)));
-  const f = await child(j.page); await ready(f);
+  const expectedUrl = j.local.addresses.renderer + '/embed/flow/' + j.w.iframe.installationId;
+  const f = await freshRuntimeFrame(j.page, 0, expectedUrl); await ready(f);
   await j.page.waitForTimeout(1100);
+  phase='SOURCE_INITIAL_READY_MESSAGES';
+  await expect.poll(async () => (await messages(j.page)).filter(x=>x.type==='lumin:ready').length).toBe(1);
   const record = (await messages(j.page)).find(x => x.type === 'lumin:ready')!;
   const before = await j.page.locator('iframe').getAttribute('height');
   // Correct source/origin reach the parser. The oversized known field is deliberately invalid too;
   // valid-schema byte-cap reachability remains the controlled parser proof, not inferred here.
   expect(new TextEncoder().encode('\u{1F642}'.repeat(1025)).byteLength).toBeGreaterThan(1024);
+  phase='SOURCE_MALFORMED';
   for (const change of [
     { height: 319 }, { height: 1601 }, { height: 400.5 }, { height: 400, protocolVersion: 2 },
     { height: 400, unknown: true }, { height: 400, instanceId: '0'.repeat(32) },
     { height: 400, installationId: '00000000-0000-4000-8000-000000000000' },
     { height: 400, installationId: 'INVALID' }, { height: 400, instanceId: '\u{1F642}'.repeat(1025) },
   ]) await resizeFrom(f, record, j.local.addresses.merchant, change);
+  phase='SOURCE_PARENT_WINDOW';
   // Parent's own window has the wrong source/origin, independently of malformed schema.
   await j.page.evaluate(record => window.postMessage({ ...record, type: 'lumin:resize', protocolVersion: 1, height: 777 }, location.origin), record);
   await quietHeight(j.page, before);
+  phase='SOURCE_SIBLING_NAVIGATION';
   // A real other-origin sibling still has the wrong WindowProxy for the first channel.
   const extra = j.local.registerPage('<h1>Sibling fixture</h1>');
   await j.page.evaluate(url => { const el = document.createElement('iframe'); el.id = 'sibling'; el.src = url; document.body.append(el); }, j.local.addresses.second + extra);
-  await expect.poll(() => j.page.frames().some(x => x.url() === j.local.addresses.second + extra)).toBe(true);
-  const sibling = j.page.frames().find(x => x.url() === j.local.addresses.second + extra)!;
+  await expect(j.page.locator('iframe')).toHaveCount(2);
+  const sibling = await freshRuntimeFrame(j.page, 1, j.local.addresses.second + extra);
+  phase='SOURCE_SIBLING_MESSAGE';
   await resizeFrom(sibling, record, j.local.addresses.merchant, { height: 777 });
   await quietHeight(j.page, before);
   await j.page.locator('#sibling').evaluate(e => e.remove());
+  phase='SOURCE_VALID_RESIZE';
   await resizeFrom(f, record, j.local.addresses.merchant, { height: 731 });
   await expect(j.page.locator('iframe')).toHaveAttribute('height', '731');
+  phase='SOURCE_STALE_DELIVERY';
   // Real queued child traffic becomes stale during earlier listener disposal; no source is forged.
   await j.page.evaluate(() => { (window as unknown as { __disposeOnResize: boolean }).__disposeOnResize = true; });
   await resizeFrom(f, record, j.local.addresses.merchant, { height: 777 });
   await expect.poll(() => j.page.evaluate(() => (window as unknown as { __disposeOnResize: boolean }).__disposeOnResize)).toBe(false);
-  const current = await child(j.page); await ready(current);
+  phase='SOURCE_REMOUNT_NAVIGATION';
+  await expect(j.page.locator('iframe')).toHaveCount(1);
+  const current = await freshRuntimeFrame(j.page, 0, expectedUrl);
+  phase='SOURCE_REMOUNT_READY'; await ready(current);
+  phase='SOURCE_REMOUNT_MESSAGES';
+  await expect.poll(async () => (await messages(j.page)).filter(x=>x.type==='lumin:ready').length).toBe(2);
   const latest = (await messages(j.page)).filter(x => x.type === 'lumin:ready').at(-1)!;
   expect(latest.instanceId).not.toBe(record.instanceId);
+  phase='SOURCE_OLD_CORRELATION';
   // Old correlation is rejected even when sent by the new live child.
   await j.page.waitForTimeout(1100);
   const currentHeight = await j.page.locator('iframe').getAttribute('height');
   await resizeFrom(current, record, j.local.addresses.merchant, { height: 777 });
   await quietHeight(j.page, currentHeight);
   expect((await messages(j.page)).filter(x => x.type === 'lumin:ready')).toHaveLength(2);
-  await j.unchanged();
+  phase='SOURCE_DATABASE'; await j.unchanged();
 }));
 test('runtime-08 real measurements and hostile bursts enforce both resize limits', async ({ journey: j }) => guarded(async () => {
   phase='MEASUREMENTS';
@@ -447,8 +464,10 @@ test('runtime-09 eight slots deny allocation and explicit replacement creates a 
     return { removed: api.unmount(containers[0]!), mounted: api.mount(containers[8]!) };
   });
   expect(replaced).toEqual({ removed: true, mounted: 'mounted' });
+  phase='CAPACITY_REPLACEMENT_READY';
   await expect(j.page.locator('iframe')).toHaveCount(8);
-  for (const f of j.page.frames().slice(1)) await ready(f);
+  for (let index=0;index<8;index++) await ready(await freshRuntimeFrame(j.page,index,j.local.addresses.renderer+'/embed/flow/'+j.w.iframe.installationId));
+  await expect.poll(async () => (await messages(j.page)).filter(x=>x.type==='lumin:ready').length).toBe(9);
   const final = (await messages(j.page)).filter(x => x.type === 'lumin:ready'); expect(final).toHaveLength(9);
   expect(new Set(final.map(x => x.instanceId)).size).toBe(9); await j.unchanged();
 }));
@@ -498,7 +517,10 @@ test('runtime-10 actual blocked policy backends remain bounded through repeated 
   await j.page.waitForTimeout(600);
   expect((await messages(j.page)).filter(x => x.type === 'lumin:ready')).toHaveLength(initialReady);
   expect(await j.page.evaluate(() => (window as unknown as {BookingLumin:{mount(e:Element):string}}).BookingLumin.mount(document.querySelector('div[data-booking-lumin-installation]')!))).toBe('mounted');
-  await ready(await child(j.page));
+  phase='BACKEND_NEW_GENERATION';
+  await expect(j.page.locator('iframe')).toHaveCount(1);
+  await ready(await freshRuntimeFrame(j.page,0,j.local.addresses.renderer+'/embed/flow/'+j.w.iframe.installationId));
+  await expect.poll(async () => (await messages(j.page)).filter(x=>x.type==='lumin:ready').length).toBe(initialReady+1);
   expect((await messages(j.page)).filter(x => x.type === 'lumin:ready')).toHaveLength(initialReady + 1);
   expect(j.local.backend.peak).toBeLessThanOrEqual(2); await j.unchanged();
 }));
@@ -689,7 +711,11 @@ test('runtime-15 no credentials storage messages or session attempts', async ({ 
     const api = (window as unknown as {BookingLumin:{unmount(e:Element):boolean;mount(e:Element):string}}).BookingLumin;
     const container=document.querySelector('div[data-booking-lumin-installation]')!;api.unmount(container);api.mount(container);
   });
-  await ready(await child(j.page)); await publicStorage(j.page); await strictProtocol(j.page); expect(await j.context.cookies()).toEqual([]);
+  phase='PRIVACY_REMOUNT';
+  await expect(j.page.locator('iframe')).toHaveCount(1);
+  await ready(await freshRuntimeFrame(j.page,0,childUrl));
+  await expect.poll(async () => (await messages(j.page)).filter(x=>x.type==='lumin:ready').length).toBe(2);
+  await publicStorage(j.page); await strictProtocol(j.page); expect(await j.context.cookies()).toEqual([]);
   const allowed = new Set(['BEGIN ISOLATION LEVEL READ COMMITTED', "SET LOCAL statement_timeout='5s'", "SET LOCAL lock_timeout='5s'", "SET LOCAL idle_in_transaction_session_timeout='1s'", 'SET LOCAL ROLE service_role', 'SELECT public.mode_public_installation_policy($1::uuid) AS result', 'SET CONSTRAINTS ALL IMMEDIATE', 'COMMIT']);
   expect(j.local.queries.length).toBeGreaterThan(0); expect(j.local.queries.every(sql=>allowed.has(sql))).toBe(true);
   expect(j.local.queries.some(sql=>sql==='SELECT public.mode_public_installation_policy($1::uuid) AS result')).toBe(true);
