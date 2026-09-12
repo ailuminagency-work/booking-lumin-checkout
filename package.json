@@ -2,7 +2,7 @@
   "name": "booking-lumin-checkout",
   "private": true,
   "version": "0.1.0",
-  "description": "Booking Lumin Checkout — multi-tenant booking & checkout platform (clean-room)",
+  "description": "Booking Lumin Checkout \u2014 multi-tenant booking & checkout platform (clean-room)",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -12,7 +12,9 @@
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "build:preview": "node scripts/build-preview.mjs",
-    "test:mode-owner-browser": "node scripts/run-mode-owner-browser.mjs"
+    "test:mode-owner-browser": "node scripts/run-mode-owner-browser.mjs",
+    "test:mode-document-http": "node scripts/run-mode-document-http.mjs",
+    "test:mode-document-browser": "node scripts/run-mode-document-browser.mjs"
   },
   "engines": {
     "node": ">=24 <25"

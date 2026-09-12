@@ -270,3 +270,12 @@ describe('bounded reader and configuration', () => {
    expect(fetcher).toHaveBeenCalledTimes(1); expect(callbacks).toHaveLength(1);
    callbacks[0]!(); expect((await h.handle(request())).status).toBe(503); await h.close();
  });
+
+ it.each([1999,2000])('final cleanup at%s cannot deliver a document after its2s deadline', async finishTime => {
+   let now=0;
+   const clock: ModeDocumentClock = { now:()=>now, setTimer:()=>undefined, clearTimer(){now=finishTime;} };
+   const h=createModeDocumentHandler({profiles:[profile],clock,fetch:async()=>json()});
+   const result=await h.handle(request());expect(result.status).toBe(finishTime===1999?200:503);
+   if(finishTime===2000)expect(await result.text()).not.toContain('lumin-mode-bootstrap');
+   await h.close();
+ });
