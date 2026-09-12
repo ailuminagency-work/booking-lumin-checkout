@@ -48,6 +48,8 @@ export interface CheckoutState {
   step: Step;
   selection: Selection | null;
   slot: Slot | null;
+  /** Shared wizard guard while the selected time is being revalidated. */
+  slotAvailabilityPending: boolean;
   customerDraft: CustomerDraft;
   customer: CustomerDetails | null;
   address: Address | null;
@@ -72,6 +74,8 @@ export type CheckoutAction =
   | { type: "SELECT_SERVICE"; service: Service }
   | { type: "SET_SELECTION"; selection: Selection }
   | { type: "SET_SLOT"; slot: Slot }
+  | { type: "CLEAR_SLOT" }
+  | { type: "SLOT_AVAILABILITY_PENDING"; pending: boolean }
   | { type: "SET_CUSTOMER_DRAFT"; patch: Partial<CustomerDraft> }
   | { type: "CONFIRM_CUSTOMER"; customer: CustomerDetails; address: Address | null }
   | { type: "GOTO"; step: Step }
@@ -107,6 +111,7 @@ export function createFreshState(): CheckoutState {
     step: "service",
     selection: null,
     slot: null,
+    slotAvailabilityPending: false,
     customerDraft: emptyCustomerDraft(),
     customer: null,
     address: null,
@@ -129,10 +134,11 @@ export function createFreshState(): CheckoutState {
  */
 function invalidateBooking(state: CheckoutState): Pick<
   CheckoutState,
-  "booking" | "intentId" | "paymentStatus" | "idempotencyKey"
+  "booking" | "intentId" | "paymentStatus" | "idempotencyKey" | "slotAvailabilityPending"
 > {
   return {
     booking: null,
+    slotAvailabilityPending: false,
     intentId: null,
     paymentStatus: "idle",
     idempotencyKey: state.booking != null ? createIdempotencyKey() : state.idempotencyKey,
@@ -166,6 +172,10 @@ export function checkoutReducer(state: CheckoutState, action: CheckoutAction): C
         slot: null,
         ...invalidateBooking(state),
       };
+    case "CLEAR_SLOT":
+      return { ...state, slot: null, ...invalidateBooking(state) };
+    case "SLOT_AVAILABILITY_PENDING":
+      return state.slotAvailabilityPending === action.pending ? state : { ...state, slotAvailabilityPending: action.pending };
     case "SET_SLOT":
       return {
         ...state,
@@ -187,7 +197,7 @@ export function checkoutReducer(state: CheckoutState, action: CheckoutAction): C
       };
     }
     case "GOTO":
-      return { ...state, step: action.step, stepMessage: null };
+      return { ...state, step: action.step, stepMessage: null, slotAvailabilityPending: action.step === "slot" };
     case "ATTEMPT":
       return { ...state, attempted: { ...state.attempted, [action.step]: true } };
     case "BOOKING_CREATED":
@@ -250,6 +260,8 @@ export function loadPersistedState(): CheckoutState | null {
       media: Array.isArray(parsed.media) ? parsed.media : base.media,
       // Never restore a mid-flight or failed payment as anything but idle.
       paymentStatus: parsed.paymentStatus === "succeeded" ? "succeeded" : "idle",
+      // Persisted time selections are not current availability evidence.
+      slotAvailabilityPending: parsed.step === "slot",
       stepMessage: null,
     };
   } catch {

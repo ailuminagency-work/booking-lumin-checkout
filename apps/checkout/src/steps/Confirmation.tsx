@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { addMoney } from "@lumin/contracts";
 import { useCheckout } from "../state/checkout";
 import { display } from "../lib/i18n";
 
@@ -86,7 +87,7 @@ export function Confirmation() {
           )}
           <div className="price-total-row grand">
             <dt>Paid</dt>
-            <dd>{display.money(booking.pricing.total)}</dd>
+            <dd>{display.money(addMoney(booking.pricing.total, booking.pricing.deposit))}</dd>
           </div>
         </dl>
       </div>

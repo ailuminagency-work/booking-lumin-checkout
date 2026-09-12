@@ -50,7 +50,7 @@ export function WizardControls() {
         );
       }
       case "slot":
-        return state.slot != null;
+        return state.slot != null && !state.slotAvailabilityPending;
       case "customer":
         return validateCustomerDraft(state.customerDraft).ok;
       default:
