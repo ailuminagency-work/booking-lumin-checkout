@@ -1,0 +1,5 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { installRuntimeBrowser } from './install-mode-runtime-browser.mjs';
+test('full runtime install preserves scoped cache and accepted bounded installer',async()=>{let call;const result=await installRuntimeBrowser({root:process.cwd(),env:{CI:'true'},platform:'linux',cacheFor:async()=>'/fixed-cache',run:async(...args)=>{call=args;return {status:'passed',category:'COMPLETE'};}});assert.equal(result.status,'passed');assert.ok(call[1].includes('--with-deps'));assert.ok(call[1].includes('chromium'));assert.ok(!call[1].includes('--only-shell'));assert.equal(call[2].env.PLAYWRIGHT_BROWSERS_PATH,'/fixed-cache');assert.equal(call[2].timeoutMs,300000);});
+test('download mirror aliases fail before cache or process allocation',async()=>{for(const key of ['PLAYWRIGHT_DOWNLOAD_HOST','npm_config_playwright_chromium_download_host']){const result=await installRuntimeBrowser({root:process.cwd(),env:{[key]:'https://forbidden.test'},cacheFor:async()=>{assert.fail('cache allocated');},run:async()=>{assert.fail('process launched');}});assert.equal(result.status,'failed');}});
