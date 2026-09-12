@@ -248,6 +248,66 @@ select pg_temp.assert(
   'T7b the stale hold was reaped to expired and the new hold is live');
 
 -- ----------------------------------------------------------------------------
+-- T8 — capacity-mutation resync closes the denormalization desync (§6 review
+-- finding): is_exclusive is forced only on reservation write, so a pooled
+-- resource that already holds overlapping active reservations must not be
+-- downgradable to capacity=1 leaving stale is_exclusive=false rows that escape
+-- the EXCLUDE. The AFTER-UPDATE-OF-capacity resync re-forces the flag and the
+-- EXCLUDE refuses such a downgrade; a single-hold downgrade re-forces true; an
+-- upgrade re-forces false. Caller-independent — this is a direct capacity write.
+-- ----------------------------------------------------------------------------
+insert into public.resources (id, tenant_id, name, kind, capacity, active) values
+  ('c1000000-0000-4000-8000-0000000000e8', 'c1000000-0000-4000-8000-000000000001', 'Flex Bay', 'bay', 3, true);
+insert into public.resource_reservations
+  (tenant_id, resource_id, booking_id, slot_start, slot_end, hold_key, status, expires_at)
+values
+  ('c1000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-0000000000e8',
+   'c1000000-0000-4000-8000-000000000020', '2040-02-01T10:00Z', '2040-02-01T11:00Z',
+   'k80', 'held', now() + interval '15 minutes'),
+  ('c1000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-0000000000e8',
+   'c1000000-0000-4000-8000-000000000021', '2040-02-01T10:30Z', '2040-02-01T11:30Z',
+   'k81', 'held', now() + interval '15 minutes');
+select pg_temp.assert(
+  (select count(*) = 2 from public.resource_reservations
+     where resource_id = 'c1000000-0000-4000-8000-0000000000e8'),
+  'T8a pooled resource holds two overlapping active reservations at capacity 3');
+
+select pg_temp.reject($q$
+  update public.resources set capacity = 1
+   where id = 'c1000000-0000-4000-8000-0000000000e8'
+$q$, '23P01', 'T8b capacity downgrade to 1 refused while overlapping active holds exist (no stale-flag oversell)');
+
+select pg_temp.assert(
+  (select capacity = 3 from public.resources where id = 'c1000000-0000-4000-8000-0000000000e8'),
+  'T8c refused downgrade rolled back — resource stays pooled (capacity 3)');
+
+-- With a SINGLE active reservation, the downgrade succeeds and re-forces is_exclusive.
+delete from public.resource_reservations
+  where resource_id = 'c1000000-0000-4000-8000-0000000000e8'
+    and booking_id = 'c1000000-0000-4000-8000-000000000021';
+update public.resources set capacity = 1 where id = 'c1000000-0000-4000-8000-0000000000e8';
+select pg_temp.assert(
+  (select is_exclusive from public.resource_reservations
+     where resource_id = 'c1000000-0000-4000-8000-0000000000e8'),
+  'T8d single-reservation downgrade succeeds and re-forces is_exclusive = true');
+
+select pg_temp.reject($q$
+  insert into public.resource_reservations
+    (tenant_id, resource_id, booking_id, slot_start, slot_end, hold_key, status, expires_at)
+  values
+    ('c1000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-0000000000e8',
+     'c1000000-0000-4000-8000-000000000022', '2040-02-01T10:15Z', '2040-02-01T11:15Z',
+     'k82', 'held', now() + interval '15 minutes')
+$q$, '23P01', 'T8e post-downgrade the now-exclusive resource rejects an overlapping reservation');
+
+update public.resources set capacity = 3 where id = 'c1000000-0000-4000-8000-0000000000e8';
+select pg_temp.assert(
+  (select not is_exclusive from public.resource_reservations
+     where resource_id = 'c1000000-0000-4000-8000-0000000000e8'
+       and booking_id = 'c1000000-0000-4000-8000-000000000020'),
+  'T8f upgrade back to pooled re-forces is_exclusive = false');
+
+-- ----------------------------------------------------------------------------
 -- R1b — the capacity-slot booking backstop (a confirmed booking must reference a
 -- consumed capacity_hold) is DEFERRED, not enforced here (see 0031's foot NOTE):
 -- existing suites and legitimate admin confirms insert confirmed bookings with

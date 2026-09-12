@@ -183,6 +183,53 @@ comment on constraint resource_reservations_no_exclusive_overlap
   'the is_exclusive predicate and keep N-concurrency (reserve_resource_quantity '
   'enforces their N ceiling).';
 
+-- ----------------------------------------------------------------------------
+-- 5. Capacity-mutation resync (closes the denormalization desync).
+--    is_exclusive is forced only on reservation WRITE; resources.capacity is
+--    member-updatable (0012 member_update). Without this, downgrading a pooled
+--    resource (capacity>1) that already has overlapping active reservations to
+--    capacity=1 would leave those rows with a stale is_exclusive=false, escaping
+--    the partial EXCLUDE index — a caller-independent oversell path the backstop
+--    claims to cover. AFTER a capacity change, re-touch this resource's active
+--    reservations so the forcing trigger recomputes is_exclusive from the NEW
+--    capacity. If the downgrade would create an overlap on the now-exclusive
+--    resource, the EXCLUDE raises exclusion_violation and the whole transaction
+--    — including the capacity downgrade — rolls back: the downgrade is REFUSED
+--    while overlapping active holds exist. SECURITY DEFINER + search_path=''
+--    like the write trigger; the reservation trigger's TTL-reap is gated to
+--    pg_trigger_depth()=1 so it does not run at this nested depth.
+create or replace function lumin.resync_reservation_exclusivity()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.capacity is distinct from old.capacity then
+    -- No-op value touch; fires resource_reservations' BEFORE UPDATE trigger,
+    -- which recomputes is_exclusive from public.resources.capacity (= new).
+    update public.resource_reservations
+       set slot_start = slot_start
+     where resource_id = new.id
+       and status in ('held', 'consumed');
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function lumin.resync_reservation_exclusivity() from public, anon, authenticated;
+
+create trigger resources_resync_reservation_exclusivity
+  after update of capacity on public.resources
+  for each row
+  execute function lumin.resync_reservation_exclusivity();
+
+comment on function lumin.resync_reservation_exclusivity() is
+  'P0 OB-STRUCT: on a resources.capacity change, re-forces is_exclusive on the '
+  'resource''s active reservations so a pooled->exclusive downgrade cannot leave '
+  'stale flags that escape the EXCLUDE; a downgrade that would create an overlap '
+  'is refused (exclusion_violation).';
+
 -- ============================================================================
 -- NOTE — SECONDARY capacity-slot backstop DEFERRED (R1b).
 --
