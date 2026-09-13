@@ -34,9 +34,10 @@ begin
  'public.mode_owner_operation(uuid,uuid,uuid,text,text)',
  'public.mode_issue_flow_session(uuid,text,text,text,text,uuid,bigint,bigint)',
  'public.mode_submit_flow_request(text,text,text,text,jsonb,jsonb,timestamp with time zone)',
- 'public.mode_owner_request_history(uuid,uuid,uuid,timestamp with time zone,uuid,integer)'];
- perform pg_temp.ms_assert((select count(*)=11 and bool_and(p.oid=any(array(select x::regprocedure::oid from unnest(signatures)x))) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'mode\_%' escape '\'),'exact combined eleven signatures without unexpected overloads');
- foreach sig in array signatures[9:11] loop
+ 'public.mode_owner_request_history(uuid,uuid,uuid,timestamp with time zone,uuid,integer)',
+ 'public.mode_validate_existing_flow_session(text,uuid,uuid,text,text,text,uuid,bigint,bigint,timestamp with time zone,timestamp with time zone)'];
+ perform pg_temp.ms_assert((select count(*)=12 and bool_and(p.oid=any(array(select x::regprocedure::oid from unnest(signatures)x))) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'mode\_%' escape '\'),'exact combined twelve signatures without unexpected overloads');
+ foreach sig in array signatures[9:12] loop
   perform pg_temp.ms_assert((select prosecdef and proconfig=array['search_path=pg_catalog'] from pg_proc where oid=sig::regprocedure),'new RPC security '||sig);
   perform pg_temp.ms_assert(has_function_privilege('service_role',sig,'EXECUTE') and not has_function_privilege('anon',sig,'EXECUTE') and not has_function_privilege('authenticated',sig,'EXECUTE'),'new RPC grants '||sig);
  end loop;
