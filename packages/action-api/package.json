@@ -19,7 +19,8 @@
     "test:mode-session-transport": "tsx server/mode-session-transport.integration.ts",
     "test:mode-owner-journey": "tsx server/mode-owner-journey.integration.ts",
     "test:mode-session-admission": "tsx server/mode-session-admission.integration.ts",
-    "test:mode-session-validation": "node --import tsx server/mode-session-validation.integration.ts"
+    "test:mode-session-validation": "node --import tsx server/mode-session-validation.integration.ts",
+    "test:mode-session-delivery": "node --import tsx server/mode-session-delivery.integration.ts"
   },
   "dependencies": {
     "@lumin/contracts": "*",

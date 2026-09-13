@@ -437,6 +437,31 @@ jobs:
             timeout --signal=TERM --kill-after=10s 180s npm run test:mode-session-validation --workspace @lumin/action-api
           done
 
+      - name: Verify session delivery coordination with actual PostgreSQL in both crypto layouts
+        timeout-minutes: 7
+        env:
+          LOCAL_HARNESS: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          MODE_SESSIONS_TEST_DISPOSABLE: '1'
+        run: |
+          set -euo pipefail
+          for layout in public extensions; do
+            export PGDATABASE="lumin_mode_session_transport_delivery_${layout}"
+            export MODE_SESSION_TRANSPORT_CRYPTO_LAYOUT="$layout"
+            createdb "$PGDATABASE"
+            if [ "$layout" = extensions ]; then
+              psql -v ON_ERROR_STOP=1 -c 'create schema extensions; create extension pgcrypto with schema extensions;'
+            else
+              psql -v ON_ERROR_STOP=1 -c 'create extension pgcrypto with schema public;'
+            fi
+            psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+            for f in supabase/migrations/0*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+            for suite in flow_storage bound_flow configurable_flow mode_installations mode_flow_session mode_session_validation; do
+              psql -v ON_ERROR_STOP=1 -f "supabase/tests/${suite}_tests.sql"
+            done
+            timeout --signal=TERM --kill-after=10s 180s npm run test:mode-session-delivery --workspace @lumin/action-api
+          done
+
       - name: Verify local owner HTTP isolation and persistence in both crypto layouts
         timeout-minutes: 10
         env:
