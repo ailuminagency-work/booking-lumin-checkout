@@ -6,7 +6,11 @@ export const HOSTED_FAILURE_PHASES = Object.freeze([
   ...['ONE', 'TWO'].flatMap(version => ['INITIAL_READY', 'SHAPE', 'HEADERS', 'BOOTSTRAP', 'FRAME_DENIAL', 'RETURN_READY', 'SNAPSHOT'].map(stage => 'HOSTED_V_' + version + '_' + stage)),
   'HOSTED_CAPTURE', 'HOSTED_FINAL_SNAPSHOT',
 ]);
-const messages = new Map(HOSTED_FAILURE_PHASES.filter(phase => phase !== 'UNKNOWN').map(phase => ['SAFE_RUNTIME_ASSERTION_FAILED_' + phase, phase]));
+const messages = new Map(HOSTED_FAILURE_PHASES.filter(phase => phase !== 'UNKNOWN').flatMap(phase => {
+  const literal = 'SAFE_RUNTIME_ASSERTION_FAILED_' + phase;
+  // Pinned Playwright serializes an ordinary Error with its exact name prefix.
+  return [[literal, phase], ['Error: ' + literal, phase]];
+}));
 /** Project only one exact fixed error literal; never invoke payload accessors or proxy traps. */
 export function hostedFailurePhase(errors) {
   if (isProxy(errors) || !Array.isArray(errors)) return 'UNKNOWN';
