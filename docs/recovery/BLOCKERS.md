@@ -3,6 +3,25 @@
 Ranked for the First Recovery Cycle. Basis `88f7d6f` + live Postgres 16 probes.
 **Priority defs.** P0 = data leakage / tenant collision / payment authority / duplicate booking / overbooking / auth bypass / runtime crash. P1 = core flow broken / onboarding broken / embed broken / worker schedule wrong / invoice wrong / unavailable-shown-available.
 
+## Resolution status (First Recovery Cycle — updated as fixes land)
+
+Each row below is CI-green and independently reviewed; all await the owner's merge (branch-protected `main`). The
+diagnostic table beneath is the untouched baseline — read status here, symptoms there.
+
+| # | id | Pri | State | Closed by | Evidence |
+|---|----|-----|-------|-----------|----------|
+| 1 | OB-STRUCT | P0 | **FIX READY** | R1 `0031` (in #75 tree) | `btree_gist` EXCLUDE on exclusive `resource_reservations` + capacity-mutation resync trigger; `overbooking_backstop_tests` T1–T8 + attack case green. Resource-exclusive half closed structurally. |
+| 4 | AUTH-ENTRYPOINT | P0 | **FIX READY** | R2a #76 | `apps/api` production entrypoint composes the http server with `createSupabaseIdentityVerifier` (real Supabase-JWT), `/health`+`/ready`, env-driven origins, `0.0.0.0`+`PORT`; `local.ts` demoted to dev harness. |
+| 3 | NO-CONFIRM-RUNTIME | P0 | **FIX READY** | R2b #78 | `POST /api/bookings/:id/confirm` — the single, hostable reserve→pay→confirm→consume authority; the only `state='confirmed'` writer. |
+| 5 | PAY-AUTHORITY | P0 | **FIX READY** | R2b #78 | Server-side `PaymentGateway` (mock default; Stripe TEST when `STRIPE_SECRET_KEY` set, secret server-only); charge pinned to the server reprice; decline never confirms; secret never reaches browser/logs. |
+| 6 | CONFIRM-BROKEN | P0 | **FIX READY** | R2b #78 | Confirm consumes the hold atomically in one tx; refund-on-oversell (idempotent) when the hold is lost at confirm time — never a confirmed oversell. |
+| 7 | RESERVE-UNWIRED | P0 | **FIX READY** | R2b #78 | `reserve_capacity`/`reserve_resource`/`consume_hold`/`release_*` now called by the confirm route before any charge; through-API concurrency proven (capacity-1 slot AND exclusive resource ⇒ exactly one confirmed). |
+| 11 | PROFILE-MISSING | P1 | **FIX READY** | R3 #77 | `BusinessProfile` contract+registry (6 verticals) + `tenants.profile_key` (`0032`) + set-once owner-gated `activate_business_profile`; portal/embed archetype+terminology gating (additive). |
+
+**Still open (next in the recovery queue):** #2 OB-LIVE (needs the live-DB cutover — apply `0010–0032` to the runtime project), #8 INVOICE-MISSING, #9 NOTIFY-NOCONSUMER, #10 ONBOARD-MISSING, #12 EMBED-RUNTIME-INERT (point runtime at the #78 confirm route), #13 SVC-AREA-UNGATED, #17 SVC-CRUD-UNWIRED, and the remainder P1/P2. #53 R1b (capacity-slot booking backstop) is unblocked now that #78 makes the confirm route the sole booking writer.
+
+**Merge order for the ready stack:** #75 (coherent tree) → #76 (R2a) → #78 (R2b); #77 (R3) is independent on `integration/consolidated`. Live-infra cutover (Render API from R2a's `render.yaml`, apply migrations to the runtime DB, Stripe TEST keys) follows the merges.
+
 | # | id | Pri | Title | Breaks | Reproduction (file:line / SQL / step) | Fix direction |
 |---|----|-----|-------|--------|---------------------------------------|---------------|
 | 1 | OB-STRUCT | P0 | Overbooking not structurally prevented — no exclusion constraint | Reservation holds; Flow C; all confirmed bookings | Insert two `state='confirmed'` bookings, same capacity-1 slot, **no** `reserve_capacity` call → accepted (`DIRECT-CONFIRMED oversell count = 2`). `resource_reservations` (`0012:99`) has only `unique(booking_id,resource_id)`; `bookings` (`0005`) has no overlap/EXCLUDE constraint. | Add `btree_gist` `EXCLUDE` on `resource_reservations(resource_id WITH =, tstzrange(slot_start,slot_end) WITH &&) WHERE status in ('held','consumed')`; add a confirm-time capacity-assertion trigger on `bookings`. Defense-in-depth independent of the RPC. |
