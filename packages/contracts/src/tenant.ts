@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BusinessProfile } from "./profile";
 
 /**
  * TenantContextContract v1
@@ -50,6 +51,13 @@ export const Tenant = z.object({
   /** Default currency for new services; each service stores its own. */
   currency: z.string().length(3),
   status: z.enum(["active", "inactive", "suspended"]),
+  /**
+   * The tenant's activated business profile (P1 PROFILE-MISSING). NULL until
+   * the owner activates one; SET-ONCE thereafter (DB: tenants.profile_key +
+   * lumin.activate_business_profile). Additive & optional so every existing
+   * Tenant value stays valid.
+   */
+  profileKey: BusinessProfile.nullable().optional(),
   createdAt: z.string().datetime(),
 });
 export type Tenant = z.infer<typeof Tenant>;

@@ -48,7 +48,7 @@ jobs:
         run: psql -h localhost -U postgres -d postgres -c 'create database lumin_test;'
       - name: Apply local harness
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/local_harness.sql
-      - name: Apply all active migrations 0001..0031 in order (excluding _deferred)
+      - name: Apply all active migrations 0001..0032 in order (excluding _deferred)
         run: |
           for f in supabase/migrations/0*.sql; do
             echo "applying $f"
@@ -78,7 +78,8 @@ jobs:
             flow_storage_tests \
             outbox_tests \
             mode_installations_tests \
-            mode_flow_session_tests; do
+            mode_flow_session_tests \
+            business_profile_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done

@@ -1,8 +1,8 @@
 import { Link, useParams } from "react-router-dom";
-import { listTemplates } from "@lumin/templates";
 import { usePortal } from "../components/PortalProvider";
 import { EmptyState, PageHeader } from "../components/ui";
 import { getService, getTenant, listServices, servicePriceFrom, setServiceActive } from "../data/api";
+import { profileGate } from "../data/profile";
 import { fmtMoney } from "../data/i18n";
 
 const ARCHETYPE_LABELS = {
@@ -16,6 +16,8 @@ export function ServicesPage() {
   const { ctx, store } = usePortal();
   const tenant = getTenant(ctx, store);
   const services = listServices(ctx, store);
+  const gate = profileGate(tenant);
+  const catalogTitle = gate.active ? `${gate.profile!.label} templates` : "Adopt a template";
 
   return (
     <div>
@@ -59,14 +61,21 @@ export function ServicesPage() {
 
       <section className="panel" aria-label="Template catalog">
         <div className="panel-header">
-          <h2>Adopt a template</h2>
+          <h2>{catalogTitle}</h2>
         </div>
-        <p className="muted">
-          Preview any @lumin/templates archetype configured for this tenant — one shared engine set,
-          the vertical is the data.
-        </p>
+        {gate.active ? (
+          <p className="muted" data-testid="profile-scope-note">
+            Showing only the archetypes for your <strong>{gate.profile!.label}</strong> profile — one
+            shared engine set, the vertical is the data.
+          </p>
+        ) : (
+          <p className="note-banner" role="note" data-testid="profile-activation-prompt">
+            No business profile is activated yet, so every archetype is shown. Activate a profile to
+            scope this menu to your vertical.
+          </p>
+        )}
         <div className="card-grid" data-testid="template-catalog">
-          {listTemplates().map((t) => {
+          {gate.allowedTemplates.map((t) => {
             const preview = t.build({
               tenantId: ctx.tenantId,
               currency: tenant.currency,
