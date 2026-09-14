@@ -6,10 +6,18 @@ import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
+/** The sole booking-confirm authority (R2b). Derives tenant from the booking +
+ *  verified membership; reprices, reserves-before-pay, confirms+consumes, and
+ *  compensates on oversell. Injected so the seam stays testable and the pure
+ *  flow BFF never embeds payment provider or reserve→confirm logic. */
+export interface ConfirmBookingRequest{actor:string;tenant:string;bookingId:string;idempotencyKey:string;}
+export interface ConfirmBookingResult{reference:string;state:"confirmed"|"failed";amount:number;currency:string;compensated?:boolean;}
 export interface FlowHttpOptions{
  repository:FlowRepository;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
+ /** The single writer of bookings.state='confirmed'. Omitted ⇒ no confirm route. */
+ confirmBooking?:(request:ConfirmBookingRequest)=>Promise<ConfirmBookingResult>;
  ownerOrigins:readonly string[];
  customerOrigins:readonly string[];
  now?:()=>number;
@@ -72,6 +80,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    }
    const lists:Record<string,FlowRpc>={"/api/configurable-flows":"flow_owner_configurable_list","/api/services":"flow_owner_services","/api/flows":"flow_owner_list","/api/requests":"flow_owner_requests"};
    if(req.method==="GET"&&Object.hasOwn(lists,url.pathname)){send(res,200,{ok:true,data:await call(lists[url.pathname]!,[actor,tenant])});return;}
+   // Single booking-confirm authority (R2b): reserve→pay→confirm→consume; the
+   // ONLY path a booking reaches 'confirmed'. Tenant is the verified scope; the
+   // handler re-checks membership and that the booking belongs to it.
+   const confirmMatch=url.pathname.match(/^\/api\/bookings\/([^/]+)\/confirm$/);
+   if(confirmMatch){
+    if(req.method!=="POST"||!options.confirmBooking)throw new FlowError("NOT_AVAILABLE");
+    const bookingId=Uuid.parse(confirmMatch[1]);
+    const body=z.object({idempotencyKey:z.string().min(16).max(128)}).strict().parse(await jsonBody(req));
+    const data=await options.confirmBooking({actor,tenant,bookingId,idempotencyKey:body.idempotencyKey});
+    send(res,200,{ok:true,data});return;
+   }
    const configurable=url.pathname.match(/^\/api\/configurable-flows\/([^/]+)\/(draft|publish)$/);
    if(configurable){
     const flow=Uuid.parse(configurable[1]);

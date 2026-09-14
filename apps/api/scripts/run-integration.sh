@@ -7,9 +7,12 @@
 # acceptance harnesses that exercise the RELOCATED production BFF
 # (createFlowHttpServer + createFlowRepository).
 #
-# Portable pair run here (both must pass):
+# Portable set run here (all must pass):
 #   - pg-http.integration.ts     (owner/customer flow HTTP journey, CAS, idempotency)
 #   - roster-http.integration.ts (roster provision/edit/snapshot over HTTP)
+#   - confirm.integration.ts     (R2b confirm authority: reserve→pay→confirm→consume,
+#                                 through-API concurrency, payment authority, server
+#                                 amount, idempotency, refund-on-oversell, isolation)
 #
 # DEFERRED (run manually; each needs its own disposable DB name + crypto-layout
 # env + raw TCP sockets / backend-PID observation that CI cannot supply reliably):
@@ -41,7 +44,7 @@ export PGDATABASE="${DB}" LOCAL_HARNESS=1 FLOW_TEST_DISPOSABLE=1
 TSX="${ROOT}/node_modules/.bin/tsx"
 
 status=0
-for harness in src/pg-http.integration.ts src/roster-http.integration.ts; do
+for harness in src/pg-http.integration.ts src/roster-http.integration.ts src/confirm.integration.ts; do
   echo "== running ${harness} =="
   if ! "${TSX}" "${harness}"; then
     echo "FAIL: ${harness}"

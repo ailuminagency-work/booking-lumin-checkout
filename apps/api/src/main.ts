@@ -10,15 +10,20 @@
  * start unless every required secret/config value is present, and never logs or
  * echoes a secret.
  *
- * Scope: FOUNDATION only (R2a). It exposes the pre-existing owner/customer flow
- * routes plus unauthenticated `/health` and `/ready`. It adds NO booking-confirm
- * path and writes no `state='confirmed'` — the reserve→pay→confirm authority is a
- * separate follow-up (R2b).
+ * Scope: R2a foundation + the R2b booking-confirm authority. It exposes the
+ * owner/customer flow routes, the authenticated `POST /api/bookings/:id/confirm`
+ * writer (the ONLY path a booking reaches `state='confirmed'`), and
+ * unauthenticated `/health` and `/ready`. The confirm route reprices,
+ * reserves-before-pay, confirms+consumes atomically, and compensates on oversell.
+ * Payment goes through the server-side gateway (mock by default; Stripe TEST when
+ * STRIPE_SECRET_KEY is configured — the secret is read from env, server-only).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { createFlowRepository } from "./repository";
 import { createFlowHttpServer } from "./http";
+import { createConfirmHandler } from "./confirm";
+import { paymentGatewayFromEnv } from "./payment-gateway";
 import { createSupabaseIdentityVerifier } from "./supabase-auth";
 
 /** Read a required env var or fail fast. Never prints the value. */
@@ -98,9 +103,14 @@ function main(): void {
     // Never log connection error detail (may embed the connection string).
   });
 
+  // The server-side payment gateway. Secrets are read from env inside the
+  // gateway (server-only); the browser never sees a secret or publishable key.
+  const paymentGateway = paymentGatewayFromEnv();
+
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     authenticateOwner,
+    confirmBooking: createConfirmHandler(pool, paymentGateway),
     ownerOrigins,
     customerOrigins,
     trustProxy: true, // Behind Render's TLS-terminating proxy (non-loopback peer).
