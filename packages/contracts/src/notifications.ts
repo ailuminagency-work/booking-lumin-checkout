@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EVENT_NAMES } from "./events";
+import { EVENT_NAMES, EventNameSchema } from "./events";
 import { Money } from "./money";
 import { BookingState } from "./booking";
 import { TenantId } from "./tenant";
@@ -26,8 +26,8 @@ import { TenantId } from "./tenant";
 export const NotificationChannel = z.enum(["email", "sms"]);
 export type NotificationChannel = z.infer<typeof NotificationChannel>;
 
-/** Event names as a zod enum, so config/templates can be validated. */
-export const EventNameSchema = z.enum(EVENT_NAMES);
+/** Event-name zod enum: reused from the canonical EventContract (./events),
+ *  never redefined here, so config/templates validate against one source. */
 
 /**
  * What a template renders for. Either a booking-lifecycle EventName or the

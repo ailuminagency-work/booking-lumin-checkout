@@ -5,6 +5,7 @@
  * observability. Names are stable API — renames are breaking changes and
  * require Architecture Governor review.
  */
+import { z } from "zod";
 
 export const EVENT_NAMES = [
   "booking.created",
@@ -27,6 +28,11 @@ export const EVENT_NAMES = [
 ] as const;
 
 export type EventName = (typeof EVENT_NAMES)[number];
+
+/** Canonical zod validator over EVENT_NAMES. Defined once here and reused by
+ *  every contract that validates an event name (notifications, webhooks, …) so
+ *  the barrel never re-exports two colliding `EventNameSchema` symbols. */
+export const EventNameSchema = z.enum(EVENT_NAMES);
 
 export interface AuditEvent {
   id: string;

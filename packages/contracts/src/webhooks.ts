@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TenantId } from "./tenant";
-import { EVENT_NAMES } from "./events";
+import { EventNameSchema } from "./events";
 import { WebhookDeliveryInput } from "./integrations";
 
 /**
@@ -23,8 +23,8 @@ import { WebhookDeliveryInput } from "./integrations";
  * `EventName` from EventContract are reused (this schema is built from them).
  */
 
-/** Zod validator over the canonical, reused `EVENT_NAMES` (never redefined). */
-export const EventNameSchema = z.enum(EVENT_NAMES);
+/** Zod validator over event names: reused from the canonical EventContract
+ *  (./events), never redefined here. */
 
 /** Wildcard token in a subscription filter — matches every event name. */
 export const WEBHOOK_EVENT_WILDCARD = "*" as const;
