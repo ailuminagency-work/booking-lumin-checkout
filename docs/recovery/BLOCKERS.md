@@ -20,7 +20,12 @@ diagnostic table beneath is the untouched baseline — read status here, symptom
 
 **Still open (next in the recovery queue):** #2 OB-LIVE (needs the live-DB cutover — apply `0010–0032` to the runtime project), #8 INVOICE-MISSING, #9 NOTIFY-NOCONSUMER, #10 ONBOARD-MISSING, #12 EMBED-RUNTIME-INERT (point runtime at the #78 confirm route), #13 SVC-AREA-UNGATED, #17 SVC-CRUD-UNWIRED, and the remainder P1/P2. #53 R1b (capacity-slot booking backstop) is unblocked now that #78 makes the confirm route the sole booking writer.
 
-**Merge order for the ready stack:** #75 (coherent tree) → #76 (R2a) → #78 (R2b); #77 (R3) is independent on `integration/consolidated`. Live-infra cutover (Render API from R2a's `render.yaml`, apply migrations to the runtime DB, Stripe TEST keys) follows the merges.
+**Merge order for the ready stack:** #75 (coherent tree) → #76 (R2a) → #78 (R2b); #77 (R3) is independent on `integration/consolidated`. Both #78 and #77 carry a posted independent-review verdict of **APPROVE** (R2b with two tracked follow-ups below; R3 clean).
+
+**Cutover prerequisites (before/at the live-infra cutover):**
+1. **Decommission the legacy Deno edge functions** `supabase/functions/stripe-webhook` and `create-payment-intent` wherever `apps/api` is the confirm authority. `stripe-webhook/index.ts` also writes `bookings.state='confirmed'`; they are the source R2b ports from and are currently **undeployed** (live DB at 0001–0009, no functions), so not a live second writer — but until they are gated off, the single-writer property is convention+deployment, not structural. (R2b review item 1.)
+2. **Ship R1b (#53)** — the structural service-slot overbooking backstop: 0031 ships only the resource EXCLUDE and defers the capacity-1 *service-slot* guard, so a rogue/manual/legacy direct-insert of a confirmed booking on a service slot is not yet structurally blocked (unlike resources). Now unblocked (the #78 confirm route is the sole app-level booking writer). (R2b review item 2.)
+3. Render API from R2a's `render.yaml`; apply migrations `0010–0032` to the runtime DB; Stripe TEST keys server-side only.
 
 | # | id | Pri | Title | Breaks | Reproduction (file:line / SQL / step) | Fix direction |
 |---|----|-----|-------|--------|---------------------------------------|---------------|
