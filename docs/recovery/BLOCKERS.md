@@ -10,7 +10,7 @@ diagnostic table beneath is the untouched baseline — read status here, symptom
 
 | # | id | Pri | State | Closed by | Evidence |
 |---|----|-----|-------|-----------|----------|
-| 1 | OB-STRUCT | P0 | **FIX READY** | R1 `0031` (in #75 tree) | `btree_gist` EXCLUDE on exclusive `resource_reservations` + capacity-mutation resync trigger; `overbooking_backstop_tests` T1–T8 + attack case green. Resource-exclusive half closed structurally. |
+| 1 | OB-STRUCT | P0 | **FIX READY (both halves)** | R1 `0031` (#75 tree) + R1b `0033` (#79) | **Resource half:** `btree_gist` EXCLUDE on exclusive `resource_reservations` + capacity-mutation resync (`overbooking_backstop_tests` T1–T8). **Service-slot half:** `services.capacity_limited` + `enforce_confirmed_requires_hold` trigger forces every confirm through `reserve_capacity`→`consume_hold`, capping confirmed bookings per slot for any writer (`service_slot_backstop_tests` T1–T7, default-false so zero regression). Overbooking now structurally impossible on both resources and service slots. |
 | 4 | AUTH-ENTRYPOINT | P0 | **FIX READY** | R2a #76 | `apps/api` production entrypoint composes the http server with `createSupabaseIdentityVerifier` (real Supabase-JWT), `/health`+`/ready`, env-driven origins, `0.0.0.0`+`PORT`; `local.ts` demoted to dev harness. |
 | 3 | NO-CONFIRM-RUNTIME | P0 | **FIX READY** | R2b #78 | `POST /api/bookings/:id/confirm` — the single, hostable reserve→pay→confirm→consume authority; the only `state='confirmed'` writer. |
 | 5 | PAY-AUTHORITY | P0 | **FIX READY** | R2b #78 | Server-side `PaymentGateway` (mock default; Stripe TEST when `STRIPE_SECRET_KEY` set, secret server-only); charge pinned to the server reprice; decline never confirms; secret never reaches browser/logs. |
@@ -18,14 +18,14 @@ diagnostic table beneath is the untouched baseline — read status here, symptom
 | 7 | RESERVE-UNWIRED | P0 | **FIX READY** | R2b #78 | `reserve_capacity`/`reserve_resource`/`consume_hold`/`release_*` now called by the confirm route before any charge; through-API concurrency proven (capacity-1 slot AND exclusive resource ⇒ exactly one confirmed). |
 | 11 | PROFILE-MISSING | P1 | **FIX READY** | R3 #77 | `BusinessProfile` contract+registry (6 verticals) + `tenants.profile_key` (`0032`) + set-once owner-gated `activate_business_profile`; portal/embed archetype+terminology gating (additive). |
 
-**Still open (next in the recovery queue):** #2 OB-LIVE (needs the live-DB cutover — apply `0010–0032` to the runtime project), #8 INVOICE-MISSING, #9 NOTIFY-NOCONSUMER, #10 ONBOARD-MISSING, #12 EMBED-RUNTIME-INERT (point runtime at the #78 confirm route), #13 SVC-AREA-UNGATED, #17 SVC-CRUD-UNWIRED, and the remainder P1/P2. #53 R1b (capacity-slot booking backstop) is unblocked now that #78 makes the confirm route the sole booking writer.
+**Still open (next in the recovery queue):** #2 OB-LIVE (needs the live-DB cutover — apply `0010–0033` to the runtime project), #8 INVOICE-MISSING, #9 NOTIFY-NOCONSUMER, #10 ONBOARD-MISSING, #12 EMBED-RUNTIME-INERT (point runtime at the #78 confirm route), #13 SVC-AREA-UNGATED, #17 SVC-CRUD-UNWIRED, and the remainder P1/P2. **All P0s are now fix-ready; the queue is P1 from here.**
 
-**Merge order for the ready stack:** #75 (coherent tree) → #76 (R2a) → #78 (R2b); #77 (R3) is independent on `integration/consolidated`. Both #78 and #77 carry a posted independent-review verdict of **APPROVE** (R2b with two tracked follow-ups below; R3 clean).
+**Merge order for the ready stack:** #75 (coherent tree) → #76 (R2a) → #78 (R2b); then #77 (R3) → #79 (R1b `0033`, stacked on #77 for contiguous numbering). #78, #77 carry posted independent-review **APPROVE** verdicts; #79's review is in flight (CI green). All await the owner's merge.
 
 **Cutover prerequisites (before/at the live-infra cutover):**
 1. **Decommission the legacy Deno edge functions** `supabase/functions/stripe-webhook` and `create-payment-intent` wherever `apps/api` is the confirm authority. `stripe-webhook/index.ts` also writes `bookings.state='confirmed'`; they are the source R2b ports from and are currently **undeployed** (live DB at 0001–0009, no functions), so not a live second writer — but until they are gated off, the single-writer property is convention+deployment, not structural. (R2b review item 1.)
-2. **Ship R1b (#53)** — the structural service-slot overbooking backstop: 0031 ships only the resource EXCLUDE and defers the capacity-1 *service-slot* guard, so a rogue/manual/legacy direct-insert of a confirmed booking on a service slot is not yet structurally blocked (unlike resources). Now unblocked (the #78 confirm route is the sole app-level booking writer). (R2b review item 2.)
-3. Render API from R2a's `render.yaml`; apply migrations `0010–0032` to the runtime DB; Stripe TEST keys server-side only.
+2. ✅ **R1b shipped (#79, migration `0033`)** — the structural service-slot overbooking backstop (the counterpart to 0031's resource EXCLUDE). Operator marks a service `capacity_limited=true`; a booking then reaches `confirmed` only via a reserved+consumed hold, so `reserve_capacity`'s advisory-lock count caps confirmed bookings per slot for any writer. Default false ⇒ zero regression. Merge after #77. (R2b review item 2 — resolved.)
+3. Render API from R2a's `render.yaml`; apply migrations `0010–0033` to the runtime DB; Stripe TEST keys server-side only.
 
 | # | id | Pri | Title | Breaks | Reproduction (file:line / SQL / step) | Fix direction |
 |---|----|-----|-------|--------|---------------------------------------|---------------|
