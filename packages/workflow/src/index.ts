@@ -25,3 +25,5 @@ export type {
 } from "./pricingEffects";
 export * from "./publication";
 export * from "./configurablePublication";
+export * from "./fieldRegistry";
+export * from "./fieldAnswers";
