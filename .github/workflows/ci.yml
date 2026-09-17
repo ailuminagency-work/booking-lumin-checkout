@@ -25,6 +25,8 @@ jobs:
       - run: node --test scripts/run-mode-owner-browser.test.mjs scripts/mode-owner-artifacts.test.mjs scripts/preview-mode.test.mjs
       - name: Verify document TLS, runner and artifact boundaries
         run: node --test scripts/mode-document-tls.test.mjs scripts/mode-document-artifacts.test.mjs scripts/run-mode-document-browser.test.mjs scripts/collect-mode-document-artifacts.test.mjs
+      - name: Verify text-draft test-runner boundaries
+        run: python3 -B scripts/test_run_text_draft_tests.py
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
@@ -161,6 +163,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/bound_flow_tests.sql
       - name: Verify configurable publication, pinned answers and legacy guards
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/configurable_flow_tests.sql
+      - name: Verify owner text-field draft isolation and revision control
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/text_field_drafts_tests.sql
       - name: Verify configurable JavaScript and SQL fixture parity
         run: python3 supabase/tests/configurable_flow_parity.py
       # SQL suites roll back their fixtures. The final-slot harness requires
@@ -216,6 +220,15 @@ jobs:
       - name: Record runtime versions
         run: node --version && npm --version
       - run: npm ci
+      - name: Verify text-field draft races and HTTP in both crypto layouts
+        timeout-minutes: 8
+        env:
+          TEXT_DRAFT_RUNNER_APPROVED: "1"
+        run: |
+          set -euo pipefail
+          for layout in public extensions; do
+            python3 -B scripts/run-text-draft-tests.py --profile github-ci --layout "$layout"
+          done
       - name: Verify persisted request journey over HTTP
         timeout-minutes: 3
         env:

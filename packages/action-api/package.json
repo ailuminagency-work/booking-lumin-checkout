@@ -11,6 +11,8 @@
     "local:serve": "tsx server/local.ts",
     "local:seed": "tsx server/seed.ts",
     "test:flow-http": "tsx server/pg-http.integration.ts",
+    "test:text-drafts-http": "node --import tsx server/text-field-drafts.integration.ts",
+    "test:text-drafts-concurrency": "node --import tsx server/text-field-drafts-concurrency.integration.ts",
     "test:roster-http": "tsx server/roster-http.integration.ts",
     "test:planning-allocation": "tsx server/planning-allocation.integration.ts",
     "test:mode-installations": "tsx server/mode-installations.integration.ts",

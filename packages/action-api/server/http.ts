@@ -1,4 +1,6 @@
 import { handleRosterRoute } from "./roster-http";
+import { handleTextFieldDraftRequest, type TextFieldDraftHttpDependencies } from "./text-field-drafts-http";
+import { textDraftTransport } from "./text-field-drafts-transport";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -8,6 +10,8 @@ import { FlowError,type FlowCode,type FlowRepository } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ /** Explicit local owner capability; absent compositions keep this route unavailable. */
+ textFieldDraftRepository?:Pick<TextFieldDraftHttpDependencies,'call'>;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -31,6 +35,8 @@ export function createFlowHttpServer(options:FlowHttpOptions){
  const ownerOrigins=[...options.ownerOrigins],customerOrigins=[...options.customerOrigins];
  const now=options.now??Date.now;const limits=new Map<string,{start:number;count:number}>();
  const server=createServer({maxHeaderSize:16384},async(req,res)=>{
+  const textRoute=req.url?.split('?')[0]?.startsWith('/api/text-field-drafts')??false;
+  const textTransport=textRoute?textDraftTransport(req,res):null;
   try{
    const address=req.socket.remoteAddress??"";if(!["127.0.0.1","::1","::ffff:127.0.0.1"].includes(address))throw new FlowError("FORBIDDEN");
    const instant=now();let rate=limits.get(address);if(!rate||instant-rate.start>=60000){rate={start:instant,count:0};limits.set(address,rate);}if(++rate.count>120)throw new FlowError("RATE_LIMITED");
@@ -44,6 +50,19 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const requested=(req.headers["access-control-request-headers"]??"").toLowerCase().split(",").map(x=>x.trim()).filter(Boolean);
     if(requested.some(x=>!["content-type","authorization"].includes(x)))throw new FlowError("FORBIDDEN");
     res.writeHead(204,{"Access-Control-Allow-Methods":"GET, POST","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"60"});res.end();return;
+   }
+   if(textTransport){
+    const repository=options.textFieldDraftRepository;
+    if(!repository)throw new FlowError('NOT_AVAILABLE');
+    const result=await handleTextFieldDraftRequest(req,{
+     authenticateOwner:credential=>textTransport.authenticate(credential,options.authenticateOwner),
+     call:async(name,params)=>{
+      if(!textTransport.alive())throw new FlowError('NOT_AVAILABLE');
+      // Once dispatched, await the transaction. Transport closure is not cancellation.
+      return repository.call(name,params);
+     },
+    });
+    textTransport.send(result.status,result.body);return;
    }
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
@@ -92,7 +111,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=RpcResults.publish_bound_flow.parse(await call("publish_bound_flow",[actor,tenant,flow,body.expectedRevision,randomUUID(),randomUUID(),body.allowedOrigins]));
     send(res,200,{ok:true,data:{...data,hostedPath:`/checkout/flow/${data.installationId}`}});return;
    }throw new FlowError("NOT_AVAILABLE");
-  }catch(error){const code=error instanceof FlowError&&Object.hasOwn(statuses,error.code)?error.code:error instanceof z.ZodError?"INVALID_REQUEST":"INTERNAL_ERROR";if(!res.headersSent)send(res,statuses[code],{ok:false,code});else res.end();}
+  }catch(error){const code=error instanceof FlowError&&Object.hasOwn(statuses,error.code)?error.code:error instanceof z.ZodError?"INVALID_REQUEST":"INTERNAL_ERROR";if(!res.headersSent){if(textTransport)textTransport.send(statuses[code],{ok:false,code});else send(res,statuses[code],{ok:false,code});}else res.end();}
  });
  server.requestTimeout=10000;server.headersTimeout=10000;server.keepAliveTimeout=5000;
  return server;

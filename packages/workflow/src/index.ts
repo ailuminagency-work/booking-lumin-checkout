@@ -27,3 +27,4 @@ export * from "./publication";
 export * from "./configurablePublication";
 export * from "./fieldRegistry";
 export * from "./fieldAnswers";
+export * from "./textFieldDraft";
