@@ -251,7 +251,8 @@
       "id": "W3.fields_and_workflows",
       "kind": "capability",
       "owner": "W3",
-      "status": "planned",
+      "status": "building",
+      "evidence": "docs/product/increments/TEXT_PREVIEW.md",
       "dependsOn": [
         "W3.1.local_candidate"
       ],

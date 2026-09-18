@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { TextFieldDraftClient } from '../../../../packages/flow-ui/src/textFieldDraftClient';
 import { TextFieldEditor } from './TextFieldEditor';
 afterEach(cleanup);
+const preview = () => screen.getByRole('region', { name: /question preview/i });
 const tenant = '11111111-1111-4111-8111-111111111111', flowId = '22222222-2222-4222-8222-222222222222';
 const field = { key: 'legacy_internal', kind: 'text' as const, required: false, minLength: 0, maxLength: 100 };
 const receipt = (fields = [field]) => ({ textDraftVersion: 1 as const, parentAuthoringVersion: 2 as const, draftRevision: 2, savedParentRevision: 3, currentParentRevision: 3, definition: { schemaVersion: 1 as const, fields }, runtimePublishable: false as const, stale: false });
@@ -110,4 +111,45 @@ it('clears busy on unmount and ignores late save completion', async () => {
  fireEvent.click(screen.getByText('Save questions')); expect(onBusyChange).toHaveBeenLastCalledWith(true);
  view.unmount(); expect(onBusyChange).toHaveBeenLastCalledWith(false); const count = onBusyChange.mock.calls.length;
  await act(async () => finish(receipt())); expect(onBusyChange).toHaveBeenCalledTimes(count); expect(client.invalidate).toHaveBeenCalledTimes(1);
+});
+
+it('preview answers remain local and close/reopen clears them without dirty or busy changes', async () => {
+ const {client,props}=setup(); const busy=vi.fn(); render(<TextFieldEditor {...props} onBusyChange={busy}/>); await load();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Unsaved preview label'}});
+ fireEvent.click(screen.getByText('Try questions')); const dirtyCount=props.onDirtyChange.mock.calls.length,busyCount=busy.mock.calls.length;
+ fireEvent.change(within(preview()).getByRole('textbox'),{target:{value:'Private trial answer'}});
+ fireEvent.click(within(preview()).getByRole('button',{name:'Check answers'}));
+ expect(client.read).toHaveBeenCalledTimes(1); expect(client.save).not.toHaveBeenCalled();
+ expect(props.onDirtyChange).toHaveBeenCalledTimes(dirtyCount); expect(busy).toHaveBeenCalledTimes(busyCount);
+ fireEvent.click(screen.getByText('Close preview')); expect(screen.queryByRole('region',{name:/question preview/i})).toBeNull();
+ fireEvent.click(screen.getByText('Try questions')); expect(within(preview()).getByRole('textbox')).toHaveValue('');
+ fireEvent.click(screen.getByText('Save questions')); await waitFor(()=>expect(client.save).toHaveBeenCalledTimes(1));
+ expect(vi.mocked(client.save).mock.calls[0]?.[3]).toEqual({textDraftVersion:1,parentAuthoringVersion:2,expectedRevision:2,expectedFlowRevision:3,definition:{schemaVersion:1,fields:[{...field,prompt:'Unsaved preview label'}]}});
+});
+
+it('editing a definition hides old answers and invalid labels cannot open preview', async () => {
+ const {props}=setup(); render(<TextFieldEditor {...props}/>); await load();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'First label'}}); fireEvent.click(screen.getByText('Try questions'));
+ fireEvent.change(within(preview()).getByRole('textbox'),{target:{value:'Old preview answer'}});
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:''}});
+ expect(screen.queryByDisplayValue('Old preview answer')).toBeNull(); expect(screen.getByText('Try questions')).toBeDisabled();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Second label'}}); fireEvent.click(screen.getByText('Try questions'));
+ expect(within(preview()).getByRole('textbox')).toHaveValue('');
+});
+
+it.each(['token','tenant','flow','client','capability'])('changing %s hides old preview answers immediately', async kind => {
+ const {props}=setup(); const view=render(<TextFieldEditor {...props}/>); await load(); fireEvent.click(screen.getByText('Try questions'));
+ fireEvent.change(within(preview()).getByRole('textbox'),{target:{value:'Old context answer'}});
+ const changed={...props,...(kind==='token'?{token:'changed-owner-token'}:kind==='tenant'?{tenant:flowId}:kind==='flow'?{flowId:tenant}:kind==='client'?{client:setup().client}:{enabled:false})};
+ view.rerender(<TextFieldEditor {...changed}/>); expect(screen.queryByDisplayValue('Old context answer')).toBeNull(); expect(screen.queryByRole('region',{name:/question preview/i})).toBeNull();
+});
+
+it('reload closes preview before a deferred read and old context completion cannot reopen it', async () => {
+ const {client,props}=setup(); const view=render(<TextFieldEditor {...props}/>); await load(); fireEvent.click(screen.getByText('Try questions'));
+ fireEvent.change(within(preview()).getByRole('textbox'),{target:{value:'Before reload'}});
+ let finish!: (value: Awaited<ReturnType<TextFieldDraftClient['read']>>) => void;
+ vi.mocked(client.read).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ fireEvent.click(screen.getByText('Reload questions')); expect(screen.queryByRole('region',{name:/question preview/i})).toBeNull();
+ view.rerender(<TextFieldEditor {...props} token="replacement-owner-token"/>);
+ await act(async()=>finish({status:'present',receipt:receipt()})); expect(screen.queryByDisplayValue('Before reload')).toBeNull(); expect(screen.queryByRole('region',{name:/question preview/i})).toBeNull();
 });

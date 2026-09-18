@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TextFieldDraftClient } from '../../../../packages/flow-ui/src/textFieldDraftClient';
-import type { TextField } from '@lumin/workflow';
+import { TextQuestionPreview } from '../../../../packages/flow-ui/src/TextQuestionPreview';
+import { parseTextFieldDocument, type TextField } from '@lumin/workflow';
 type Field = TextField & { readonly prompt?: string };
 export interface TextFieldEditorProps { client: TextFieldDraftClient; token: string; tenant: string; flowId: string; parentRevision: number; parentDirty: boolean; enabled: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void }
 export function TextFieldEditor({ client, token, tenant, flowId, parentRevision, parentDirty, enabled, onDirtyChange, onBusyChange }: TextFieldEditorProps) {
@@ -12,14 +13,20 @@ export function TextFieldEditor({ client, token, tenant, flowId, parentRevision,
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const [conflict, setConflict] = useState(false), [ack, setAck] = useState(false), [touched, setTouched] = useState<Set<string>>(new Set());
   const current = state?.context === context ? state : undefined;
+  const [previewFor, setPreviewFor] = useState<typeof state>();
+  const previewDefinition = useMemo(() => {
+    if (!current) return undefined;
+    try { return parseTextFieldDocument({ schemaVersion: 1, fields: current.fields }); } catch { return undefined; }
+  }, [current]);
   useEffect(() => {
-    generation.current++; operation.current = false; setState(undefined); setDirty(false); setBusy(false); setMessage(''); setConflict(false); setAck(false); setTouched(new Set()); callback.current?.(false); busyCallback.current?.(false);
+    generation.current++; operation.current = false; setState(undefined); setPreviewFor(undefined); setDirty(false); setBusy(false); setMessage(''); setConflict(false); setAck(false); setTouched(new Set()); callback.current?.(false); busyCallback.current?.(false);
     return () => { generation.current++; operation.current = false; busyCallback.current?.(false); client.invalidate(); };
   }, [context, client]);
   const allowed = enabled && !parentDirty && Number.isSafeInteger(parentRevision) && parentRevision > 0;
   const markDirty = () => { setDirty(true); callback.current?.(true); setMessage(''); };
   async function load(preserve = false) {
     if (!allowed || operation.current) return;
+    setPreviewFor(undefined);
     const at = generation.current; operation.current = true; busyCallback.current?.(true); setBusy(true); setMessage('');
     try {
       const read = await client.read(token, tenant, flowId);
@@ -80,6 +87,8 @@ export function TextFieldEditor({ client, token, tenant, flowId, parentRevision,
       </fieldset>
       {invalid && <p>Give each edited question a label and check its character limits.</p>}
       <button type="button" disabled={!allowed || busy || conflict || invalid || current.parent !== parentRevision || (current.stale && !ack)} onClick={() => void save()}>Save questions</button>
+      <button type="button" disabled={busy || invalid || !previewDefinition} onClick={() => setPreviewFor(previewFor === current ? undefined : current)}>{previewFor === current ? 'Close preview' : 'Try questions'}</button>
+      {previewFor === current && !invalid && previewDefinition && <TextQuestionPreview definition={previewDefinition} resetKey={context} />}
     </>}
     <p role="status">{busy ? 'Working…' : message}</p>
   </section>;

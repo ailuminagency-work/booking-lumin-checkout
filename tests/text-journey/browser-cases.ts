@@ -31,6 +31,20 @@ export async function runTextJourneyBrowserCases(browser: Browser, config: Confi
     const prompt = '  Exact <question> 🌍  '; await question(a).fill(prompt); await saved(a);
     const initial = await callbacks.inspectA(); expect(initial?.revision).toBe(1);
     expect(initial?.definition).toMatchObject({ schemaVersion: 1, fields: [{ prompt, kind: 'text', required: false, minLength: 0, maxLength: 500 }] });
+    let previewRequests = 0;
+    const countPreviewRequest = () => { previewRequests++; };
+    a.on('request', countPreviewRequest);
+    await a.getByRole('button', { name: 'Try questions', exact: true }).click();
+    const preview = a.getByRole('region', { name: 'Question preview', exact: true });
+    const previewAnswer = '  Local preview <answer> 🌍  ';
+    await preview.getByRole('textbox').fill(previewAnswer);
+    await preview.getByRole('button', { name: 'Check answers', exact: true }).click();
+    await expect(preview.getByText('Preview answers are valid. Nothing was submitted.', { exact: true })).toBeVisible();
+    await expect(preview.getByRole('textbox')).toHaveValue(previewAnswer);
+    await a.getByRole('button', { name: 'Close preview', exact: true }).click();
+    await expect(preview).toHaveCount(0);
+    expect(previewRequests).toBe(0); a.off('request', countPreviewRequest);
+    expect(await callbacks.inspectA()).toEqual(initial);
     await a.getByRole('button', { name: 'Reload questions', exact: true }).click(); await expect(question(a)).toHaveValue(prompt);
 
     stage = 2;
