@@ -1,0 +1,6 @@
+import { expect,it } from 'vitest';
+import {createTextJourneyEnvironment,textJourneyConfiguration} from './text-journey-environment';
+const env={TEXT_JOURNEY_APPROVED:'1',TEXT_DRAFT_TEST_PROFILE:'local',TEXT_DRAFT_TEST_DISPOSABLE:'1',TEXT_DRAFT_TEST_LAYOUT:'public',TEXT_DRAFT_HTTP_DATABASE:'lumin_text_draft_'+'a'.repeat(32)};
+it('requires explicit journey approval before creating any database clients',async()=>{await expect(createTextJourneyEnvironment({})).rejects.toThrow('TEXT_JOURNEY_CONFIGURATION');});
+it('rejects inherited endpoints and invalid disposable profiles',()=>{for(const change of [{TEXT_JOURNEY_APPROVED:'0'},{TEXT_DRAFT_TEST_DISPOSABLE:'0'},{TEXT_DRAFT_HTTP_DATABASE:'postgres'},{TEXT_DRAFT_TEST_LAYOUT:'other'}])expect(()=>textJourneyConfiguration({...env,...change},'win32')).toThrow('TEXT_JOURNEY_CONFIGURATION');});
+it('pins local profile and suppresses inherited credentials',async()=>{const p=textJourneyConfiguration({...env,PGHOST:'external',PGPORT:'5432',PGPASSWORD:'secret'},'win32');expect(p.connection.host).toBe('127.0.0.1');expect(p.connection.port).toBe(55439);expect(p.connection.ssl).toBe(false);expect(typeof p.connection.password).toBe('function');if(typeof p.connection.password==='function')expect(await p.connection.password()).toBe('');});

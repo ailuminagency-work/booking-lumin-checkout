@@ -1,0 +1,44 @@
+# W3 browser to disposable SQL journey — local review candidate
+
+Isolated branch `codex/wave3-text-journey`, base `af7b457ec261931e2c95f0fc6a1246eb39cb4e49`. Main remains protected at `152bb909c06fa8602d99f8b37d2cfe9f90aa5ead`; PR74 remains draft with previously verified exact CI34743351848 success. Parent review branches lack exact CI because draft PR creation returns collaborator-access errors. No wave completion, merge, deployment or production acceptance is implied.
+
+## Ownership and scope
+
+- `/root/field_contract_builder`: new inert API/SQL environment and its tests; new Python fresh-database supervisor and its tests.
+- `/root/text_draft_client`: standalone browser fixture and six scenarios; independent domain review of root orchestrator.
+- `/root/evidence_recovery_review`: independent source/adversarial review and subsequent Runtime evidence review.
+- `/root`: orchestration, integration, execution and evidence. Root is not an independent reviewer of its own code.
+
+Actual LocalTextEditorHost and typed text client use the shared HTTP server and actual repositories against a newly allocated local database. Authentication uses synthetic bearer identities; SQL membership remains authoritative. Node-side SQL inspection, parent advancement and revocation callbacks never enter browser configuration or HTTP endpoints. Fixture/browser requests are restricted to two exact loopback origins; this is not OS-level network isolation. No production route, live migration, provider connection or credential is introduced.
+
+The supervisor reuses the existing 41 migration/SQL/native checks, then runs six browser cases as step42. Cases cover exact Unicode/markup-like prompt persistence and reread, two-page revision conflict, parent-version reconciliation, foreign-tenant read denial, staff read denial, and revoked-owner read/write denial. Foreign-tenant/staff write denial is not claimed from these browser cases. Saved records are independently inspected through node-side SQL. Existing browser history/unload evidence remains in TEXT_BROWSER.md.
+
+## Review and execution record
+
+Own locked dependencies installed offline without lifecycle scripts (2512d6). Environment typecheck and three inert tests passed431088. Fixture standalone typecheck passed380576. Supervisor three inert tests independently passedae6d10. Independent leaf review5de12b, orchestrator review396e15 and final readiness76f3f0 permit bounded local execution only.
+
+Domain review returned a real evidence defect: failed partial environment creation could claim all connections closed. Root added allocation-start tracking for both environment and browser; ambiguous partial creation now leaves closure flags false and fails cleanup. Domain35489c and independent396e15 accepted the repair. Final orchestrator also enforces exactly six cases and only finite stage failure categories. Outer timeout terminates the process tree; Promise.race alone is not cancellation.
+
+Preflightf51785 observed scoped Chromium process count0, local PostgreSQL127.0.0.1:55439 ready, Chromium153.0.8010.12/revision1243. No global browser install. Public-layout execution c0b146/session42355 started; completed outcomes follow below.
+
+Regression failures retained: sandbox portal test/build could not read the Vite configuration; an owner-context rerun was required. API full suite twice reported an unexpectedly exited worker (8aa4a5 and9cd472); investigation was assigned to the browser builder. Both API and Portal typechecks completed before those failures. These failures were not accepted as passing gates; follow-up evidence is recorded below.
+
+Program boundaries: publish only a tested review branch and preserve the existing PR stack. W3/W4 remain active; W8 environment/access evidence remains blocked. Real provider activation remains excluded.
+
+Fresh runtime outcomes: public c0b146/4ee729 exit0, UUID `9bf47972-31cc-4974-af1c-760935c7d46d`; extensions ec1d2b/0be1eb exit0, UUID `790630c2-6088-43ed-b0b4-0f02c2c2828e`. Each completed42steps with identical source digest `8604eed8bd72b2fc998e94af3342512792ea888dc6c21d60fa44356a2d05cdbf`. The digest is a same-run source observation, not provenance. Private evidence lives outside the checkout under the UUID-linked temporary directory; raw SQL logs are not published.
+
+Post-run899bb5 observed zero scoped browser processes and ECONNREFUSED on fixture port4191. Portal owner-context rerun64b8cc passed140tests and production build. Contamination checks and eight ledger tests passed049378; existing template-term warnings remain unchanged. RC-2 ancestry verified1e849b. API failure diagnostics and independent dual-layout verification follow below.
+
+GitHub CLI fallback f6dacf reports no logged-in host. This does not change the existing connector collaborator restriction. No credentials were read, copied or activated.
+
+Independent scoped Runtime PASS2175e8/8bfdf3: each layout has exactly85 regular single-link private files, no observed file/ancestor reparse, bounded sizes and empty native stderr. Step40 has six race cases/45 parity cases; step41 has nine HTTP groups/33 requests/24 text/6 legacy calls; step42 has exactly six browser cases and all cleanup observations true. Current370-file source digest independently matches both receipts. The review command's initial digest tuple-serialization mistake was corrected by8bfdf3; no application change or rerun was required. This is synthetic-auth local acceptance, not hosted authentication, enduring artifact custody, CI or Release.
+
+API regression history: full sequential runac2293 also failed with two unexpected worker exits (876/921). Isolated policy37 and paired policy/owner85 passed, so these diagnostic passes did not waive the full-suite failure. A full sequential diagnostic with an external process exit-code logger then passed921/921 (067f52/d5cbf1). It did not reproduce an abnormal worker exit and establishes no causal fix. A final uninstrumented replay is required before publication. Supervisor and inherited runner tests passede2f599/454e76 (3+9).
+
+Uninstrumented replay3952/221240 failed exit1:890/921 passed and31 unfinished tests in mode-owner-http.test.ts (JSON verification864f9e, NODE_OPTIONS absent68ee84). Its JSON `success:true` and zero failed assertions were misleading because the process failed and tests remained pending. Root rejects it. Worker exit locations vary between policy and owner HTTP suites; a parallel-only explanation is disproved. No production/test source has been changed to hide these failures. Additional bounded process-exit diagnostics are in progress; publication remains held. Local browser Runtime acceptance does not waive this regression gate.
+
+Bounded worker diagnostics: first two additional instrumented runs passed921/921 (7f36a0/44131a andfc3928/4d4415). Third run failed f45ee8/1668c2 with874/921 passed and47 unfinished assertions across ownerHTTP39 and policyHTTP8. Probe467488 captured both worker exits with numeric code3221226505 (`0xC0000409`) and null signal. The temporary parent logger only observed child exit events; no tracked source, worker arguments or tests were changed. This identifies native process termination but not the responsible module or cause. It does not justify weakening tests. Windows event probe0fe6bc returned no matching crash metadata; no crash dump or system configuration change was performed. One alternative worker-mode diagnostic remains pending.
+
+Final differential diagnostic50042e/346d0a: one thread worker passed921/921,25files, zero unfinished tests, actual exit0. This is not a repair or a waiver for the failing normal fork mode. No test configuration was changed. Independent handoff review6e59fc approves preservation as a local WIP evidence commit only; root Integration keeps the regression gate RED and push/CI/Release blocked. Nine explicit files are retained; Python cache is excluded.
+
+Current next steps: reproduce the native fork termination in a separate diagnostic branch, identify the crashing module/stack or compare a reviewed pinned runtime without altering the machine's default runtime, and return any repair through domain/independent/adversarial/full-regression review. Do not collect broad process dumps, change system crash settings or silently switch the required test pool. Once the normal gate is resolved, publish this tested candidate against codex/wave3-text-browser and obtain exact-candidate CI and Release review. GitHub collaborator-capable draft PR access is still required. All authorized waves are not complete; continuation remains active.
