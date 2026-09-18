@@ -5,7 +5,7 @@ spec=importlib.util.spec_from_file_location('v2runner',pathlib.Path(__file__).wi
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 def value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_CONCURRENCY','status':'passed','category':'COMPLETE','cases':14,'parityCases':32,'connectionsClosed':True}
 def repository_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_REPOSITORY','status':'passed','category':'COMPLETE','cases':6,'connectionsClosed':True}
-def http_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_HTTP','status':'passed','category':'COMPLETE','cases':7,'httpRequests':27,'serverClosed':True,'connectionsClosed':True}
+def http_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_HTTP','status':'passed','category':'COMPLETE','cases':7,'httpRequests':27,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
 def raw(v):return (json.dumps(v,separators=(',',':'))+'\n').encode()
 class Tests(unittest.TestCase):
  def test_exact_receipt(self):
@@ -74,4 +74,14 @@ class Tests(unittest.TestCase):
  def test_total_deadline_constrains_http(self):
   self.run_fixture(elapsed=500)
   with self.assertRaises(m.Failure):self.run_fixture(elapsed=510)
+ def test_exact_client_counts_and_legacy_receipt_rejection(self):
+  good=http_value();kind=good['kind']
+  for key in ['clientCases','clientRequests']:
+   for bad in [True,0,good[key]-1,good[key]+1,float(good[key])]:
+    with self.assertRaises(m.Failure):m.receipt(raw({**good,key:bad}),kind)
+   with self.assertRaises(m.Failure):m.receipt(raw({k:v for k,v in good.items() if k!=key}),kind)
+  legacy={k:v for k,v in good.items() if k not in ['clientCases','clientRequests']}
+  with self.assertRaises(m.Failure):self.run_fixture(target=47,payload=raw(legacy))
+  with self.assertRaises(m.Failure):self.run_fixture(target=47,payload=raw({**good,'clientRequests':12}))
+  with self.assertRaises(m.Failure):self.run_fixture(target=47,payload=raw({**good,'connectionsClosed':False}))
 if __name__=='__main__':unittest.main()
