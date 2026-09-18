@@ -10,19 +10,23 @@ def configuration(profile,layout):
     return base.configuration(profile,layout)
 def sources():
     migrations,pins=base.sources()
-    for p in [pathlib.Path(__file__).resolve(),ROOT/'supabase/tests/field_drafts_v2_tests.sql',ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql']:
+    for name in ('field-drafts-v2-repository.integration.ts','field-drafts-v2-repository.integration.test.ts'):
+        if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
+    for p in [pathlib.Path(__file__).resolve(),pathlib.Path(__file__).with_name('run-field-draft-v2-tests-test.py').resolve(),ROOT/'supabase/tests/field_drafts_v2_tests.sql',ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql']:
         pins[p.relative_to(ROOT).as_posix()]=hashlib.sha256(base.bounded_read(p,4194304)).hexdigest()
     return migrations,pins
-def receipt(raw):
+def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
     try:value=json.loads(raw.decode('ascii'))
     except BaseException:fail('RECEIPT_REJECTED')
     expected={'schemaVersion':1,'kind':'FIELD_DRAFT_V2_CONCURRENCY','status':'passed','category':'COMPLETE','cases':14,'parityCases':32,'connectionsClosed':True}
+    if kind=='FIELD_DRAFT_V2_REPOSITORY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':6,'connectionsClosed':True}
+    elif kind!='FIELD_DRAFT_V2_CONCURRENCY':fail('RECEIPT_REJECTED')
     if type(value)is not dict or set(value)!=set(expected) or any(type(value[k])is not type(v) or value[k]!=v for k,v in expected.items()):fail('RECEIPT_REJECTED')
     if raw!=(json.dumps(value,separators=(',',':'))+'\n').encode('ascii'):fail('RECEIPT_REJECTED')
     return value
 def execute(profile,layout,private,result,tools,env,runner=base.run_private,clock=time.monotonic,source_check=sources,evidence=None):
     if evidence is None:evidence={}
-    _,pins=source_check();deadline=clock()+350
+    _,pins=source_check();deadline=clock()+420
     def before_migration(migration,sql):
         if migration.name=='0034_field_drafts_v2.sql':sql('-f',str(ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql'))
     def after_migration(migration,sql):
@@ -50,6 +54,10 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v2-concurrency.integration.ts'],ROOT/'packages/action-api',childenv,95,2048,'NATIVE_FAILED')
     if err.stat().st_size:fail('RECEIPT_REJECTED')
     receipt(base.bounded_read(out,2048))
+    childenv={**childenv,'FIELD_DRAFT_V2_REPOSITORY_APPROVED':'1','TEXT_DRAFT_HTTP_DATABASE':database,'TEXT_DRAFT_HTTP_APPROVED':'1'}
+    out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v2-repository.integration.ts'],ROOT/'packages/action-api',childenv,60,2048,'NATIVE_FAILED')
+    if err.stat().st_size:fail('RECEIPT_REJECTED')
+    receipt(base.bounded_read(out,2048),'FIELD_DRAFT_V2_REPOSITORY')
     if clock()>=deadline:fail('PROCESS_BOUND')
     if source_check()[1]!=pins:fail('SOURCE_CHANGED')
     base.verify_evidence(private,evidence)

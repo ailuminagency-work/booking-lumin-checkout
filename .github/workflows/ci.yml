@@ -40,7 +40,7 @@ jobs:
       - run: bash scripts/contamination-check.test.sh && bash scripts/contamination-check.sh
 
   field-draft-v2:
-    name: field draft V2 (upgrade, isolation, races)
+    name: field draft V2 (upgrade, isolation, races, repository)
     timeout-minutes: 20
     runs-on: ubuntu-latest
     services:
@@ -62,8 +62,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Verify fresh V2 storage upgrade and concurrency in both crypto layouts
-        timeout-minutes: 13
+      - name: Verify fresh V2 storage and native repository in both crypto layouts
+        timeout-minutes: 15
         env:
           TEXT_DRAFT_RUNNER_APPROVED: '1'
           FIELD_DRAFT_V2_RUNNER_APPROVED: '1'

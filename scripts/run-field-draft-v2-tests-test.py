@@ -4,6 +4,7 @@ from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('v2runner',pathlib.Path(__file__).with_name('run-field-draft-v2-tests.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 def value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_CONCURRENCY','status':'passed','category':'COMPLETE','cases':14,'parityCases':32,'connectionsClosed':True}
+def repository_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V2_REPOSITORY','status':'passed','category':'COMPLETE','cases':6,'connectionsClosed':True}
 def raw(v):return (json.dumps(v,separators=(',',':'))+'\n').encode()
 class Tests(unittest.TestCase):
  def test_exact_receipt(self):
@@ -16,28 +17,46 @@ class Tests(unittest.TestCase):
   with patch.dict(m.os.environ,{},clear=True),patch.object(m.base,'configuration') as call:
    with self.assertRaises(m.Failure):m.configuration('local','public')
    call.assert_not_called()
- def run_fixture(self,code=0,stderr=b'',mutate=False):
+ def test_repository_receipt(self):
+  good=repository_value();kind=good['kind']
+  self.assertEqual(m.receipt(raw(good),kind),good)
+  bad=[b'',b'null',raw(value()),raw({**good,'cases':True}),raw({**good,'cases':5}),raw({**good,'connectionsClosed':False}),raw({**good,'extra':1}),raw(good).replace(b'"cases":6',b'"cases":6,"cases":6')]
+  for payload in bad:
+   with self.assertRaises(m.Failure):m.receipt(payload,kind)
+ def run_fixture(self,code=0,stderr=b'',mutate=False,target=45,payload=None,prior_steps=44):
   with tempfile.TemporaryDirectory() as folder:
    private=pathlib.Path(folder);result={'steps':0,'runId':str(uuid.uuid4())};evidence={};calls=[];pin={'fixed':'pin'}
    def prior(*args,**kwargs):
     seed=[];kwargs['before_migration'](pathlib.Path('0033_text_field_prompts.sql'),lambda *a:seed.append(a));self.assertEqual(seed,[])
     kwargs['before_migration'](pathlib.Path('0034_field_drafts_v2.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),1);self.assertTrue(seed[0][-1].endswith('field_drafts_v2_upgrade_fixture.sql'))
     kwargs['after_migration'](pathlib.Path('0033_text_field_prompts.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),1)
-    kwargs['after_migration'](pathlib.Path('0034_field_drafts_v2.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),2);self.assertTrue(seed[1][-1].endswith('field_drafts_v2_tests.sql'));args[3]['steps']=44
+    kwargs['after_migration'](pathlib.Path('0034_field_drafts_v2.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),2);self.assertTrue(seed[1][-1].endswith('field_drafts_v2_tests.sql'));args[3]['steps']=prior_steps
    def runner(args,cwd,env,where,index,seconds,maximum):
     calls.append((args,env,index,seconds,maximum));out=where/(str(index)+'.stdout');err=where/(str(index)+'.stderr')
-    out.write_bytes(raw(value()) if index==45 else b'');err.write_bytes(stderr if index==45 else b'')
-    if mutate and index==45:pin['fixed']='changed'
-    return code if index==45 else 0,out,err,{out.name:m.base.snapshot(out),err.name:m.base.snapshot(err)}
+    out.write_bytes(payload if payload is not None and index==target else raw(value() if index==45 else repository_value()));err.write_bytes(stderr if index==target else b'')
+    if mutate and index==target:pin['fixed']='changed'
+    return code if index==target else 0,out,err,{out.name:m.base.snapshot(out),err.name:m.base.snapshot(err)}
    with patch.object(m.base,'execute',prior):
-    m.execute('local','extensions',private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'','PGHOST':'wrong'},runner=runner,source_check=lambda:([],dict(pin)),evidence=evidence)
-   self.assertEqual(result['steps'],45);self.assertEqual(len(evidence),2)
+    try:m.execute('local','extensions',private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'','PGHOST':'wrong'},runner=runner,source_check=lambda:([],dict(pin)),evidence=evidence)
+    except m.Failure:
+     self.assertEqual(len(evidence),2*len(calls));m.base.verify_evidence(private,evidence)
+     self.assertNotIn('sourceDigest',result)
+     raise
+   self.assertEqual(result['steps'],46);self.assertEqual(len(evidence),4)
+   self.assertEqual([c[2] for c in calls],[45,46]);self.assertTrue(calls[1][0][-1].endswith('field-drafts-v2-repository.integration.ts'))
    env=calls[0][1];self.assertNotIn('PGHOST',env);self.assertEqual(env['FIELD_DRAFT_V2_CONCURRENCY_APPROVED'],'1');self.assertEqual(env['TEXT_DRAFT_TEST_LAYOUT'],'extensions')
    self.assertEqual(env['TEXT_DRAFT_CONCURRENCY_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertLessEqual(calls[0][3],95)
+   self.assertNotIn('FIELD_DRAFT_V2_REPOSITORY_APPROVED',env)
+   native=calls[1][1];self.assertEqual(native['FIELD_DRAFT_V2_REPOSITORY_APPROVED'],'1');self.assertEqual(native['TEXT_DRAFT_HTTP_DATABASE'],env['TEXT_DRAFT_CONCURRENCY_DATABASE']);self.assertLessEqual(calls[1][3],60)
  def test_bound_order_and_environment(self):self.run_fixture()
  def test_nonzero_and_stderr_rejected(self):
   for kwargs in [{'code':1},{'stderr':b'private'}]:
    with self.assertRaises(m.Failure):self.run_fixture(**kwargs)
  def test_source_change_rejected(self):
   with self.assertRaises(m.Failure):self.run_fixture(mutate=True)
+ def test_repository_failures_retain_private_evidence(self):
+  for kwargs in [{'code':1},{'stderr':b'private'},{'payload':b''},{'payload':raw({**repository_value(),'connectionsClosed':False})},{'mutate':True}]:
+   with self.assertRaises(m.Failure):self.run_fixture(target=46,**kwargs)
+ def test_missing_legacy_gate_rejected(self):
+  with self.assertRaises(m.Failure):self.run_fixture(prior_steps=43)
 if __name__=='__main__':unittest.main()
