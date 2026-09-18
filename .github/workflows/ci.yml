@@ -41,7 +41,7 @@ jobs:
 
   field-draft-v2:
     name: field draft V2 (upgrade, isolation, races, repository)
-    timeout-minutes: 20
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -62,8 +62,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Verify fresh V2 storage and native repository in both crypto layouts
-        timeout-minutes: 15
+      - name: Verify fresh V2 storage and native HTTP in both crypto layouts
+        timeout-minutes: 18
         env:
           TEXT_DRAFT_RUNNER_APPROVED: '1'
           FIELD_DRAFT_V2_RUNNER_APPROVED: '1'
