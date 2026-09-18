@@ -209,7 +209,7 @@ def configuration(profile,layout):
 
 def sources():
     migrations=sorted((ROOT/'supabase/migrations').glob('*.sql'))
-    if len(migrations)!=33 or [int(p.name[:4]) for p in migrations]!=list(range(1,34)):fail('SOURCE_CHANGED')
+    if len(migrations)!=34 or [int(p.name[:4]) for p in migrations]!=list(range(1,35)):fail('SOURCE_CHANGED')
     files=set(migrations)|{ROOT/'supabase/tests/local_harness.sql',ROOT/'supabase/tests/text_field_drafts_tests.sql',ROOT/'supabase/tests/text_field_prompts_tests.sql',ROOT/'package-lock.json',ROOT/'package.json',ROOT/'tsconfig.base.json',pathlib.Path(__file__).resolve()}
     for p in (ROOT/'packages').rglob('*'):
         if 'node_modules' not in p.relative_to(ROOT).parts and p.is_file() and p.suffix in ('.ts','.tsx','.json'):files.add(p)
@@ -231,7 +231,7 @@ def receipt(raw,kind):
     if raw!=(json.dumps(value,separators=(',',':'))+'\n').encode('ascii'):fail('RECEIPT_REJECTED')
     return value
 
-def execute(profile,layout,private,result,tools,env,runner=run_private,clock=time.monotonic,source_check=sources,evidence=None):
+def execute(profile,layout,private,result,tools,env,runner=run_private,clock=time.monotonic,source_check=sources,evidence=None,before_migration=None,after_migration=None):
     migrations,pins=source_check();end=clock()+210;name='lumin_text_draft_'+uuid.UUID(result['runId']).hex
     if evidence is None:evidence={}
     def check():
@@ -248,7 +248,7 @@ def execute(profile,layout,private,result,tools,env,runner=run_private,clock=tim
             if getattr(error,'artifacts',None) is not None:retain(error.artifacts)
             raise
         retain(completed)
-        if code!=0:fail('SQL_FAILED' if index<=39 else 'NATIVE_FAILED')
+        if code!=0:fail('SQL_FAILED' if args[0]==tools['psql'] else 'NATIVE_FAILED')
         return out,err
     def sql(database,*args,maximum=LIMIT):return invoke([tools['psql'],'-X','-w','-v','ON_ERROR_STOP=1','-d',database,*args],ROOT,env,maximum=maximum)
     out,_=sql('postgres','-qAt','-c',"select exists(select 1 from pg_database where datname='"+name+"')",maximum=128)
@@ -256,7 +256,10 @@ def execute(profile,layout,private,result,tools,env,runner=run_private,clock=tim
     sql('postgres','-c','create database '+name)
     crypto='create extension pgcrypto with schema public' if layout=='public' else 'create schema extensions; create extension pgcrypto with schema extensions'
     sql(name,'-c',crypto);sql(name,'-f',str(ROOT/'supabase/tests/local_harness.sql'))
-    for migration in migrations:sql(name,'-f',str(migration))
+    for migration in migrations:
+        if before_migration is not None:before_migration(migration,lambda *args:sql(name,*args))
+        sql(name,'-f',str(migration))
+        if after_migration is not None:after_migration(migration,lambda *args:sql(name,*args))
     sql(name,'-f',str(ROOT/'supabase/tests/text_field_drafts_tests.sql'))
     sql(name,'-f',str(ROOT/'supabase/tests/text_field_prompts_tests.sql'));check()
     childenv={k:v for k,v in env.items() if not k.startswith('PG')}
