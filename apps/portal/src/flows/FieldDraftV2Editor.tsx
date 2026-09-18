@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FieldDraftV2Client } from '../../../../packages/flow-ui/src/fieldDraftV2Client';
+import { FieldQuestionPreviewV2 } from '../../../../packages/flow-ui/src/FieldQuestionPreviewV2';
 import { parseFieldDocumentV2, type FieldV2 } from '@lumin/workflow';
 type Field = FieldV2 & { readonly prompt?: string };
 export interface FieldDraftV2EditorProps { client: FieldDraftV2Client; token: string; tenant: string; flowId: string; parentRevision: number; parentDirty: boolean; enabled?: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void }
@@ -12,7 +13,10 @@ export function FieldDraftV2Editor({ client, token, tenant, flowId, parentRevisi
   const [conflict, setConflict] = useState(false), [ack, setAck] = useState(false);
   const [statusContext, setStatusContext] = useState(context);
   const current = state?.context === context ? state : undefined;
+  const previewIdentity = useMemo(() => ({}), [current, context, parentRevision, parentDirty, ack, conflict]);
+  const [previewFor, setPreviewFor] = useState<object>();
   useLayoutEffect(() => {
+    setPreviewFor(undefined);
     generation.current++; operation.current = false; dirtyRef.current = false; setStatusContext(context); setState(undefined); setDirty(false); setBusy(false); setMessage(''); setConflict(false); setAck(false); callback.current?.(false); busyCallback.current?.(false);
     return () => { generation.current++; operation.current = false; busyCallback.current?.(false); client.invalidate(); };
   }, [context, client]);
@@ -22,6 +26,7 @@ export function FieldDraftV2Editor({ client, token, tenant, flowId, parentRevisi
   const markDirty = () => { dirtyRef.current = true; setDirty(true); callback.current?.(true); setMessage(''); };
   async function load(preserve = false) {
     if (!allowed || operation.current) return;
+    setPreviewFor(undefined);
     const at = generation.current; operation.current = true; busyCallback.current?.(true); setBusy(true); setMessage('');
     try {
       const read = await client.read(token, tenant, flowId);
@@ -45,10 +50,14 @@ export function FieldDraftV2Editor({ client, token, tenant, flowId, parentRevisi
     setState({ ...current, fields: current.fields.map((value, i) => i === index ? { ...value, ...change } : value) });
     markDirty();
   }
+  let previewDefinition: ReturnType<typeof parseFieldDocumentV2> | undefined;
   let invalid = false;
-  try { if (current) parseFieldDocumentV2({schemaVersion: 2, fields: current.fields}); } catch { invalid = true; }
+  try { if (current) previewDefinition = parseFieldDocumentV2({schemaVersion: 2, fields: current.fields}); } catch { invalid = true; }
+  const canPreview = !!current && allowed && !busy && !conflict && !invalid && current.parent === parentRevision && (!current.stale || ack);
+  const previewOpen = canPreview && previewFor === previewIdentity;
   async function save() {
     if (!current || !allowed || operation.current || conflict || invalid || current.parent !== parentRevision || (current.stale && !ack)) return;
+    setPreviewFor(undefined);
     const at = generation.current; operation.current = true; busyCallback.current?.(true); setBusy(true); setMessage('');
     try {
       const receipt = await client.save(token, tenant, flowId, { fieldDraftVersion: 2, parentAuthoringVersion: 2, expectedRevision: current.revision, expectedFlowRevision: current.parent, definition: { schemaVersion: 2, fields: current.fields } });
@@ -86,6 +95,8 @@ export function FieldDraftV2Editor({ client, token, tenant, flowId, parentRevisi
       </fieldset>
       {invalid && <p>Give each edited question a label and check its character limits.</p>}
       <button type="button" disabled={!allowed || busy || conflict || invalid || current.parent !== parentRevision || (current.stale && !ack)} onClick={() => void save()}>Save questions</button>
+      <button type="button" disabled={!canPreview} onClick={() => { if (!canPreview || operation.current) return; setPreviewFor(previewOpen ? undefined : previewIdentity); }}>{previewOpen ? 'Close preview' : 'Try questions'}</button>
+      {previewOpen && previewDefinition && <FieldQuestionPreviewV2 definition={previewDefinition} resetKey={previewIdentity} />}
     </>}
     <p role="status">{statusContext === context ? (busy ? 'Working…' : message) : null}</p>
   </section>;
