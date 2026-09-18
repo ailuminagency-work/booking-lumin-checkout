@@ -1,0 +1,23 @@
+# W3 native browser navigation acceptance — in progress
+
+Base748c28314a90361af405ac1a1aaac582f2ba7199; isolated codex/wave3-text-browser/work/text-browser. Main protected152bb909, draftPR74c53deb exactCI34743351848 success unchanged. Parent748 CI absent and collaborator restriction still blocks draftPR creation. Workflow read; ledger validated W3.fields_and_workflows dependency-ready, W3/W4 active. No completed wave or release implied.
+
+Ownership: `/root/text_draft_client` owns standalone synthetic fixture TSX/HTML; `/root/field_contract_builder` owns Playwright spec/finite reporter; `/root/evidence_recovery_review` independent source/adversarial/Runtime review; `/root` owns fixed loopback server, Playwright configuration, execution and evidence.
+
+Fixture serves actual LocalTextEditorHost/TextFieldEditor with a fake deferred client, never real auth/database/providers. Fake saves are not CAS/persistence proof. Root bundles in memory using locked esbuild and serves only fixed GET paths on127.0.0.1:4189. No directory/file fallthrough. Browser requests must stay on exact loopback origin. No traces/screenshots/video; finite reporter only. One worker, no retries, bounded startup/test/global deadlines, Playwright-owned server cleanup.
+
+Uses existing scoped Chromium1243 at sibling mode-session-http cache; installed playwright manifest and executable ProductVersion both153.0.8010.12 (cf8fdf). No new/global browser installation. Own222lockeddependencies installed4577b6 offline with lifecycle scripts disabled. Candidate-local fixture typecheckd0c08f passed.
+
+Before execution root found initial query/hash test performed no hash change because fixture query link already supplied#questions; returned to spec builder for distinct target. External-request attempts must be counted and rejected, not silently ignored. Browser scope includes PUSH/REPLACE/POP, deferred busy, forced-context late settlement, safe markup and best-effort beforeunload behavior. Browser-native hash/history limitations must be reported if observed, never inferred from memory tests.
+
+First browser invocation278af0 failed before configuration loaded: rootpackage is CommonJS, so Playwright transpiled .ts configuration and import.meta was invalid. No browser launched (scoped process count0). Root repaired config to use its CommonJS __dirname without altering package/module settings. This is a configuration failure, not browser acceptance; fresh review/execution required.
+
+Corrected config E72E98D17610D81AAB1304E6A2D3122EF20605DA8B0FC49E77C026A2150A1615 passed independent narrow reviewa4d907. Configuration listing c86a0b completed with zero executed tests; its reporter status is not acceptance (requires seven actual passes). Fresh execution0de55d started under existing scoped Chromium with initial scoped browser process count0.
+
+Native execution753d7c passed with actual exit0 and finite receipt exactly seven passes, zero failures, zero skips. Initial/rechecked scoped Chromium process counts both0. Fixture listener probe b3793b returned ECONNREFUSED after teardown. Private output directory contains only45-byte .last-run.json, no screenshots/video/traces. Tests exercised actual Chromium native back/forward, native hash update, beforeunload dismiss/accept, busy guards and stale response fencing; all seven passed without retries. This is browser behavior against a fake client, not SQL/auth/provider certification.
+
+Coverage remains explicit: guarded account-switch button and parent-revision preservation have component coverage but are not separate cases in these seven browser tests. Network interception constrains page requests, not an OS-level network-isolation claim. Independent final source/artifact Runtime verification pending at this entry.
+
+Independent bounded Runtime PASS: finalsource hashes unchanged5f1e3b; artifact inspection925e93 verified only45-byte .last-run.json, passed/emptyfailedTests, SHA91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903, regularsinglelink/no observed reparse. Combined with actualexit0 finite7/0/0 and browserprocess0/listenerclosed, seven synthetic browser journeys accepted. This is observed artifact custody, not a guarantee of future custody.
+
+Root Integration approves tested review-branch publication only; exact-candidate CI/Release remain pending. No production source/default route changed. Next dependency-ready leaf: join this browser fixture to the existing disposable API/SQL harness for actual prompted read/save/CAS/tenant checks while retaining safe mocks for providers; add guarded internal account-switch and parent-revision browser cases. Do not promote W3 or activate hosted environments from synthetic-client acceptance alone.
