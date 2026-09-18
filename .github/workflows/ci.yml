@@ -29,6 +29,8 @@ jobs:
         run: python3 -B scripts/test_run_text_draft_tests.py
       - name: Verify text journey receipt and runner boundaries
         run: python3 -B scripts/run-text-journey-tests-test.py
+      - name: Verify local runtime diagnostic receipt boundaries
+        run: python3 -B scripts/test_windows_http_runtime_probe.py
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build

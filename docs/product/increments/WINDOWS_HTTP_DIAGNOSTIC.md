@@ -2,6 +2,8 @@
 
 Base `2a41cf31f1644f046df267c94cee01d86649f56e`; isolated `codex/wave3-text-runtime-diagnostic`. This is an opt-in local diagnostic, never a production launcher, deployment or replacement for the API regression suite.
 
+After execution/review, the unpublished branch was rebased onto the qualified parent `d2be6bf500f588ab79bf51d98f5c37cf0ddd129f`. The three diagnostic source/test Git blobs are unchanged; only the parent evidence/CI registration advanced. Three inert receipt tests are now registered in CI; the Windows socket workload remains an explicit local diagnostic.
+
 Ownership: `/root/field_contract_builder` built the dependency-free probe; `/root` built the parent supervisor and receipt tests; `/root/evidence_recovery_review` performed independent source/adversarial review. Root owns Integration and execution. The driver initially returned arbitrary parsed child JSON; independent review returned it, and root added exact finite schema/identity/count/cleanup/exit checks and canonical JSON rejection. Three adversarial inert tests passed independently31a4d4 before execution.
 
 The workload is fixed to127.0.0.1 with an ephemeral owned server:32 concurrent requests, at most20000 admissions or15seconds, two-second request timeout,25-second child watchdog,30-second parent bound, capped private output. Owned sockets/agent/server are cleaned up and closure is observed. The supervisor verifies two exact existing executable hashes, strips inherited environment settings, checks identical probe source around both runs and preserves private process evidence. No dependencies, providers, external endpoints, database, dump collection, machine settings or runtime installations are involved.
