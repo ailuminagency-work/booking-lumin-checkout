@@ -1,0 +1,21 @@
+# Isolated V2 question draft host
+
+Base `ef9c4fc419721c51d5777e4dbfc15dff965cbe13`; review branch `codex/wave3-field-host-v2`.
+
+This leaf composes the reviewed V2 question editor with a persistent local navigation host. It is explicitly enabled and unregistered. Reuse the existing generation-scoped guard store and navigation guard without changing V1 behavior, production routes, SQL, providers or publication. Parent dirty/revision state must reach the editor. Host identity changes must hide old fields and status before layout effects, invalidate pending work and reject stale reports.
+
+Ownership: `/root/field_contract_builder` owns new host/component tests; `/root/text_draft_client` owns separate adversarial tests; `/root/evidence_recovery_review` independently reviews architecture, source, tests and local Runtime scope; `/root` owns this report/ledger, integration and local Runtime Guardian coordination. No reviewer approves their own code.
+
+Baseline: main `152bb909c06fa8602d99f8b37d2cfe9f90aa5ead` remains protected; PR74 remains open draft at `c53debbaa9e6fa2acc7bfe2aca96026e4450a194`. Predecessor candidate has zero exact-candidate CI runs. Existing PR collaborator-access blocker remains unresolved. RC-2 ancestry, eight ledger tests and unchanged critical paths passed49dbbb; locked offline dependency install added222 packages3f4ae0.
+
+Pending: builder tests, independent/adversarial review and regression. This report does not assert acceptance. Static synchronous data-router routes only, after guard registration; no loaders/actions/lazy pending-navigation guarantee. Nonrouter context changes use requestChange; do not wrap router navigation with it. Browser unload delivery, hosted Auth, production registration, preview and full-wave acceptance remain separate.
+
+Architecture/source review170d5f/c60015/41448a found the scoped composition sound: both host status and Outlet are identity-fenced, child reports use active generation checks, pending client work is invalidated, and parent updates preserve local drafts. ParentDirty disables question editing/transport; this host does not include or protect a separate unsaved parent editor. Any such parent needs its own navigation authority before composition. Forced external prop changes fence old data but cannot prompt before the external action; controlled account/flow changes must use requestChange.
+
+Builder eight tests076524 and portal typechecka88002 passed. Frozen host SHA256 `90A08F27F5724DADDBA7A316AC781B2AD78D1B49BE6B3A9FE34F71818419CD9A`; unit test `A828F1E391C3FB7DE106DC677253941C5ABB275927C57828D232F6ED2310F2DB`. Independent adversarial eleven tests7b51df passed: immediate read/save navigation, dirty cancel/accept, five context replacements with old-save/new-busy races, parent revision/dirty retention and insertion-effect observation of host status. Final independent replay remains pending. Contamination tests/scancc4e85 passed with unchanged template warnings.
+
+Root full portal regression8b94db passed202 tests across28 files under qualified Node24.19 with two workers. Final adversarial typecheck8b1e48 passed; adversarial SHA256 `49DA903CFECA3E12256DCB4BDAD1AEC19BBA2B9328DD1FCBE1B19E3434967CB0`. Root hash/scope52630b verifies all three frozen files, unchanged prior editor/host/guards, packages, migrations, lockfile and CI. These are DOM/memory-router checks; no native-browser or hosted-system acceptance is implied.
+
+Final independent19-test replay2827b9 and hash/scope5615e0 accepted the bounded host, conditional on full portal regression. Root202-test result satisfies that condition. Staged five-file whitespace/scope checke8bb9b passes, including new untracked files. `/root` concurs for Integration/local Runtime Guardian review-branch publication only. No implementation defect required a repair cycle in this increment; preliminary architectural constraints were incorporated before freeze.
+
+Next: isolated V2 preview and then actual browser composition/keyboard/responsive/navigation qualification. Production registration, parent-editor composition, pending async navigation, actual authentication, exact-candidate CI and Release remain pending. W3/W4 stay building, W8 environment proof stays blocked; no live deployment, migrations or provider activation is authorized by these component results.
