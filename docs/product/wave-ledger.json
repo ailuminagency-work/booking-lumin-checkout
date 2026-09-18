@@ -252,7 +252,7 @@
       "kind": "capability",
       "owner": "W3",
       "status": "building",
-      "evidence": "docs/product/increments/TEXT_COMPARISON.md",
+      "evidence": "docs/product/increments/FIELD_V2_CONTRACT.md",
       "dependsOn": [
         "W3.1.local_candidate"
       ],
