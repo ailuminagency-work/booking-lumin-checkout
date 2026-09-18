@@ -52,8 +52,17 @@ export async function runTextJourneyBrowserCases(browser: Browser, config: Confi
     await question(a).fill('Winner question'); await saved(a); await question(b).fill('Keep conflicting edits');
     await b.getByRole('button', { name: 'Save questions', exact: true }).click(); await expect(b.getByText('Questions changed elsewhere. Your edits are kept. Discard edits and reload to continue.', { exact: true })).toBeVisible();
     await expect(question(b)).toHaveValue('Keep conflicting edits'); expect((await callbacks.inspectA())?.revision).toBe(2);
+    const beforeComparison = await callbacks.inspectA();
+    await b.getByRole('button', { name: 'Check latest version', exact: true }).click();
+    const comparison = b.getByRole('region', { name: 'Question comparison', exact: true });
+    await expect(comparison.getByText('Keep conflicting edits', { exact: true })).toBeVisible();
+    await expect(comparison.getByText('Winner question', { exact: true })).toBeVisible();
+    await expect(question(b)).toHaveValue('Keep conflicting edits');
+    await expect(b.getByRole('button', { name: 'Save questions', exact: true })).toBeDisabled();
+    expect(await callbacks.inspectA()).toEqual(beforeComparison);
     await dialog(b, false, () => b.getByLabel('Test identity').selectOption('ownerB')); await expect(question(b)).toHaveValue('Keep conflicting edits');
     await dialog(b, true, () => b.getByLabel('Test identity').selectOption('ownerB')); await expect(question(b)).toHaveCount(0);
+    await expect(comparison).toHaveCount(0);
 
     stage = 3;
     await question(a).fill('Rebound question'); const parent = await callbacks.advanceParentA(); expect(parent).toBe(2);

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TextFieldDraftClient } from '../../../../packages/flow-ui/src/textFieldDraftClient';
 import { TextQuestionPreview } from '../../../../packages/flow-ui/src/TextQuestionPreview';
+import { TextDraftComparison } from '../../../../packages/flow-ui/src/TextDraftComparison';
 import { parseTextFieldDocument, type TextField } from '@lumin/workflow';
 type Field = TextField & { readonly prompt?: string };
 export interface TextFieldEditorProps { client: TextFieldDraftClient; token: string; tenant: string; flowId: string; parentRevision: number; parentDirty: boolean; enabled: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void }
@@ -14,12 +15,13 @@ export function TextFieldEditor({ client, token, tenant, flowId, parentRevision,
   const [conflict, setConflict] = useState(false), [ack, setAck] = useState(false), [touched, setTouched] = useState<Set<string>>(new Set());
   const current = state?.context === context ? state : undefined;
   const [previewFor, setPreviewFor] = useState<typeof state>();
+  const [comparison, setComparison] = useState<{ context: object; definition: unknown }>();
   const previewDefinition = useMemo(() => {
     if (!current) return undefined;
     try { return parseTextFieldDocument({ schemaVersion: 1, fields: current.fields }); } catch { return undefined; }
   }, [current]);
   useEffect(() => {
-    generation.current++; operation.current = false; setState(undefined); setPreviewFor(undefined); setDirty(false); setBusy(false); setMessage(''); setConflict(false); setAck(false); setTouched(new Set()); callback.current?.(false); busyCallback.current?.(false);
+    generation.current++; operation.current = false; setState(undefined); setPreviewFor(undefined); setComparison(undefined); setDirty(false); setBusy(false); setMessage(''); setConflict(false); setAck(false); setTouched(new Set()); callback.current?.(false); busyCallback.current?.(false);
     return () => { generation.current++; operation.current = false; busyCallback.current?.(false); client.invalidate(); };
   }, [context, client]);
   const allowed = enabled && !parentDirty && Number.isSafeInteger(parentRevision) && parentRevision > 0;
@@ -27,13 +29,18 @@ export function TextFieldEditor({ client, token, tenant, flowId, parentRevision,
   async function load(preserve = false) {
     if (!allowed || operation.current) return;
     setPreviewFor(undefined);
+    setComparison(undefined);
     const at = generation.current; operation.current = true; busyCallback.current?.(true); setBusy(true); setMessage('');
     try {
       const read = await client.read(token, tenant, flowId);
       if (at !== generation.current) return;
       const revision = read.status === 'missing' ? 0 : read.receipt.draftRevision;
       const parent = read.status === 'missing' ? read.currentParentRevision : read.receipt.currentParentRevision;
-      if (preserve && current && revision !== current.revision) { setConflict(true); setMessage('Questions changed elsewhere. Your edits are kept. Discard edits and reload to continue.'); return; }
+      if (preserve && current && revision !== current.revision) {
+        setConflict(true);
+        if (read.status === 'present') setComparison({ context, definition: read.receipt.definition });
+        setMessage('Questions changed elsewhere. Your edits are kept. Discard edits and reload to continue.'); return;
+      }
       setState({ context, revision, parent, stale: read.status === 'present' && read.receipt.stale,
         fields: preserve && current ? current.fields : read.status === 'present' ? [...read.receipt.definition.fields] : [] });
       setAck(false); setConflict(false);
@@ -89,6 +96,7 @@ export function TextFieldEditor({ client, token, tenant, flowId, parentRevision,
       <button type="button" disabled={!allowed || busy || conflict || invalid || current.parent !== parentRevision || (current.stale && !ack)} onClick={() => void save()}>Save questions</button>
       <button type="button" disabled={busy || invalid || !previewDefinition} onClick={() => setPreviewFor(previewFor === current ? undefined : current)}>{previewFor === current ? 'Close preview' : 'Try questions'}</button>
       {previewFor === current && !invalid && previewDefinition && <TextQuestionPreview definition={previewDefinition} resetKey={context} />}
+      {comparison?.context === context && <TextDraftComparison localDefinition={{ schemaVersion: 1, fields: current.fields }} savedDefinition={comparison.definition} />}
     </>}
     <p role="status">{busy ? 'Working…' : message}</p>
   </section>;

@@ -4,6 +4,63 @@ import type { TextFieldDraftClient } from '../../../../packages/flow-ui/src/text
 import { TextFieldEditor } from './TextFieldEditor';
 afterEach(cleanup);
 const preview = () => screen.getByRole('region', { name: /question preview/i });
+const comparison = () => screen.getByRole('region', { name: 'Question comparison' });
+
+it('compares a fetched conflict without replacing edits, advancing CAS or writing', async () => {
+ const {client,props}=setup(); render(<TextFieldEditor {...props}/>); await load();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Keep local'}});
+ vi.mocked(client.read).mockResolvedValue({status:'present',receipt:{...receipt(),draftRevision:3,definition:{schemaVersion:1,fields:[{...field,prompt:'Saved remote'}]}}});
+ const dirtyCalls=props.onDirtyChange.mock.calls.length;
+ fireEvent.click(screen.getByText('Check latest version'));
+ await screen.findByRole('region',{name:'Question comparison'});
+ expect(within(comparison()).getByText('Keep local')).toBeInTheDocument();
+ expect(within(comparison()).getByText('Saved remote')).toBeInTheDocument();
+ expect(screen.getByLabelText('Question label')).toHaveValue('Keep local');
+ expect(screen.getByText('Save questions')).toBeDisabled(); expect(client.save).not.toHaveBeenCalled();
+ expect(props.onDirtyChange).toHaveBeenCalledTimes(dirtyCalls);
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Updated local'}});
+ expect(within(comparison()).getByText('Updated local')).toBeInTheDocument();
+ fireEvent.click(screen.getByText('Discard edits and reload'));
+ await waitFor(()=>expect(screen.queryByRole('region',{name:'Question comparison'})).toBeNull());
+ await waitFor(()=>expect(screen.getByLabelText('Question label')).toHaveValue('Saved remote'));
+ fireEvent.click(screen.getByText('Save questions')); await waitFor(()=>expect(client.save).toHaveBeenCalledTimes(1));
+ expect(vi.mocked(client.save).mock.calls[0]?.[3]).toMatchObject({expectedRevision:3});
+});
+
+it('refreshes comparison snapshots and clears the old snapshot on a failed refresh', async () => {
+ const {client,props}=setup(); render(<TextFieldEditor {...props}/>); await load();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Local'}});
+ for(const [revision,prompt] of [[3,'Remote one'],[4,'Remote two']] as const) {
+  vi.mocked(client.read).mockResolvedValue({status:'present',receipt:{...receipt(),draftRevision:revision,definition:{schemaVersion:1,fields:[{...field,prompt}]}}});
+  fireEvent.click(screen.getByText('Check latest version')); await waitFor(()=>expect(within(comparison()).getByText(prompt)).toBeInTheDocument());
+ }
+ expect(screen.queryByText('Remote one')).toBeNull();
+ vi.mocked(client.read).mockRejectedValue(new Error('unavailable')); fireEvent.click(screen.getByText('Check latest version'));
+ await screen.findByText('Questions could not be loaded. Try again.');
+ expect(screen.queryByRole('region',{name:'Question comparison'})).toBeNull();
+ expect(screen.getByLabelText('Question label')).toHaveValue('Local'); expect(screen.getByText('Save questions')).toBeDisabled(); expect(client.save).not.toHaveBeenCalled();
+});
+
+it('preserves invalid local edits while the comparison fails closed', async () => {
+ const {client,props}=setup(); render(<TextFieldEditor {...props}/>); await load();
+ fireEvent.change(screen.getByLabelText('Question label'),{target:{value:'Local'}});
+ fireEvent.change(screen.getByLabelText('Maximum characters'),{target:{value:''}});
+ vi.mocked(client.read).mockResolvedValue({status:'present',receipt:{...receipt(),draftRevision:3}});
+ fireEvent.click(screen.getByText('Check latest version')); await screen.findByText('Question comparison is unavailable.');
+ expect(screen.getByLabelText('Maximum characters')).toHaveValue(null);
+ expect(screen.getByLabelText('Question label')).toHaveValue('Local'); expect(screen.getByText('Save questions')).toBeDisabled(); expect(client.save).not.toHaveBeenCalled();
+});
+
+it.each(['token','tenant','flow','client','capability'])('hides fetched comparison immediately on %s change and ignores late read', async kind => {
+ const {client,props}=setup(); const view=render(<TextFieldEditor {...props}/>); await load();
+ const remote={status:'present' as const,receipt:{...receipt(),draftRevision:3,definition:{schemaVersion:1 as const,fields:[{...field,prompt:'Private remote'}]}}};
+ vi.mocked(client.read).mockResolvedValue(remote); fireEvent.click(screen.getByText('Check latest version')); await screen.findByRole('region',{name:'Question comparison'});
+ let finish!:(value:Awaited<ReturnType<TextFieldDraftClient['read']>>)=>void;
+ vi.mocked(client.read).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;})); fireEvent.click(screen.getByText('Check latest version'));
+ const changed={...props,...(kind==='token'?{token:'new-token'}:kind==='tenant'?{tenant:flowId}:kind==='flow'?{flowId:tenant}:kind==='client'?{client:setup().client}:{enabled:false})};
+ view.rerender(<TextFieldEditor {...changed}/>);
+ await act(async()=>finish(remote)); expect(screen.queryByText('Private remote')).toBeNull(); expect(screen.queryByRole('region',{name:'Question comparison'})).toBeNull(); expect(client.save).not.toHaveBeenCalled();
+});
 const tenant = '11111111-1111-4111-8111-111111111111', flowId = '22222222-2222-4222-8222-222222222222';
 const field = { key: 'legacy_internal', kind: 'text' as const, required: false, minLength: 0, maxLength: 100 };
 const receipt = (fields = [field]) => ({ textDraftVersion: 1 as const, parentAuthoringVersion: 2 as const, draftRevision: 2, savedParentRevision: 3, currentParentRevision: 3, definition: { schemaVersion: 1 as const, fields }, runtimePublishable: false as const, stale: false });
