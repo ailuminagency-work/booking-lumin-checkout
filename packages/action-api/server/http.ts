@@ -12,6 +12,8 @@ export interface FlowHttpOptions{
  repository:FlowRepository;
  /** Explicit local owner capability; absent compositions keep this route unavailable. */
  textFieldDraftRepository?:Pick<TextFieldDraftHttpDependencies,'call'>;
+ /** Off by default; only coordinated disposable-local editor compositions may enable. */
+ allowLocalTextPromptWrites?:boolean;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -55,6 +57,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const repository=options.textFieldDraftRepository;
     if(!repository)throw new FlowError('NOT_AVAILABLE');
     const result=await handleTextFieldDraftRequest(req,{
+     allowLocalPromptWrites:options.allowLocalTextPromptWrites === true,
      authenticateOwner:credential=>textTransport.authenticate(credential,options.authenticateOwner),
      call:async(name,params)=>{
       if(!textTransport.alive())throw new FlowError('NOT_AVAILABLE');

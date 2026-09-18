@@ -209,8 +209,8 @@ def configuration(profile,layout):
 
 def sources():
     migrations=sorted((ROOT/'supabase/migrations').glob('*.sql'))
-    if len(migrations)!=32 or [int(p.name[:4]) for p in migrations]!=list(range(1,33)):fail('SOURCE_CHANGED')
-    files=set(migrations)|{ROOT/'supabase/tests/local_harness.sql',ROOT/'supabase/tests/text_field_drafts_tests.sql',ROOT/'package-lock.json',ROOT/'package.json',ROOT/'tsconfig.base.json',pathlib.Path(__file__).resolve()}
+    if len(migrations)!=33 or [int(p.name[:4]) for p in migrations]!=list(range(1,34)):fail('SOURCE_CHANGED')
+    files=set(migrations)|{ROOT/'supabase/tests/local_harness.sql',ROOT/'supabase/tests/text_field_drafts_tests.sql',ROOT/'supabase/tests/text_field_prompts_tests.sql',ROOT/'package-lock.json',ROOT/'package.json',ROOT/'tsconfig.base.json',pathlib.Path(__file__).resolve()}
     for p in (ROOT/'packages').rglob('*'):
         if 'node_modules' not in p.relative_to(ROOT).parts and p.is_file() and p.suffix in ('.ts','.tsx','.json'):files.add(p)
     for name in ('text-field-drafts.integration.ts','text-field-drafts-concurrency.integration.ts'):
@@ -223,7 +223,7 @@ def receipt(raw,kind):
     common={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','connectionsClosed':True}
     counts=set()
     if kind=='TEXT_DRAFT_CONCURRENCY':common.update(cases=6,parityCases=45)
-    elif kind=='TEXT_DRAFT_NATIVE_HTTP':common.update(groups=8,serverClosed=True);counts={'httpRequests','textCalls','legacyCalls'}
+    elif kind=='TEXT_DRAFT_NATIVE_HTTP':common.update(groups=9,serverClosed=True);counts={'httpRequests','textCalls','legacyCalls'}
     else:fail('RECEIPT_REJECTED')
     if type(value) is not dict or set(value)!=set(common)|counts or any(type(value[k]) is not type(v) or value[k]!=v for k,v in common.items()):fail('RECEIPT_REJECTED')
     if any(type(value[k]) is not int or not 1<=value[k]<=1000 for k in counts):fail('RECEIPT_REJECTED')
@@ -248,7 +248,7 @@ def execute(profile,layout,private,result,tools,env,runner=run_private,clock=tim
             if getattr(error,'artifacts',None) is not None:retain(error.artifacts)
             raise
         retain(completed)
-        if code!=0:fail('SQL_FAILED' if index<=37 else 'NATIVE_FAILED')
+        if code!=0:fail('SQL_FAILED' if index<=39 else 'NATIVE_FAILED')
         return out,err
     def sql(database,*args,maximum=LIMIT):return invoke([tools['psql'],'-X','-w','-v','ON_ERROR_STOP=1','-d',database,*args],ROOT,env,maximum=maximum)
     out,_=sql('postgres','-qAt','-c',"select exists(select 1 from pg_database where datname='"+name+"')",maximum=128)
@@ -257,7 +257,8 @@ def execute(profile,layout,private,result,tools,env,runner=run_private,clock=tim
     crypto='create extension pgcrypto with schema public' if layout=='public' else 'create schema extensions; create extension pgcrypto with schema extensions'
     sql(name,'-c',crypto);sql(name,'-f',str(ROOT/'supabase/tests/local_harness.sql'))
     for migration in migrations:sql(name,'-f',str(migration))
-    sql(name,'-f',str(ROOT/'supabase/tests/text_field_drafts_tests.sql'));check()
+    sql(name,'-f',str(ROOT/'supabase/tests/text_field_drafts_tests.sql'))
+    sql(name,'-f',str(ROOT/'supabase/tests/text_field_prompts_tests.sql'));check()
     childenv={k:v for k,v in env.items() if not k.startswith('PG')}
     childenv.update(PGPASSWORD=env['PGPASSWORD'],PGPASSFILE=os.devnull,TEXT_DRAFT_TEST_PROFILE=profile,TEXT_DRAFT_TEST_DISPOSABLE='1',TEXT_DRAFT_TEST_LAYOUT=layout,TSX_DISABLE_CACHE='1')
     if profile=='github-ci':childenv['GITHUB_ACTIONS']='true'

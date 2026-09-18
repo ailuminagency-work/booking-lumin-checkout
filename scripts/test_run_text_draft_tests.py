@@ -2,7 +2,7 @@ import contextlib,importlib.util,io,json,os,pathlib,subprocess,tempfile,unittest
 from unittest.mock import patch
 p=pathlib.Path(__file__).with_name('run-text-draft-tests.py');spec=importlib.util.spec_from_file_location('runner',p);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 RACE={'schemaVersion':1,'kind':'TEXT_DRAFT_CONCURRENCY','status':'passed','category':'COMPLETE','cases':6,'parityCases':45,'connectionsClosed':True}
-HTTP={'schemaVersion':1,'kind':'TEXT_DRAFT_NATIVE_HTTP','status':'passed','category':'COMPLETE','groups':8,'httpRequests':30,'textCalls':20,'legacyCalls':4,'serverClosed':True,'connectionsClosed':True}
+HTTP={'schemaVersion':1,'kind':'TEXT_DRAFT_NATIVE_HTTP','status':'passed','category':'COMPLETE','groups':9,'httpRequests':30,'textCalls':20,'legacyCalls':4,'serverClosed':True,'connectionsClosed':True}
 class Tests(unittest.TestCase):
  def folder(self):
   temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);return pathlib.Path(temp.name)
@@ -16,10 +16,11 @@ class Tests(unittest.TestCase):
    private=self.folder();calls=[];result={'runId':'12345678-1234-4234-8234-123456789abc','steps':0}
    def run(args,cwd,env,folder,index,seconds,maximum):
     calls.append((args,env));self.assertLessEqual(seconds,65)
-    out=folder/(str(index)+'.stdout');err=folder/(str(index)+'.stderr');out.write_bytes(b'f\n' if index==1 else (json.dumps(RACE if index==38 else HTTP,separators=(',',':'))+'\n').encode() if index>=38 else b'');err.write_bytes(b'')
+    out=folder/(str(index)+'.stdout');err=folder/(str(index)+'.stderr');out.write_bytes(b'f\n' if index==1 else (json.dumps(RACE if index==40 else HTTP,separators=(',',':'))+'\n').encode() if index>=40 else b'');err.write_bytes(b'')
     return 0,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
-   m.execute('github-ci',layout,private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'postgres'},runner=run,source_check=lambda:([pathlib.Path(str(n)) for n in range(32)],{'test':'pin'}))
-   self.assertEqual(len(calls),39);self.assertIn('create database lumin_text_draft_12345678123442348234123456789abc',calls[1][0]);self.assertIn('schema '+layout,calls[2][0][-1]);self.assertEqual(calls[37][1]['TEXT_DRAFT_TEST_LAYOUT'],layout);self.assertEqual(calls[38][1]['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_12345678123442348234123456789abc');self.assertNotIn('PGHOST',calls[38][1])
+   m.execute('github-ci',layout,private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'postgres'},runner=run,source_check=lambda:([pathlib.Path(str(n)) for n in range(33)],{'test':'pin'}))
+   self.assertTrue(calls[37][0][-1].endswith('text_field_drafts_tests.sql'));self.assertTrue(calls[38][0][-1].endswith('text_field_prompts_tests.sql'))
+   self.assertEqual(len(calls),41);self.assertIn('create database lumin_text_draft_12345678123442348234123456789abc',calls[1][0]);self.assertIn('schema '+layout,calls[2][0][-1]);self.assertEqual(calls[39][1]['TEXT_DRAFT_TEST_LAYOUT'],layout);self.assertEqual(calls[40][1]['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_12345678123442348234123456789abc');self.assertNotIn('PGHOST',calls[40][1])
  def test_existing_db_stops_before_create(self):
   private=self.folder();calls=[]
   def run(args,cwd,env,folder,index,seconds,maximum):

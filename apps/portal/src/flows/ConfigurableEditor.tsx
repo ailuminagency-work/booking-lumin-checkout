@@ -1,19 +1,46 @@
+import { TextFieldEditor } from './TextFieldEditor';
+import type { TextFieldDraftClient } from '../../../../packages/flow-ui/src/textFieldDraftClient';
 import type { ModeEditorAdapter } from '../../../../packages/flow-ui/src/modeOwnerTypes';
 import { ConfigurablePreview } from './ConfigurablePreview';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConfigurableAuthoringV2, normalizeConfigurablePublication, FlowError, type FlowClient, type ServiceRender, type FlowList, type Answers, ConfigurableRender } from '@lumin/flow-ui';
 const errorText = (e: unknown) => e instanceof FlowError ? e.message : 'Check the question settings and try again.';
-export function ConfigurableEditor({ client, token, tenant, services, modeAdapter }: {
+export function ConfigurableEditor({ client, token, tenant, services, modeAdapter, textDraftClient, textDraftEnabled = false, onTextStateChange }: {
     client: FlowClient;
     token: string;
     tenant: string;
     services: ServiceRender[];
     modeAdapter?: ModeEditorAdapter;
+    textDraftClient?: TextFieldDraftClient;
+    textDraftEnabled?: boolean;
+    onTextStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
 }) {
     const [flows, setFlows] = useState<FlowList['flows']>([]), [flowId, setFlowId] = useState(''), [name, setName] = useState(''), [serviceId, setServiceId] = useState(''), [authoring, setAuthoring] = useState<ConfigurableAuthoringV2>(), [revision, setRevision] = useState(0), [busy, setBusy] = useState(false), [dirty, setDirty] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState(''), [origin, setOrigin] = useState(''), [hosted, setHosted] = useState(''), [answers, setAnswers] = useState<Answers>({});
-    useEffect(() => { modeAdapter?.selection(flowId, dirty); }, [flowId, dirty, modeAdapter?.selection]);
+    const [textState, setTextState] = useState({ dirty: false, busy: false });
+    const textRef = useRef(textState), textObserver = useRef(onTextStateChange);
+    useLayoutEffect(() => { textObserver.current = onTextStateChange; onTextStateChange?.(textRef.current); }, [onTextStateChange]);
+    function reportText(change: Partial<typeof textState>) { const next = { ...textRef.current, ...change }; textRef.current = next; setTextState(previous => previous.dirty === next.dirty && previous.busy === next.busy ? previous : next); textObserver.current?.(next); }
+    const textDirtyChanged = useCallback((value: boolean) => reportText({ dirty: value }), []);
+    const textBusyChanged = useCallback((value: boolean) => reportText({ busy: value }), []);
+    const textCapability = textDraftEnabled && !!textDraftClient;
+    useLayoutEffect(() => {
+        if (!textCapability) reportText({ dirty: false, busy: false });
+    }, [textCapability]);
+    const context = [client, token, tenant, textDraftClient] as const;
+    const selectedContext = useRef(context);
+    const sameContext = selectedContext.current.every((value, index) => value === context[index]);
+    useEffect(() => { modeAdapter?.selection(sameContext ? flowId : '', dirty || textState.dirty); }, [flowId, dirty, textState.dirty, sameContext, modeAdapter?.selection]);
+    function beforeChange(discardText: boolean) {
+        if (textRef.current.busy) return false;
+        // An existing mode adapter receives aggregate dirty state and owns its prompt.
+        if (modeAdapter?.beforeDiscard && (discardText || dirty)) return modeAdapter.beforeDiscard();
+        return !discardText || !textRef.current.dirty || window.confirm('Discard unsaved text questions and load another questionnaire?');
+    }
     const generation = useRef(0), service = services.find(s => s.id === serviceId);
     useEffect(() => {
+        selectedContext.current = context;
+        setFlowId(''); setAuthoring(undefined); setRevision(0); setDirty(false); setBusy(false); setFlows([]);
+        reportText({ dirty: false, busy: false });
         const at = ++generation.current;
         void client.configurableFlows(token, tenant).then(r => {
             if (at === generation.current)
@@ -23,7 +50,7 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
                 setError(errorText(e));
         });
         return () => { generation.current++; };
-    }, [client, token, tenant]);
+    }, [client, token, tenant, textDraftClient]);
     let preview: ConfigurableRender | undefined;
     try {
         if (service && authoring)
@@ -35,9 +62,10 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
     function fresh() {
         if (modeAdapter?.active && !modeAdapter.active())
             return;
-        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+        if (!beforeChange(true))
             return;
         generation.current++;
+        reportText({ dirty: false, busy: false });
         setFlowId(crypto.randomUUID());
         setName('New configurable request form');
         setRevision(0);
@@ -66,7 +94,7 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
             return;
         if (!id)
             return;
-        if (modeAdapter?.beforeDiscard && !modeAdapter.beforeDiscard())
+        if (!beforeChange(id !== flowId))
             return;
         await task(async (at) => {
             const d = await client.configurableDraft(token, tenant, id);
@@ -74,6 +102,7 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
                 return;
             if (!services.some(s => s.id === d.serviceId))
                 throw Error('Unavailable service');
+            if (d.flowId !== flowId) reportText({ dirty: false, busy: false });
             setFlowId(d.flowId);
             setServiceId(d.serviceId);
             setName(d.name);
@@ -87,6 +116,7 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
         });
     }
     async function save() {
+        if (textRef.current.busy || !sameContext) return;
         if (modeAdapter?.active && !modeAdapter.active())
             return;
         if (!service || !authoring)
@@ -116,6 +146,7 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
         });
     }
     async function publish() {
+        if (textRef.current.busy || textRef.current.dirty || !sameContext) return;
         if (modeAdapter?.active && !modeAdapter.active())
             return;
         if (modeAdapter) {
@@ -155,8 +186,9 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
             setError('A condition must follow its source question. Remove that condition before reordering.');
         }
     }
-    return <section><h2>Configurable questionnaires</h2><p>Choose optional questions, adjust labels and allowed quantities, and show follow-up questions based on earlier answers. Required service questions always remain.</p><fieldset disabled={busy}><label>Saved configurable questionnaire<select value={flowId} onChange={e => void reload(e.target.value)}><option value="">Choose a configurable questionnaire</option>{flows.map(f => <option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" disabled={!services.length} onClick={fresh}>New configurable questionnaire</button></fieldset>
- {flowId && service && authoring && <><fieldset disabled={busy}><label>Configurable questionnaire name<input value={name} maxLength={200} onChange={e => { setName(e.target.value); setDirty(true); setHosted(''); setMessage(''); }}/></label><label>Service for configurable questionnaire<select value={serviceId} onChange={e => {
+    if (!sameContext) return <section><h2>Configurable questionnaires</h2><p>Loading this business�</p></section>;
+    return <section><h2>Configurable questionnaires</h2><p>Choose optional questions, adjust labels and allowed quantities, and show follow-up questions based on earlier answers. Required service questions always remain.</p><fieldset disabled={busy || textState.busy}><label>Saved configurable questionnaire<select value={flowId} onChange={e => void reload(e.target.value)}><option value="">Choose a configurable questionnaire</option>{flows.map(f => <option key={f.flowId} value={f.flowId}>{f.name}</option>)}</select></label><button type="button" disabled={!services.length} onClick={fresh}>New configurable questionnaire</button></fieldset>
+ {flowId && service && authoring && <><fieldset disabled={busy || textState.busy}><label>Configurable questionnaire name<input value={name} maxLength={200} onChange={e => { setName(e.target.value); setDirty(true); setHosted(''); setMessage(''); }}/></label><label>Service for configurable questionnaire<select value={serviceId} onChange={e => {
                 const s = services.find(s => s.id === e.target.value);
                 if (s)
                     selectService(s);
@@ -188,6 +220,6 @@ export function ConfigurableEditor({ client, token, tenant, services, modeAdapte
                             next.config.steps[i]!.visibleWhen = { field: source.id, op: source.kind === 'single_choice' ? 'eq' : 'includes', value: source.choices[0]!.id };
                     })}><option value="">Always visible</option>{sources.map(s => <option key={s.id} value={s.id}>{s.prompt}</option>)}</select></label>{step.visibleWhen && <label>Answer that shows {q.prompt}<select value={step.visibleWhen.value} onChange={e => updateField(q.id, next => { next.config.steps[i]!.visibleWhen!.value = e.target.value; })}>{sources.find(s => s.id === step.visibleWhen!.field)?.choices.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>}</li>;
             })}</ol>
- {!preview && <p role="alert">Check included questions, conditions, labels and quantity limits before saving.</p>}<button type="button" disabled={!dirty || !preview || !name.trim()} onClick={() => void save()}>Save configurable questionnaire</button><button type="button" disabled={!revision} onClick={() => void reload()}>Refresh configurable saved version (discard edits)</button><p>{revision ? `Saved revision ${revision}` : 'Not saved'}{dirty ? ' · Unsaved changes' : ''}</p>{!modeAdapter && <label>Configurable customer site origin (HTTPS)<input type="url" value={origin} onChange={e => { setOrigin(e.target.value); setHosted(''); setMessage(''); }}/></label>}<button type="button" disabled={dirty || !revision || (modeAdapter ? modeAdapter.locked : !origin)} onClick={() => void publish()}>Publish configurable saved version</button></fieldset>{preview && <ConfigurablePreview key={JSON.stringify([flowId, serviceId, revision, authoring])} render={preview} answers={answers} onChange={setAnswers}/>}</>}
+ {!preview && <p role="alert">Check included questions, conditions, labels and quantity limits before saving.</p>}<button type="button" disabled={!dirty || !preview || !name.trim()} onClick={() => void save()}>Save configurable questionnaire</button><button type="button" disabled={!revision} onClick={() => void reload()}>Refresh configurable saved version (discard edits)</button><p>{revision ? `Saved revision ${revision}` : 'Not saved'}{dirty ? ' · Unsaved changes' : ''}</p>{!modeAdapter && <label>Configurable customer site origin (HTTPS)<input type="url" value={origin} onChange={e => { setOrigin(e.target.value); setHosted(''); setMessage(''); }}/></label>}<button type="button" disabled={dirty || textState.dirty || textState.busy || !revision || (modeAdapter ? modeAdapter.locked : !origin)} onClick={() => void publish()}>Publish configurable saved version</button></fieldset>{textCapability && textDraftClient && revision > 0 && <TextFieldEditor client={textDraftClient} token={token} tenant={tenant} flowId={flowId} parentRevision={revision} parentDirty={dirty || busy} enabled={true} onDirtyChange={textDirtyChanged} onBusyChange={textBusyChanged}/>}{preview && <ConfigurablePreview key={JSON.stringify([flowId, serviceId, revision, authoring])} render={preview} answers={answers} onChange={setAnswers}/>}</>}
  {error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}{busy && <p role="status">Saving or loading…</p>}{hosted && <a href={hosted} target="_blank" rel="noopener noreferrer">Open configurable hosted request form</a>}<p>Requests remain unconfirmed. No payment or availability reservation.</p></section>;
 }

@@ -26,6 +26,9 @@ export function nativeConfiguration(env: NodeJS.ProcessEnv, platform: NodeJS.Pla
     query_timeout: 6000, application_name: 'lumin_text_draft_native_http' };
 }
 export function fixtureDefinition() { return { schemaVersion: 1, fields: [{ key: 'notes', kind: 'text', required: true, minLength: 1, maxLength: 100 }] }; }
+export function fixturePromptDefinition() {
+  return { ...fixtureDefinition(), fields: fixtureDefinition().fields.map(field => ({ ...field, prompt: '  Question \u{1f600} e\u0301 <b>plain text</b>  ' })) };
+}
 const authoring = () => ({ authoringVersion: 2, config: { key: 'native', steps: [{ key: 'count', questionKey: 'count', kind: 'question', required: true }] }, questionOverrides: {} });
 async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -89,8 +92,8 @@ export async function runTextDraftNativeIntegration(): Promise<number> {
     const legacyRepository = createFlowRepository(pool), textRepository = createTextFieldDraftRepository(pool);
     const legacy: FlowRepository = { call(name, params) { result.legacyCalls++; return tracked(() => legacyRepository.call(name, params)); } };
     const text: Pick<TextFieldDraftHttpDependencies, 'call'> = { call(name, params) { result.textCalls++; return tracked(() => textRepository.call(name, params)); } };
-    async function start(enabled: boolean) {
-      const server = createFlowHttpServer({ repository: legacy, ...(enabled ? { textFieldDraftRepository: text } : {}), authenticateOwner: async token => identityTokens.get(token) ?? null, ownerOrigins: [OWNER_ORIGIN], customerOrigins: [CUSTOMER_ORIGIN] });
+    async function start(enabled: boolean, allowLocalTextPromptWrites = false) {
+      const server = createFlowHttpServer({ repository: legacy, allowLocalTextPromptWrites, ...(enabled ? { textFieldDraftRepository: text } : {}), authenticateOwner: async token => identityTokens.get(token) ?? null, ownerOrigins: [OWNER_ORIGIN], customerOrigins: [CUSTOMER_ORIGIN] });
       servers.push(server); server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
       await bounded(new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); }); }), 5000);
       const address = server.address(); assert.ok(address && typeof address === 'object'); return `http://127.0.0.1:${address.port}`;
@@ -130,10 +133,38 @@ export async function runTextDraftNativeIntegration(): Promise<number> {
     const disabledBase = await start(false);
     assert.equal((await raw(disabledBase, `/api/text-field-drafts/${f.flowA}?tenantId=${f.tenantA}`)).status, 404);
     for (const route of [legacyRoute, parentRoute]) assert.equal((await raw(disabledBase, route)).status, 200); result.groups++;
+    // Isolated B flow: capability gating is enforced before the repository call.
+    const promptedRequest = (revision: number, parent: number) => ({ ...request(revision, parent), definition: fixturePromptDefinition() });
+    const beforePromptCalls = result.textCalls;
+    await denied(client.save(tokenB, f.tenantB, f.flowB, promptedRequest(0, 1)), 'UNSUPPORTED_CONFIG');
+    assert.equal(result.textCalls, beforePromptCalls);
+    assert.equal((await observer.query('select count(*)::integer as count from public.text_field_drafts where tenant_id=$1 and flow_id=$2', [f.tenantB, f.flowB])).rows[0].count, 0);
+    const promptBase = await start(true, true);
+    const promptFetcher: typeof fetch = (input, init) => {
+      assert.equal(typeof input, 'string'); assert.equal(new URL(input as string).origin, promptBase);
+      const headers = new Headers(init?.headers); headers.set('Origin', OWNER_ORIGIN);
+      result.httpRequests++; return fetch(input, { ...init, headers });
+    };
+    const promptClient = createTextFieldDraftClient(promptBase, true, promptFetcher); clients.push(promptClient);
+    const promptSaved = await promptClient.save(tokenB, f.tenantB, f.flowB, promptedRequest(0, 1));
+    assert.equal(promptSaved.draftRevision, 1); assert.deepEqual(promptSaved.definition, fixturePromptDefinition());
+    const promptRead = await promptClient.read(tokenB, f.tenantB, f.flowB);
+    assert.equal(promptRead.status, 'present'); if (promptRead.status === 'present') assert.deepEqual(promptRead.receipt, promptSaved);
+    await denied(promptClient.save(tokenB, f.tenantB, f.flowB, promptedRequest(0, 1)), 'CONFLICT');
+    await observer.query('select public.save_configurable_flow_draft($1,$2,$3,$4,1,$5,$6::jsonb)', [f.ownerB, f.tenantB, f.flowB, f.serviceB, 'Edited prompt parent', JSON.stringify(authoring())]);
+    await denied(promptClient.save(tokenB, f.tenantB, f.flowB, promptedRequest(1, 1)), 'CONFLICT');
+    const promptStale = await promptClient.read(tokenB, f.tenantB, f.flowB);
+    assert.equal(promptStale.status, 'present');
+    if (promptStale.status === 'present') {
+      assert.equal(promptStale.receipt.stale, true); assert.equal(promptStale.receipt.draftRevision, 1);
+      assert.equal(promptStale.receipt.savedParentRevision, 1); assert.equal(promptStale.receipt.currentParentRevision, 2);
+      assert.deepEqual(promptStale.receipt.definition, fixturePromptDefinition());
+    }
+    result.groups++;
     await observer.query("update public.tenant_members set role='BUSINESS_STAFF' where tenant_id=$1 and user_id=$2", [f.tenantA, f.ownerA]);
     await denied(client.read(tokenA, f.tenantA, f.flowA), 'FORBIDDEN'); await denied(client.save(tokenA, f.tenantA, f.flowA, request(3, 2)), 'FORBIDDEN'); result.groups++;
     assert.equal((await observer.query('select draft_revision::integer as revision from public.text_field_drafts where tenant_id=$1 and flow_id=$2', [f.tenantA, f.flowA])).rows[0].revision, 3);
-    assert.equal(connectionFault, false); assert.equal(result.groups, 8); assert.ok(result.textCalls > 0 && result.legacyCalls > 0); result.status = 'passed'; result.category = 'COMPLETE';
+    assert.equal(connectionFault, false); assert.equal(result.groups, 9); assert.ok(result.textCalls > 0 && result.legacyCalls > 0); result.status = 'passed'; result.category = 'COMPLETE';
   } catch { result.status = 'failed'; }
   finally {
     for (const client of clients) client.invalidate();

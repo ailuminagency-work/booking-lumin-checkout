@@ -5,6 +5,9 @@ import { Uuid } from './contracts';
 import { FlowError, type FlowCode } from './repository';
 export type TextFieldDraftRpc = 'get_text_field_draft' | 'save_text_field_draft';
 export interface TextFieldDraftHttpDependencies {
+  /** Coordinated disposable-local editor capability, never accepted from request data.
+   * Hosted or mixed-version consumers require version negotiation before activation. */
+  allowLocalPromptWrites?: boolean;
   /** Must resolve a freshly verified identity; never take actor IDs from caller JSON. */
   authenticateOwner(credential: string): Promise<string | null>;
   /** Trusted fixed RPC adapter; SQL must independently authorize actor + tenant + flow. */
@@ -79,6 +82,7 @@ export async function handleTextFieldDraftRequest(req: IncomingMessage, dependen
     if (length !== undefined && bytes.length !== Number(length)) return invalid();
     let parsed;
     try { parsed = parseTextFieldDraftSave(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))); } catch { return invalid(); }
+    if (parsed.definition.fields.some(field => Object.hasOwn(field, 'prompt')) && dependencies.allowLocalPromptWrites !== true) throw new FlowError('UNSUPPORTED_CONFIG');
     const raw = await dependencies.call('save_text_field_draft', [actor, tenant, flow, parsed.expectedRevision, parsed.expectedFlowRevision, parsed.definition]);
     let data;
     try { data = parseTextFieldDraftReceipt(raw); } catch { throw new FlowError('INTERNAL_ERROR'); }

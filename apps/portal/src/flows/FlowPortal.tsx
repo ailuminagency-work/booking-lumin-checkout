@@ -1,7 +1,7 @@
 import type { ModeEditorAdapter } from '../../../../packages/flow-ui/src/modeOwnerTypes';
 import { RosterPanel } from '../roster/RosterPanel';
 import { ConfigurableEditor } from './ConfigurableEditor';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createFlowClient, FlowError, QuestionForm, type FlowClient, type ServiceRender, type FlowConfig, type FlowList, type Answers } from '@lumin/flow-ui';
 import { PortalShell } from '../components/Layout';
 import { PortalRoutes } from '../components/PortalRoutes';
@@ -148,15 +148,32 @@ export function Editor({ client, token, tenant, services, initialFlows, modeAdap
             }}>{services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><ol>{config.steps.map((step, i) => <li key={step.key}>{service.questions.find(q => q.id === step.questionKey)?.prompt} <button type="button" disabled={i === 0} aria-label={`Move question ${i + 1} up`} onClick={() => { const steps = [...config.steps]; [steps[i - 1], steps[i]] = [steps[i]!, steps[i - 1]!]; setConfig({ ...config, steps }); setDirty(true); setHosted(''); }}>Move up</button></li>)}</ol><button type="button" onClick={() => void save()} disabled={!name.trim() || !dirty}>Save questionnaire</button><button type="button" onClick={() => void reload()} disabled={!revision}>Refresh saved version (discard edits)</button><p>{revision ? `Saved revision ${revision}` : 'Not saved'}{dirty ? ' · Unsaved changes' : ''}</p>{!modeAdapter && <label>Customer site origin (HTTPS)<input type="url" placeholder="https://your-customer-site.example" value={origin} onChange={e => { setOrigin(e.target.value); setHosted(''); }}/></label>}<button type="button" onClick={() => void publish()} disabled={dirty || !revision || (modeAdapter ? modeAdapter.locked : !origin)}>Publish saved version</button></fieldset><h2>Customer question preview</h2><p>Preview only. Answers here are not submitted.</p><QuestionForm service={service} config={config} answers={answers} onChange={setAnswers}/></>}
  {busy && <p role="status">Saving or loading…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}{hosted && <p><a href={hosted} target="_blank" rel="noopener noreferrer">Open hosted request form</a></p>}<p>Requests remain unconfirmed. Publishing does not charge a customer or reserve availability.</p></section>;
 }
-export function VersionedEditor(props: Parameters<typeof Editor>[0]) {
+export function VersionedEditor(props: Parameters<typeof Editor>[0] & {
+    textDraftClient?: import('../../../../packages/flow-ui/src/textFieldDraftClient').TextFieldDraftClient;
+    textDraftEnabled?: boolean;
+    onTextStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+}) {
     const [version, setVersion] = useState<1 | 2>(1);
-    return <><nav aria-label="Questionnaire version"><button onClick={() => {
-            if (!props.modeAdapter?.beforeDiscard || props.modeAdapter.beforeDiscard())
-                setVersion(1);
-        }}>Standard questionnaires</button><button onClick={() => {
-            if (!props.modeAdapter?.beforeDiscard || props.modeAdapter.beforeDiscard())
-                setVersion(2);
-        }}>Configurable questionnaires</button></nav>{version === 1 ? <Editor {...props}/> : <ConfigurableEditor {...props}/>}</>;
+    const textState = useRef({ dirty: false, busy: false });
+    const outward = useRef(props.onTextStateChange);
+    useLayoutEffect(() => {
+        outward.current = props.onTextStateChange;
+        outward.current?.(textState.current);
+    }, [props.onTextStateChange]);
+    const reportTextState = useMemo(() => (state: { dirty: boolean; busy: boolean }) => {
+        textState.current = { dirty: state.dirty, busy: state.busy };
+        outward.current?.(textState.current);
+    }, []);
+    useEffect(() => () => { reportTextState({ dirty: false, busy: false }); }, [reportTextState]);
+    function switchVersion(next: 1 | 2) {
+        if (next === version || textState.current.busy) return;
+        if (props.modeAdapter?.beforeDiscard) {
+            if (!props.modeAdapter.beforeDiscard()) return;
+        } else if (textState.current.dirty && !confirm('Discard unsaved text questions?')) return;
+        reportTextState({ dirty: false, busy: false });
+        setVersion(next);
+    }
+    return <><nav aria-label="Questionnaire version"><button onClick={() => switchVersion(1)}>Standard questionnaires</button><button onClick={() => switchVersion(2)}>Configurable questionnaires</button></nav>{version === 1 ? <Editor {...props}/> : <ConfigurableEditor {...props} textDraftEnabled={props.textDraftEnabled ?? false} onTextStateChange={reportTextState}/>}</>;
 }
 export function FlowPortal({ apiUrl }: {
     apiUrl: string;

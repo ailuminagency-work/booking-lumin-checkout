@@ -165,6 +165,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/configurable_flow_tests.sql
       - name: Verify owner text-field draft isolation and revision control
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/text_field_drafts_tests.sql
+      - name: Verify text prompt validation and revision control
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/text_field_prompts_tests.sql
       - name: Verify configurable JavaScript and SQL fixture parity
         run: python3 supabase/tests/configurable_flow_parity.py
       # SQL suites roll back their fixtures. The final-slot harness requires

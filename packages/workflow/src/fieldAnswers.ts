@@ -2,18 +2,18 @@
  * Callers must enforce raw request-byte limits before JSON decoding. Reflective proxy
  * traps cannot be avoided in JavaScript; failures reject, and getters are never read.
  */
-export interface TextField { readonly key: string; readonly kind: 'text'; readonly required: boolean; readonly minLength: number; readonly maxLength: number }
+export interface TextField { readonly key: string; readonly kind: 'text'; readonly required: boolean; readonly minLength: number; readonly maxLength: number; readonly prompt?: string }
 export interface TextFieldDocument { readonly schemaVersion: 1; readonly fields: readonly TextField[] }
 export interface TextAnswerDocument { readonly schemaVersion: 1; readonly answers: readonly Readonly<{ key: string; value: string }>[] }
 const reject = (): never => { throw new Error('INVALID_TEXT_CONTRACT'); };
-function record(input: unknown, keys: readonly string[]): Record<string, unknown> {
+function record(input: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (!input || typeof input !== 'object') return reject();
   const proto = Object.getPrototypeOf(input);
   if (proto !== Object.prototype && proto !== null) return reject();
   const own = Reflect.ownKeys(input);
-  if (own.length !== keys.length || own.some(key => typeof key !== 'string' || !keys.includes(key))) return reject();
+  if (own.length < keys.length || own.length > keys.length + optional.length || own.some(key => typeof key !== 'string' || (!keys.includes(key) && !optional.includes(key)))) return reject();
   const result: Record<string, unknown> = Object.create(null);
-  for (const key of keys) {
+  for (const key of [...keys, ...optional.filter(key => own.includes(key))]) {
     const descriptor = Object.getOwnPropertyDescriptor(input, key);
     if (!descriptor || !('value' in descriptor) || !descriptor.enumerable) return reject();
     result[key] = descriptor.value;
@@ -42,18 +42,28 @@ function bound(input: unknown): number {
   if (typeof input !== 'number' || !Number.isInteger(input) || input < 0 || input > 4096) return reject();
   return input;
 }
+/** Exact plain-text metadata; omission is preserved. Older strict readers need a coordinated rollout. */
+function prompt(input: unknown): string {
+  if (typeof input !== 'string' || input.length > 400 || input.trim().length === 0) return reject();
+  let count = 0;
+  for (const character of input) {
+    const code = character.codePointAt(0)!;
+    if (code === 0 || (code >= 0xd800 && code <= 0xdfff) || code === 10 || code === 13 || code === 0x2028 || code === 0x2029 || ++count > 200) return reject();
+  }
+  return input;
+}
 function parseFields(input: unknown): TextFieldDocument {
   const document = record(input, ['schemaVersion', 'fields']);
   if (document.schemaVersion !== 1) return reject();
   const seen = new Set<string>();
   const fields = list(document.fields).map(value => {
-    const item = record(value, ['key', 'kind', 'required', 'minLength', 'maxLength']);
+    const item = record(value, ['key', 'kind', 'required', 'minLength', 'maxLength'], ['prompt']);
     const fieldKey = key(item.key);
     if (seen.has(fieldKey) || item.kind !== 'text' || typeof item.required !== 'boolean') return reject();
     seen.add(fieldKey);
     const minLength = bound(item.minLength), maxLength = bound(item.maxLength);
     if (minLength > maxLength || (item.required && maxLength === 0)) return reject();
-    return Object.freeze({ key: fieldKey, kind: 'text' as const, required: item.required, minLength, maxLength });
+    return Object.freeze({ key: fieldKey, kind: 'text' as const, required: item.required, minLength, maxLength, ...('prompt' in item ? { prompt: prompt(item.prompt) } : {}) });
   });
   return Object.freeze({ schemaVersion: 1 as const, fields: Object.freeze(fields) });
 }
