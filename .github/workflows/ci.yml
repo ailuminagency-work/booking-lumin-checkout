@@ -27,6 +27,8 @@ jobs:
         run: node --test scripts/mode-document-tls.test.mjs scripts/mode-document-artifacts.test.mjs scripts/run-mode-document-browser.test.mjs scripts/collect-mode-document-artifacts.test.mjs
       - name: Verify text-draft test-runner boundaries
         run: python3 -B scripts/test_run_text_draft_tests.py
+      - name: Verify text journey receipt and runner boundaries
+        run: python3 -B scripts/run-text-journey-tests-test.py
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
