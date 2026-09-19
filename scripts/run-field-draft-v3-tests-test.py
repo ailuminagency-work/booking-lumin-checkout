@@ -10,6 +10,8 @@ def v3_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_CONCURRENCY','st
 
 def v3_repository_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_REPOSITORY','status':'passed','category':'COMPLETE','cases':7,'connectionsClosed':True}
 
+def v3_http_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_HTTP','status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'serverClosed':True,'connectionsClosed':True}
+
 def raw(v):return (json.dumps(v,separators=(',',':'))+'\n').encode()
 class Tests(unittest.TestCase):
  def test_exact_receipt(self):
@@ -44,7 +46,7 @@ class Tests(unittest.TestCase):
     kwargs['after_migration'](pathlib.Path('0034_field_drafts_v2.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),2);self.assertTrue(seed[1][-1].endswith('field_drafts_v2_tests.sql'));kwargs['before_migration'](pathlib.Path('0035_field_drafts_v3.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),3);self.assertTrue(seed[2][-1].endswith('field_drafts_v3_upgrade_fixture.sql'));kwargs['after_migration'](pathlib.Path('0035_field_drafts_v3.sql'),lambda *a:seed.append(a));self.assertEqual(len(seed),4);self.assertTrue(seed[3][-1].endswith('field_drafts_v3_tests.sql'));args[3]['steps']=prior_steps
    def runner(args,cwd,env,where,index,seconds,maximum):
     calls.append((args,env,index,seconds,maximum));out=where/(str(index)+'.stdout');err=where/(str(index)+'.stderr')
-    out.write_bytes(payload if payload is not None and index==target else raw(value() if index==48 else repository_value() if index==49 else http_value() if index==50 else v3_value() if index==51 else v3_repository_value()));err.write_bytes(stderr if index==target else b'')
+    out.write_bytes(payload if payload is not None and index==target else raw(value() if index==48 else repository_value() if index==49 else http_value() if index==50 else v3_value() if index==51 else v3_repository_value() if index==52 else v3_http_value()));err.write_bytes(stderr if index==target else b'')
     if mutate and index==target:pin['fixed']='changed'
     return code if index==target else 0,out,err,{out.name:m.base.snapshot(out),err.name:m.base.snapshot(err)}
    with patch.object(m.base,'execute',prior):
@@ -53,8 +55,8 @@ class Tests(unittest.TestCase):
      self.assertEqual(len(evidence),2*len(calls));m.base.verify_evidence(private,evidence)
      self.assertNotIn('sourceDigest',result)
      raise
-   self.assertEqual(result['steps'],52);self.assertEqual(len(evidence),10)
-   self.assertEqual([c[2] for c in calls],[48,49,50,51,52]);self.assertTrue(calls[1][0][-1].endswith('field-drafts-v2-repository.integration.ts'));self.assertTrue(calls[2][0][-1].endswith('field-drafts-v2-http.integration.ts'))
+   self.assertEqual(result['steps'],53);self.assertEqual(len(evidence),12)
+   self.assertEqual([c[2] for c in calls],[48,49,50,51,52,53]);self.assertTrue(calls[1][0][-1].endswith('field-drafts-v2-repository.integration.ts'));self.assertTrue(calls[2][0][-1].endswith('field-drafts-v2-http.integration.ts'))
    env=calls[0][1];self.assertNotIn('PGHOST',env);self.assertEqual(env['FIELD_DRAFT_V2_CONCURRENCY_APPROVED'],'1');self.assertEqual(env['TEXT_DRAFT_TEST_LAYOUT'],'extensions')
    self.assertEqual(env['TEXT_DRAFT_CONCURRENCY_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertLessEqual(calls[0][3],95)
    self.assertNotIn('FIELD_DRAFT_V2_REPOSITORY_APPROVED',env)
@@ -63,6 +65,7 @@ class Tests(unittest.TestCase):
    native_v3=calls[3][1];self.assertEqual(native_v3['FIELD_DRAFT_V3_CONCURRENCY_APPROVED'],'1');self.assertLessEqual(calls[3][3],min(95,510-elapsed));self.assertTrue(calls[3][0][-1].endswith('field-drafts-v3-concurrency.integration.ts'))
    repository_v3=calls[4][1];self.assertEqual(repository_v3['FIELD_DRAFT_V3_REPOSITORY_APPROVED'],'1');self.assertEqual(repository_v3['TEXT_DRAFT_HTTP_DATABASE'],native['TEXT_DRAFT_HTTP_DATABASE']);self.assertLessEqual(calls[4][3],min(60,510-elapsed));self.assertTrue(calls[4][0][-1].endswith('field-drafts-v3-repository.integration.ts'));self.assertNotIn('FIELD_DRAFT_V3_REPOSITORY_APPROVED',native_v3)
    http=calls[2][1];self.assertEqual(http['FIELD_DRAFT_V2_HTTP_APPROVED'],'1');self.assertEqual(http['TEXT_DRAFT_HTTP_DATABASE'],native['TEXT_DRAFT_HTTP_DATABASE']);self.assertLessEqual(calls[2][3],min(80,510-elapsed))
+   http_v3=calls[5][1];self.assertEqual(http_v3['FIELD_DRAFT_V3_HTTP_APPROVED'],'1');self.assertNotIn('FIELD_DRAFT_V3_HTTP_APPROVED',repository_v3);self.assertEqual(http_v3['TEXT_DRAFT_HTTP_DATABASE'],native['TEXT_DRAFT_HTTP_DATABASE']);self.assertLessEqual(calls[5][3],min(80,510-elapsed));self.assertTrue(calls[5][0][-1].endswith('field-drafts-v3-http.integration.ts'))
  def test_bound_order_and_environment(self):self.run_fixture()
  def test_nonzero_and_stderr_rejected(self):
   for kwargs in [{'code':1},{'stderr':b'private'}]:
@@ -104,4 +107,12 @@ class Tests(unittest.TestCase):
    with self.assertRaises(m.Failure):m.receipt(payload,kind)
   for kwargs in [{'code':1},{'stderr':b'private'},{'payload':b''},{'payload':raw({**good,'connectionsClosed':False})},{'mutate':True}]:
    with self.assertRaises(m.Failure):self.run_fixture(target=52,**kwargs)
+ def test_v3_http_receipt_and_failures(self):
+  good=v3_http_value();kind=good['kind'];self.assertEqual(m.receipt(raw(good),kind),good)
+  for key,bad in [('cases',7),('cases',9),('cases',True),('httpRequests',28),('httpRequests',30),('httpRequests',True),('httpRequests',29.0),('serverClosed',False),('connectionsClosed',False),('clientCases',4),('extra',1)]:
+   with self.assertRaises(m.Failure):m.receipt(raw({**good,key:bad}),kind)
+  for payload in [b'',raw(http_value()),raw(good).replace(b'"cases":8',b'"cases":8,"cases":8')]:
+   with self.assertRaises(m.Failure):m.receipt(payload,kind)
+  for kwargs in [{'code':1},{'stderr':b'private'},{'payload':b''},{'payload':raw({**good,'connectionsClosed':False})},{'mutate':True}]:
+   with self.assertRaises(m.Failure):self.run_fixture(target=53,**kwargs)
 if __name__=='__main__':unittest.main()

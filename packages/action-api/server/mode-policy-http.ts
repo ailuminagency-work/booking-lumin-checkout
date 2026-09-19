@@ -55,7 +55,19 @@ export function createModePolicyHttpHandler(options: { reader: ModePolicyReader;
     try { const now = clock.monotonic(); if (!Number.isFinite(now) || now < 0 || now < last) throw Error(); last = now; return now; }
     catch { terminal(); throw Error('CLOCK_UNAVAILABLE'); }
   }
-  function prune(now: number) { for (const map of [addresses, installations]) for (const [key, window] of map) if (now - window.start >= 60000) map.delete(key); }
+  // Exact minimum start across both maps, including address admission when a
+  // later installation check denies. Monotonic time means no entry can expire
+  // before this minimum; only then scan and rebuild the minimum of survivors.
+  let oldestWindowStart = Infinity;
+  function prune(now: number) {
+    if (now - oldestWindowStart < 60000) return;
+    let oldestSurvivor = Infinity;
+    for (const map of [addresses, installations]) for (const [key, window] of map) {
+      if (now - window.start >= 60000) map.delete(key);
+      else oldestSurvivor = Math.min(oldestSurvivor, window.start);
+    }
+    oldestWindowStart = oldestSurvivor;
+  }
   function rate(map: Map<string, Window>, key: string, maximum: number, now: number): number | undefined {
     prune(now);
     const old = map.get(key);
@@ -65,7 +77,9 @@ export function createModePolicyHttpHandler(options: { reader: ModePolicyReader;
       for (const group of [addresses, installations]) for (const window of group.values()) expiry = Math.min(expiry, window.start + 60000);
       return Math.max(1, Math.ceil((expiry - now) / 1000));
     }
-    map.set(key, { start: now, count: 1 }); return undefined;
+    map.set(key, { start: now, count: 1 });
+    oldestWindowStart = Math.min(oldestWindowStart, now);
+    return undefined;
   }
   function handle(req: IncomingMessage, res: ServerResponse): void {
     const head = req.method === 'HEAD';

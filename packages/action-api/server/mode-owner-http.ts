@@ -258,17 +258,29 @@ export function __createModeOwnerHttpServerForTests({ composition, now = () => p
             throw new HttpFailure('SERVICE_UNAVAILABLE');
         }
     };
+    // Minimum across all four maps, including windows retained by partial
+    // admission. Every insertion updates it; asynchronous request interleaving
+    // cannot hide an older window. Preserve the original subtraction boundary.
+    let oldestWindowStart = Infinity;
     const rate = (map: Map<string, Window>, key: string, limit: number, t: number) => {
-        for (const m of maps)
-            for (const [k, w] of m)
-                if (t - w.start >= 60000)
-                    m.delete(k);
+        if (!(t - oldestWindowStart < 60000)) {
+            let oldestSurvivor = Infinity;
+            for (const m of maps)
+                for (const [k, w] of m) {
+                    if (t - w.start >= 60000)
+                        m.delete(k);
+                    else
+                        oldestSurvivor = Math.min(oldestSurvivor, w.start);
+                }
+            oldestWindowStart = oldestSurvivor;
+        }
         let w = map.get(key);
         if (!w) {
             if (maps.reduce((n, m) => n + m.size, 0) >= 1024)
                 throw new HttpFailure('RATE_LIMITED', 60);
             w = { start: t, count: 0 };
             map.set(key, w);
+            oldestWindowStart = Math.min(oldestWindowStart, t);
         }
         if (w.count >= limit)
             throw new HttpFailure('RATE_LIMITED', Math.max(1, Math.ceil((60000 - (t - w.start)) / 1000)));

@@ -16,7 +16,7 @@ def sources():
         if 'packages/flow-ui/src/'+name not in pins:fail('SOURCE_CHANGED')
     for p in [pathlib.Path(__file__).resolve(),pathlib.Path(__file__).with_name('run-field-draft-v3-tests-test.py').resolve(),ROOT/'supabase/tests/field_drafts_v2_tests.sql',ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql',ROOT/'supabase/tests/field_drafts_v3_tests.sql',ROOT/'supabase/tests/field_drafts_v3_upgrade_fixture.sql']:
         pins[p.relative_to(ROOT).as_posix()]=hashlib.sha256(base.bounded_read(p,4194304)).hexdigest()
-    for name in ('field-drafts-v3-concurrency.integration.ts','field-drafts-v3-concurrency.integration.test.ts','field-drafts-v3-repository.ts','field-drafts-v3-repository.integration.ts','field-drafts-v3-repository.integration.test.ts'):
+    for name in ('field-drafts-v3-concurrency.integration.ts','field-drafts-v3-concurrency.integration.test.ts','field-drafts-v3-repository.ts','field-drafts-v3-repository.integration.ts','field-drafts-v3-repository.integration.test.ts','field-drafts-v3-http.ts','field-drafts-v3-http.integration.ts','field-drafts-v3-http.integration.test.ts'):
         if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
     return migrations,pins
 def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
@@ -28,6 +28,7 @@ def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
         expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':7,'httpRequests':27,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
     elif kind=='FIELD_DRAFT_V3_CONCURRENCY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':30,'parityCases':37,'connectionsClosed':True}
     elif kind=='FIELD_DRAFT_V3_REPOSITORY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':7,'connectionsClosed':True}
+    elif kind=='FIELD_DRAFT_V3_HTTP':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'serverClosed':True,'connectionsClosed':True}
     elif kind!='FIELD_DRAFT_V2_CONCURRENCY':fail('RECEIPT_REJECTED')
     if type(value)is not dict or set(value)!=set(expected) or any(type(value[k])is not type(v) or value[k]!=v for k,v in expected.items()):fail('RECEIPT_REJECTED')
     if raw!=(json.dumps(value,separators=(',',':'))+'\n').encode('ascii'):fail('RECEIPT_REJECTED')
@@ -80,7 +81,11 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v3-repository.integration.ts'],ROOT/'packages/action-api',childenv,60,2048,'NATIVE_FAILED')
     if err.stat().st_size:fail('RECEIPT_REJECTED')
     receipt(base.bounded_read(out,2048),'FIELD_DRAFT_V3_REPOSITORY')
-    if result['steps']!=52:fail('RECEIPT_REJECTED')
+    childenv={**childenv,'FIELD_DRAFT_V3_HTTP_APPROVED':'1'}
+    out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v3-http.integration.ts'],ROOT/'packages/action-api',childenv,80,2048,'NATIVE_FAILED')
+    if err.stat().st_size:fail('RECEIPT_REJECTED')
+    receipt(base.bounded_read(out,2048),'FIELD_DRAFT_V3_HTTP')
+    if result['steps']!=53:fail('RECEIPT_REJECTED')
     if clock()>=deadline:fail('PROCESS_BOUND')
     if source_check()[1]!=pins:fail('SOURCE_CHANGED')
     base.verify_evidence(private,evidence)
