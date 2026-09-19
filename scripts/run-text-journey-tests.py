@@ -40,7 +40,7 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     if evidence is None:evidence={}
     _,pins=source_check();deadline=clock()+350
     base.execute(profile,layout,private,result,tools,env,runner=runner,clock=clock,source_check=source_check,evidence=evidence)
-    if result['steps']!=42:fail('RECEIPT_REJECTED')
+    if result['steps']!=43:fail('RECEIPT_REJECTED')
     if source_check()[1]!=pins:fail('SOURCE_CHANGED')
     if clock()>=deadline:fail('PROCESS_BOUND')
     database='lumin_text_draft_'+uuid.UUID(result['runId']).hex
@@ -49,9 +49,9 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     if profile=='github-ci':childenv['GITHUB_ACTIONS']='true'
     result['steps']+=1
     def retain(completed):
-        if type(completed)is not dict or set(completed)!={'43.stdout','43.stderr'} or set(completed)&set(evidence):fail('CUSTODY_REJECTED')
+        if type(completed)is not dict or set(completed)!={'44.stdout','44.stderr'} or set(completed)&set(evidence):fail('CUSTODY_REJECTED')
         evidence.update(completed);verify_evidence(private,evidence)
-    try:code,out,err,completed=runner([tools['node'],'--import','tsx','scripts/run-text-journey.mjs'],ROOT,childenv,private,43,min(120,deadline-clock()),2048)
+    try:code,out,err,completed=runner([tools['node'],'--import','tsx','scripts/run-text-journey.mjs'],ROOT,childenv,private,44,min(120,deadline-clock()),2048)
     except Failure as error:
         if getattr(error,'artifacts',None)is not None:retain(error.artifacts)
         raise

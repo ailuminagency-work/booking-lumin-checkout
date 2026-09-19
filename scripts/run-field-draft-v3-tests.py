@@ -1,4 +1,4 @@
-"""Bounded disposable V2 storage gates after unchanged legacy SQL/native gates."""
+"""Bounded disposable V3 storage gates after unchanged legacy SQL/native gates."""
 import importlib.util,hashlib,json,os,pathlib,sys,tempfile,time,uuid
 spec=importlib.util.spec_from_file_location('legacy_draft_runner',pathlib.Path(__file__).with_name('run-text-draft-tests.py'))
 base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
@@ -6,7 +6,7 @@ ROOT=base.ROOT
 Failure=base.Failure
 fail=base.fail
 def configuration(profile,layout):
-    if os.environ.get('FIELD_DRAFT_V2_RUNNER_APPROVED')!='1':fail('CONFIGURATION_FAILED')
+    if os.environ.get('FIELD_DRAFT_V3_RUNNER_APPROVED')!='1':fail('CONFIGURATION_FAILED')
     return base.configuration(profile,layout)
 def sources():
     migrations,pins=base.sources()
@@ -14,8 +14,10 @@ def sources():
         if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
     for name in ('fieldDraftV2Client.ts','fieldDraftV2Client.test.ts','fieldDraftV2Client.adversarial.test.ts'):
         if 'packages/flow-ui/src/'+name not in pins:fail('SOURCE_CHANGED')
-    for p in [pathlib.Path(__file__).resolve(),pathlib.Path(__file__).with_name('run-field-draft-v2-tests-test.py').resolve(),ROOT/'supabase/tests/field_drafts_v2_tests.sql',ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql']:
+    for p in [pathlib.Path(__file__).resolve(),pathlib.Path(__file__).with_name('run-field-draft-v3-tests-test.py').resolve(),ROOT/'supabase/tests/field_drafts_v2_tests.sql',ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql',ROOT/'supabase/tests/field_drafts_v3_tests.sql',ROOT/'supabase/tests/field_drafts_v3_upgrade_fixture.sql']:
         pins[p.relative_to(ROOT).as_posix()]=hashlib.sha256(base.bounded_read(p,4194304)).hexdigest()
+    for name in ('field-drafts-v3-concurrency.integration.ts','field-drafts-v3-concurrency.integration.test.ts'):
+        if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
     return migrations,pins
 def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
     try:value=json.loads(raw.decode('ascii'))
@@ -24,6 +26,7 @@ def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
     if kind=='FIELD_DRAFT_V2_REPOSITORY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':6,'connectionsClosed':True}
     elif kind=='FIELD_DRAFT_V2_HTTP':
         expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':7,'httpRequests':27,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
+    elif kind=='FIELD_DRAFT_V3_CONCURRENCY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':30,'parityCases':37,'connectionsClosed':True}
     elif kind!='FIELD_DRAFT_V2_CONCURRENCY':fail('RECEIPT_REJECTED')
     if type(value)is not dict or set(value)!=set(expected) or any(type(value[k])is not type(v) or value[k]!=v for k,v in expected.items()):fail('RECEIPT_REJECTED')
     if raw!=(json.dumps(value,separators=(',',':'))+'\n').encode('ascii'):fail('RECEIPT_REJECTED')
@@ -33,10 +36,12 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     _,pins=source_check();deadline=clock()+510
     def before_migration(migration,sql):
         if migration.name=='0034_field_drafts_v2.sql':sql('-f',str(ROOT/'supabase/tests/field_drafts_v2_upgrade_fixture.sql'))
+        if migration.name=='0035_field_drafts_v3.sql':sql('-f',str(ROOT/'supabase/tests/field_drafts_v3_upgrade_fixture.sql'))
     def after_migration(migration,sql):
         if migration.name=='0034_field_drafts_v2.sql':sql('-f',str(ROOT/'supabase/tests/field_drafts_v2_tests.sql'))
+        if migration.name=='0035_field_drafts_v3.sql':sql('-f',str(ROOT/'supabase/tests/field_drafts_v3_tests.sql'))
     base.execute(profile,layout,private,result,tools,env,runner=runner,clock=clock,source_check=source_check,evidence=evidence,before_migration=before_migration,after_migration=after_migration)
-    if result['steps']!=45:fail('RECEIPT_REJECTED')
+    if result['steps']!=47:fail('RECEIPT_REJECTED')
     database='lumin_text_draft_'+uuid.UUID(result['runId']).hex
     def invoke(args,cwd,childenv,seconds,maximum,category):
         if source_check()[1]!=pins:fail('SOURCE_CHANGED')
@@ -66,12 +71,17 @@ def execute(profile,layout,private,result,tools,env,runner=base.run_private,cloc
     out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v2-http.integration.ts'],ROOT/'packages/action-api',childenv,80,2048,'NATIVE_FAILED')
     if err.stat().st_size:fail('RECEIPT_REJECTED')
     receipt(base.bounded_read(out,2048),'FIELD_DRAFT_V2_HTTP')
+    childenv={**childenv,'FIELD_DRAFT_V3_CONCURRENCY_APPROVED':'1'}
+    out,err=invoke([tools['node'],'--import','tsx','server/field-drafts-v3-concurrency.integration.ts'],ROOT/'packages/action-api',childenv,95,2048,'NATIVE_FAILED')
+    if err.stat().st_size:fail('RECEIPT_REJECTED')
+    receipt(base.bounded_read(out,2048),'FIELD_DRAFT_V3_CONCURRENCY')
+    if result['steps']!=51:fail('RECEIPT_REJECTED')
     if clock()>=deadline:fail('PROCESS_BOUND')
     if source_check()[1]!=pins:fail('SOURCE_CHANGED')
     base.verify_evidence(private,evidence)
     result['sourceDigest']=hashlib.sha256(json.dumps(pins,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 def main(argv=None):
-    result={'schemaVersion':1,'kind':'FIELD_DRAFT_V2_TEST_RUNNER','status':'failed','category':'CONFIGURATION_FAILED','runId':None,'profile':None,'layout':None,'steps':0,'sourceDigest':None}
+    result={'schemaVersion':1,'kind':'FIELD_DRAFT_V3_TEST_RUNNER','status':'failed','category':'CONFIGURATION_FAILED','runId':None,'profile':None,'layout':None,'steps':0,'sourceDigest':None}
     private=None;evidence={}
     try:
         args=list(sys.argv[1:] if argv is None else argv)
@@ -79,7 +89,7 @@ def main(argv=None):
         profile,layout=args[1],args[3];tools,env=configuration(profile,layout)
         result.update(runId=str(uuid.uuid4()),profile=profile,layout=layout)
         parent=base.canonical(pathlib.Path(tempfile.gettempdir()).resolve(),True)
-        private=parent/('lumin-field-draft-v2-tests-'+result['runId']);private.mkdir(mode=0o700,exist_ok=False);base.canonical(private,True)
+        private=parent/('lumin-field-draft-v3-tests-'+result['runId']);private.mkdir(mode=0o700,exist_ok=False);base.canonical(private,True)
         if private.is_relative_to(ROOT.resolve()):fail('CUSTODY_REJECTED')
         execute(profile,layout,private,result,tools,env,evidence=evidence)
         result.update(status='passed',category='COMPLETE')

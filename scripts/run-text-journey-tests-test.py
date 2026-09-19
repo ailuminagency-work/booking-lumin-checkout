@@ -18,10 +18,10 @@ class Tests(unittest.TestCase):
  def test_fresh_database_and_bounded_step(self):
   with tempfile.TemporaryDirectory() as folder:
    root=pathlib.Path(folder);result={'steps':0,'runId':str(uuid.uuid4())};evidence={};seen=[]
-   def prior(*args,**kwargs):args[3]['steps']=42
+   def prior(*args,**kwargs):args[3]['steps']=43
    def runner(args,cwd,env,private,index,seconds,maximum):
-    seen.append((args,env,index,seconds,maximum));out=private/'43.stdout';err=private/'43.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
+    seen.append((args,env,index,seconds,maximum));out=private/'44.stdout';err=private/'44.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
     return 0,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
    with patch.object(m.base,'execute',prior):m.execute('local','public',root,result,{'node':'node'},{'PGPASSWORD':'','PGHOST':'wrong'},runner=runner,source_check=lambda:([],{'pin':'fixed'}),evidence=evidence)
-   self.assertEqual(result['steps'],43);env=seen[0][1];self.assertEqual(env['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertNotIn('PGHOST',env);self.assertEqual(env['TEXT_JOURNEY_APPROVED'],'1');self.assertLessEqual(seen[0][3],120);self.assertEqual(len(evidence),2)
+   self.assertEqual(result['steps'],44);env=seen[0][1];self.assertEqual(env['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertNotIn('PGHOST',env);self.assertEqual(env['TEXT_JOURNEY_APPROVED'],'1');self.assertLessEqual(seen[0][3],120);self.assertEqual(len(evidence),2)
 if __name__=='__main__':unittest.main()

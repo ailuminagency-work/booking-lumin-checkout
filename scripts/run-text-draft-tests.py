@@ -209,7 +209,7 @@ def configuration(profile,layout):
 
 def sources():
     migrations=sorted((ROOT/'supabase/migrations').glob('*.sql'))
-    if len(migrations)!=34 or [int(p.name[:4]) for p in migrations]!=list(range(1,35)):fail('SOURCE_CHANGED')
+    if len(migrations)!=35 or [int(p.name[:4]) for p in migrations]!=list(range(1,36)):fail('SOURCE_CHANGED')
     files=set(migrations)|{ROOT/'supabase/tests/local_harness.sql',ROOT/'supabase/tests/text_field_drafts_tests.sql',ROOT/'supabase/tests/text_field_prompts_tests.sql',ROOT/'package-lock.json',ROOT/'package.json',ROOT/'tsconfig.base.json',pathlib.Path(__file__).resolve()}
     for p in (ROOT/'packages').rglob('*'):
         if 'node_modules' not in p.relative_to(ROOT).parts and p.is_file() and p.suffix in ('.ts','.tsx','.json'):files.add(p)

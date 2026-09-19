@@ -31,6 +31,8 @@ jobs:
         run: python3 -B scripts/run-text-journey-tests-test.py
       - name: Verify V2 draft storage runner boundaries
         run: python3 -B scripts/run-field-draft-v2-tests-test.py
+      - name: Verify V3 draft storage runner boundaries
+        run: python3 -B scripts/run-field-draft-v3-tests-test.py
       - name: Verify local V2 journey receipt and runner boundaries
         run: python3 -B scripts/run-field-journey-v2-tests-test.py
       - name: Verify V2 journey browser profile boundaries
@@ -83,6 +85,41 @@ jobs:
           FIELD_JOURNEY_V2_RUNNER_APPROVED: '1'
           JOURNEY_LAYOUT: ${{ matrix.layout }}
         run: python3 -B scripts/run-field-journey-v2-tests.py --profile github-ci --layout "$JOURNEY_LAYOUT"
+
+  field-draft-v3:
+    name: field draft V3 (${{ matrix.layout }} storage)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layout: [public, extensions]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify V3 storage, upgrade and concurrency
+        timeout-minutes: 10
+        env:
+          TEXT_DRAFT_RUNNER_APPROVED: '1'
+          FIELD_DRAFT_V3_RUNNER_APPROVED: '1'
+          JOURNEY_LAYOUT: ${{ matrix.layout }}
+        run: python3 -B scripts/run-field-draft-v3-tests.py --profile github-ci --layout "$JOURNEY_LAYOUT"
 
   database:
     name: database (migrations + RLS attack suite)

@@ -18,12 +18,12 @@ class Tests(unittest.TestCase):
  def test_fresh_database_and_bounded_step(self):
   with tempfile.TemporaryDirectory() as folder:
    root=pathlib.Path(folder);result={'steps':0,'runId':str(uuid.uuid4())};evidence={};seen=[]
-   def prior(*args,**kwargs):args[3]['steps']=47
+   def prior(*args,**kwargs):args[3]['steps']=48
    def runner(args,cwd,env,private,index,seconds,maximum):
-    seen.append((args,env,index,seconds,maximum));out=private/'48.stdout';err=private/'48.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
+    seen.append((args,env,index,seconds,maximum));out=private/'49.stdout';err=private/'49.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
     return 0,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
    with patch.object(m.base,'execute',prior):m.execute('local','public',root,result,{'node':'node'},{'PGPASSWORD':'','PGHOST':'wrong'},runner=runner,source_check=lambda:([],{'pin':'fixed'}),evidence=evidence)
-   self.assertEqual(result['steps'],48);env=seen[0][1];self.assertEqual(env['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertNotIn('PGHOST',env);self.assertEqual(env['FIELD_JOURNEY_V2_APPROVED'],'1');self.assertLessEqual(seen[0][3],240);self.assertEqual(len(evidence),2)
+   self.assertEqual(result['steps'],49);env=seen[0][1];self.assertEqual(env['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_'+uuid.UUID(result['runId']).hex);self.assertNotIn('PGHOST',env);self.assertEqual(env['FIELD_JOURNEY_V2_APPROVED'],'1');self.assertLessEqual(seen[0][3],240);self.assertEqual(len(evidence),2)
  def test_rejects_unknown_profile_before_base(self):
   with patch.dict(m.os.environ,{'FIELD_JOURNEY_V2_RUNNER_APPROVED':'1'},clear=True),patch.object(m.base,'configuration') as call:
    with self.assertRaises(m.Failure):m.configuration('other','public')
@@ -47,12 +47,12 @@ class Tests(unittest.TestCase):
  def test_ci_step48_environment_is_narrow(self):
   with tempfile.TemporaryDirectory() as folder:
    root=pathlib.Path(folder);result={'steps':0,'runId':str(uuid.uuid4())};seen=[]
-   def prior(*args,**kwargs):args[3]['steps']=47
+   def prior(*args,**kwargs):args[3]['steps']=48
    def runner(args,cwd,env,private,index,seconds,maximum):
-    seen.append(env);out=private/'48.stdout';err=private/'48.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
+    seen.append(env);out=private/'49.stdout';err=private/'49.stderr';out.write_bytes((json.dumps(self.receipt(),separators=(',',':'))+'\n').encode());err.write_bytes(b'')
     return 0,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
    with patch.object(m.base,'execute',prior):m.execute('github-ci','extensions',root,result,{'node':'node'},{'PGPASSWORD':'postgres','PGHOST':'hostile','PGSERVICE':'hostile'},runner=runner,source_check=lambda:([],{'pin':'fixed'}))
-   env=seen[0];self.assertEqual(env['GITHUB_ACTIONS'],'true');self.assertEqual(env['TEXT_DRAFT_TEST_PROFILE'],'github-ci');self.assertEqual(env['TEXT_DRAFT_TEST_LAYOUT'],'extensions');self.assertEqual(env['TEXT_DRAFT_TEST_DISPOSABLE'],'1');self.assertEqual(env['PGPASSWORD'],'postgres');self.assertEqual(env['PGPASSFILE'],m.os.devnull);self.assertNotIn('PGHOST',env);self.assertNotIn('PGSERVICE',env);self.assertEqual(result['steps'],48)
+   env=seen[0];self.assertEqual(env['GITHUB_ACTIONS'],'true');self.assertEqual(env['TEXT_DRAFT_TEST_PROFILE'],'github-ci');self.assertEqual(env['TEXT_DRAFT_TEST_LAYOUT'],'extensions');self.assertEqual(env['TEXT_DRAFT_TEST_DISPOSABLE'],'1');self.assertEqual(env['PGPASSWORD'],'postgres');self.assertEqual(env['PGPASSFILE'],m.os.devnull);self.assertNotIn('PGHOST',env);self.assertNotIn('PGSERVICE',env);self.assertEqual(result['steps'],49)
  def test_missing_browser_helper_or_test_rejects_source_inventory(self):
   pins={'packages/action-api/server/'+name:'fixed' for name in ('field-journey-v2-environment.ts','field-journey-v2-environment.test.ts')}
   for absent in ('run-field-journey-v2-browser.mjs','run-field-journey-v2-browser.test.mjs'):
@@ -75,7 +75,7 @@ class Tests(unittest.TestCase):
     with self.assertRaises(m.Failure):m.execute('local','public',pathlib.Path(folder),result,{'node':'node'},{'PGPASSWORD':''},runner=lambda *a:self.fail('must not launch'),source_check=lambda:([],{'pin':'fixed'}))
  def test_source_change_and_expired_deadline_prevent_launch(self):
   with tempfile.TemporaryDirectory() as folder:
-   def prior(*args,**kwargs):args[3]['steps']=47
+   def prior(*args,**kwargs):args[3]['steps']=48
    for changed in [True,False]:
     count=0
     def source():
@@ -88,10 +88,10 @@ class Tests(unittest.TestCase):
  def test_failed_child_keeps_evidence(self):
   with tempfile.TemporaryDirectory() as folder:
    root=pathlib.Path(folder);evidence={}
-   def prior(*args,**kwargs):args[3]['steps']=47
+   def prior(*args,**kwargs):args[3]['steps']=48
    def runner(args,cwd,env,private,index,seconds,maximum):
-    out=private/'48.stdout';err=private/'48.stderr';out.write_bytes(b'');err.write_bytes(b'finite failure')
+    out=private/'49.stdout';err=private/'49.stderr';out.write_bytes(b'');err.write_bytes(b'finite failure')
     return 1,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
    with patch.object(m.base,'execute',prior),self.assertRaises(m.Failure):m.execute('local','public',root,{'steps':0,'runId':str(uuid.uuid4())},{'node':'node'},{'PGPASSWORD':''},runner=runner,source_check=lambda:([],{'pin':'fixed'}),evidence=evidence)
-   self.assertEqual(set(evidence),{'48.stdout','48.stderr'})
+   self.assertEqual(set(evidence),{'49.stdout','49.stderr'})
 if __name__=='__main__':unittest.main()

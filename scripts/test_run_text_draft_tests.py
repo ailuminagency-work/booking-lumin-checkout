@@ -16,11 +16,11 @@ class Tests(unittest.TestCase):
    private=self.folder();calls=[];result={'runId':'12345678-1234-4234-8234-123456789abc','steps':0}
    def run(args,cwd,env,folder,index,seconds,maximum):
     calls.append((args,env));self.assertLessEqual(seconds,65)
-    out=folder/(str(index)+'.stdout');err=folder/(str(index)+'.stderr');out.write_bytes(b'f\n' if index==1 else (json.dumps(RACE if index==41 else HTTP,separators=(',',':'))+'\n').encode() if index>=41 else b'');err.write_bytes(b'')
+    out=folder/(str(index)+'.stdout');err=folder/(str(index)+'.stderr');out.write_bytes(b'f\n' if index==1 else (json.dumps(RACE if index==42 else HTTP,separators=(',',':'))+'\n').encode() if index>=42 else b'');err.write_bytes(b'')
     return 0,out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
-   m.execute('github-ci',layout,private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'postgres'},runner=run,source_check=lambda:([pathlib.Path(str(n)) for n in range(34)],{'test':'pin'}))
-   self.assertTrue(calls[38][0][-1].endswith('text_field_drafts_tests.sql'));self.assertTrue(calls[39][0][-1].endswith('text_field_prompts_tests.sql'))
-   self.assertEqual(len(calls),42);self.assertIn('create database lumin_text_draft_12345678123442348234123456789abc',calls[1][0]);self.assertIn('schema '+layout,calls[2][0][-1]);self.assertEqual(calls[40][1]['TEXT_DRAFT_TEST_LAYOUT'],layout);self.assertEqual(calls[41][1]['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_12345678123442348234123456789abc');self.assertNotIn('PGHOST',calls[41][1])
+   m.execute('github-ci',layout,private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':'postgres'},runner=run,source_check=lambda:([pathlib.Path(str(n)) for n in range(35)],{'test':'pin'}))
+   self.assertTrue(calls[39][0][-1].endswith('text_field_drafts_tests.sql'));self.assertTrue(calls[40][0][-1].endswith('text_field_prompts_tests.sql'))
+   self.assertEqual(len(calls),43);self.assertIn('create database lumin_text_draft_12345678123442348234123456789abc',calls[1][0]);self.assertIn('schema '+layout,calls[2][0][-1]);self.assertEqual(calls[41][1]['TEXT_DRAFT_TEST_LAYOUT'],layout);self.assertEqual(calls[42][1]['TEXT_DRAFT_HTTP_DATABASE'],'lumin_text_draft_12345678123442348234123456789abc');self.assertNotIn('PGHOST',calls[42][1])
  def test_existing_db_stops_before_create(self):
   private=self.folder();calls=[]
   def run(args,cwd,env,folder,index,seconds,maximum):
@@ -38,15 +38,15 @@ class Tests(unittest.TestCase):
     calls.append(args);out=folder/(str(index)+'.stdout');err=folder/(str(index)+'.stderr')
     out.write_bytes(b'f\n' if index==1 else raw_receipt(index));err.write_bytes(b'')
     return (1 if reject_serial and args[-1]=='upgrade_assert_and_cleanup.sql' else 0),out,err,{out.name:m.snapshot(out),err.name:m.snapshot(err)}
-   def raw_receipt(index):return (json.dumps(RACE if index==43 else HTTP,separators=(',',':'))+'\n').encode() if index>=43 else b''
-   def execute():m.execute('local','public',private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':''},runner=run,source_check=lambda:([pathlib.Path(f'{n:04}.sql') for n in range(1,35)],{'pin':'fixed'}),before_migration=before,after_migration=after)
+   def raw_receipt(index):return (json.dumps(RACE if index==44 else HTTP,separators=(',',':'))+'\n').encode() if index>=44 else b''
+   def execute():m.execute('local','public',private,result,{'node':'node','psql':'psql'},{'PGPASSWORD':''},runner=run,source_check=lambda:([pathlib.Path(f'{n:04}.sql') for n in range(1,36)],{'pin':'fixed'}),before_migration=before,after_migration=after)
    if reject_serial:
     with self.assertRaisesRegex(m.Failure,'SQL_FAILED'):execute()
     self.assertEqual(calls[-1][-1],'upgrade_assert_and_cleanup.sql');self.assertEqual(len(calls),40)
    else:
-    execute();self.assertEqual(len(calls),44)
+    execute();self.assertEqual(len(calls),45)
     self.assertEqual([call[-1] for call in calls[37:40]],['upgrade_fixture.sql','0034.sql','upgrade_assert_and_cleanup.sql'])
-    self.assertTrue(calls[40][-1].endswith('text_field_drafts_tests.sql'));self.assertTrue(calls[41][-1].endswith('text_field_prompts_tests.sql'))
+    self.assertTrue(calls[41][-1].endswith('text_field_drafts_tests.sql'));self.assertTrue(calls[42][-1].endswith('text_field_prompts_tests.sql'))
  def test_receipts_strict(self):
   for value in (RACE,HTTP):
    raw=(json.dumps(value,separators=(',',':'))+'\n').encode();self.assertEqual(m.receipt(raw,value['kind']),value)
