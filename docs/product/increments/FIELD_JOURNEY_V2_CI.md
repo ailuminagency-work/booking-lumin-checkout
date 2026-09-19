@@ -1,0 +1,11 @@
+# V2 journey supervisor CI coverage
+
+Base: ff33c149a9fefc35d6b5066421b01d2db718c85a on codex/wave3-field-journey-v2. Successor: codex/wave3-field-journey-v2-ci.
+
+The existing verify job omitted the seven inert V2 journey supervisor tests. This candidate adds that existing suite as a required ordinary step. It tests strict receipts, approval/profile boundaries, all47 prior steps, source/deadline fencing, disposable database identity, sanitized environment and retained failure artifacts using fake runners. It launches no browser, database or provider.
+
+This two-line workflow addition does not run the native browser journey on Linux. That orchestrator remains explicitly Windows/local-only. The field-draft-v2 job covers SQL/native HTTP but not the final browser journey. A future portable harness requires separate implementation, review and exact-candidate execution; this change cannot certify it.
+
+Root owns workflow/documentation integration. /root/field_contract_builder reviews domain/adversarial suite behavior; /root/evidence_recovery_review independently reviews workflow, security and runtime scope. Root unit run a5caad passed7 tests; independent domain/adversarial review d1e130 and replay1ec1ab passed7 tests. Independent workflow review5a8d95 confirms only the intended two-line registration and no trigger, failure-policy, native command, approval environment, timeout or profile change. Scoped integration/local Runtime assessment accepts review-branch publication only. Ledger regression c64257 passed8 tests. Parent dual-layout48-gate evidence remains in FIELD_JOURNEY_V2.md and does not become CI evidence here.
+
+Main remains152bb909 protected; PR74 remains draftc53deb. Parentff33c149 is pushed but has no exact CI; draft PR creation was rejected422 must be a collaborator. GitHub runs CI for pull requests and pushes to main only, so pushing an isolated branch does not itself trigger CI. No trigger, permission, deployment, approval flag or failure policy changes. W3/W4 stay building; hosted W8 and real-provider W9 remain blocked. Next: finish independent review, publish isolated draft candidate, obtain legitimate collaborator PR access and verify exact-head CI. No release acceptance claimed.

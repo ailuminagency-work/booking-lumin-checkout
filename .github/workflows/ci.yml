@@ -31,6 +31,8 @@ jobs:
         run: python3 -B scripts/run-text-journey-tests-test.py
       - name: Verify V2 draft storage runner boundaries
         run: python3 -B scripts/run-field-draft-v2-tests-test.py
+      - name: Verify local V2 journey receipt and runner boundaries
+        run: python3 -B scripts/run-field-journey-v2-tests-test.py
       - name: Verify local runtime diagnostic receipt boundaries
         run: python3 -B scripts/test_windows_http_runtime_probe.py
       - run: npm run typecheck
