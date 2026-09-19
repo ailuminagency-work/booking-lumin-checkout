@@ -33,6 +33,8 @@ jobs:
         run: python3 -B scripts/run-field-draft-v2-tests-test.py
       - name: Verify local V2 journey receipt and runner boundaries
         run: python3 -B scripts/run-field-journey-v2-tests-test.py
+      - name: Verify V2 journey browser profile boundaries
+        run: node --test scripts/run-field-journey-v2-browser.test.mjs
       - name: Verify local runtime diagnostic receipt boundaries
         run: python3 -B scripts/test_windows_http_runtime_probe.py
       - run: npm run typecheck
@@ -44,9 +46,13 @@ jobs:
       - run: bash scripts/contamination-check.test.sh && bash scripts/contamination-check.sh
 
   field-draft-v2:
-    name: field draft V2 (upgrade, isolation, races, repository)
+    name: field draft V2 (${{ matrix.layout }} browser journey)
     timeout-minutes: 25
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layout: [public, extensions]
     services:
       postgres:
         image: postgres:16
@@ -66,16 +72,17 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Verify fresh V2 storage and native HTTP in both crypto layouts
+      - name: Install pinned full runtime browser
+        timeout-minutes: 6
+        run: node scripts/install-mode-runtime-browser.mjs
+      - name: Verify V2 storage, HTTP and browser journey
         timeout-minutes: 18
         env:
           TEXT_DRAFT_RUNNER_APPROVED: '1'
           FIELD_DRAFT_V2_RUNNER_APPROVED: '1'
-        run: |
-          set -euo pipefail
-          for layout in public extensions; do
-            python3 -B scripts/run-field-draft-v2-tests.py --profile github-ci --layout "$layout"
-          done
+          FIELD_JOURNEY_V2_RUNNER_APPROVED: '1'
+          JOURNEY_LAYOUT: ${{ matrix.layout }}
+        run: python3 -B scripts/run-field-journey-v2-tests.py --profile github-ci --layout "$JOURNEY_LAYOUT"
 
   database:
     name: database (migrations + RLS attack suite)

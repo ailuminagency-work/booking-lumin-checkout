@@ -252,7 +252,7 @@
       "kind": "capability",
       "owner": "W3",
       "status": "building",
-      "evidence": "docs/product/increments/FIELD_JOURNEY_V2_TYPECHECK.md",
+      "evidence": "docs/product/increments/FIELD_JOURNEY_V2_PORTABLE.md",
       "dependsOn": [
         "W3.1.local_candidate"
       ],

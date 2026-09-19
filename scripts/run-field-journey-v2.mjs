@@ -1,11 +1,12 @@
 import { createServer } from 'node:http';
-import { readFile, lstat, realpath } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { createFieldJourneyV2Environment } from '../packages/action-api/server/field-journey-v2-environment.ts';
 import { runFieldJourneyV2BrowserCases } from '../tests/field-journey-v2/browser-cases.ts';
+import { fieldJourneyV2Browser } from './run-field-journey-v2-browser.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const receipt = { schemaVersion: 1, kind: 'FIELD_V2_SQL_BROWSER', status: 'failed', category: 'CONFIGURATION_FAILED', cases: 0, browserClosed: false, serversClosed: false, connectionsClosed: false };
@@ -19,11 +20,7 @@ let environment, fixture, browser, disconnected = false, environmentStarted = fa
 const sockets = new Set();
 let fixtureFault=false;
 try {
-  if (process.platform !== 'win32' || process.env.FIELD_JOURNEY_V2_APPROVED !== '1') throw Error('CONFIGURATION_FAILED');
-  const manifest = JSON.parse(await readFile(resolve(root, 'node_modules/playwright-core/browsers.json'), 'utf8'));
-  if (!manifest.browsers.some(entry => entry.name === 'chromium' && entry.revision === '1243')) throw Error('CONFIGURATION_FAILED');
-  const executablePath = resolve(root, '../mode-session-http/.cache/mode-runtime-playwright/chromium-1243/chrome-win64/chrome.exe');
-  if (!(await lstat(executablePath)).isFile() || (await realpath(executablePath)).toLowerCase() !== executablePath.toLowerCase()) throw Error('CONFIGURATION_FAILED');
+  const executablePath = await fieldJourneyV2Browser({root});
   const html = await readFile(resolve(root, 'tests/field-journey-v2/fixture.html'));
   const bundle = await build({ absWorkingDir: root, entryPoints: ['tests/field-journey-v2/fixture.tsx'], bundle: true, write: false, platform: 'browser', format: 'esm', jsx: 'automatic', sourcemap: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' } });
   if (bundle.outputFiles.length !== 1) throw Error('CONFIGURATION_FAILED');

@@ -16,7 +16,7 @@ CATEGORIES=legacy.CATEGORIES
 
 def configuration(profile,layout):
     if os.environ.get('FIELD_JOURNEY_V2_RUNNER_APPROVED')!='1':fail('CONFIGURATION_FAILED')
-    if profile!='local':fail('CONFIGURATION_FAILED')
+    if profile not in ('local','github-ci'):fail('CONFIGURATION_FAILED')
     return base.configuration(profile,layout)
 
 def sources():
@@ -24,6 +24,8 @@ def sources():
     files={pathlib.Path(__file__).resolve(),ROOT/'scripts/run-field-journey-v2.mjs'}
     for name in ('field-journey-v2-environment.ts','field-journey-v2-environment.test.ts'):
         if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
+    for name in ('run-field-journey-v2-browser.mjs','run-field-journey-v2-browser.test.mjs'):
+        if not (ROOT/'scripts'/name).is_file():fail('SOURCE_CHANGED')
     files.update(p for p in (ROOT/'scripts').glob('run-field-journey-v2*') if p.is_file())
     for directory in (ROOT/'apps/portal/src',ROOT/'tests/field-journey-v2'):
         if not directory.is_dir():fail('SOURCE_CHANGED')
