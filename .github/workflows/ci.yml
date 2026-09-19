@@ -36,6 +36,8 @@ jobs:
       - name: Verify local runtime diagnostic receipt boundaries
         run: python3 -B scripts/test_windows_http_runtime_probe.py
       - run: npm run typecheck
+      - name: Typecheck V2 browser journey fixtures
+        run: node node_modules/typescript/bin/tsc -p tsconfig.field-journey-v2.json
       - run: npm run test
       - run: npm run build
       - run: npm run build:preview

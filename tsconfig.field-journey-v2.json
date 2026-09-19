@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [
+    "./tests/field-journey-v2/fixture.tsx",
+    "./tests/field-journey-v2/browser-cases.ts"
+  ]
+}
