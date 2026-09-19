@@ -39,3 +39,6 @@ export { parseFieldDocumentV3 } from "./fieldDocumentV3";
 export type { FieldChoiceV3, DropdownFieldV3, FieldV3, FieldDocumentV3 } from "./fieldDocumentV3";
 export { parseFieldAnswersV3 } from "./fieldAnswersV3";
 export type { FieldAnswerDocumentV3 } from "./fieldAnswersV3";
+
+export { parseFieldDraftSaveV3, parseFieldDraftReceiptV3, parseFieldDraftReadV3 } from './fieldDraftV3';
+export type { FieldDraftSaveV3, FieldDraftReceiptV3, FieldDraftReadV3 } from './fieldDraftV3';
