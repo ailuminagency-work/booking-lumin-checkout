@@ -1,0 +1,47 @@
+import {test,expect,type Page} from '@playwright/test';
+// Synthetic client only. These cases do not establish authentication or SQL integration.
+const denied=new WeakMap<Page,{count:number}>();
+const label=(page:Page)=>page.getByLabel('Question label',{exact:true}).first();
+const preview=(page:Page)=>page.getByRole('region',{name:'Question preview',exact:true});
+async function load(page:Page){await page.getByRole('button',{name:'Load questions',exact:true}).click();await expect(label(page)).toHaveValue('Short question');}
+async function dirty(page:Page){await load(page);await label(page).fill('Unsaved question');}
+async function dialog(page:Page,accept:boolean,action:()=>Promise<unknown>){const observed=page.waitForEvent('dialog').then(async d=>{expect(d.type()).toBe('confirm');if(accept)await d.accept();else await d.dismiss();});await Promise.all([observed,action()]);}
+test.beforeEach(async({page,context,baseURL})=>{
+ expect(baseURL).toBe('http://127.0.0.1:4190');const counter={count:0};denied.set(page,counter);
+ await context.route('**/*',route=>{if(new URL(route.request().url()).origin==='http://127.0.0.1:4190')return route.continue();counter.count++;return route.abort('blockedbyclient');});
+ await page.goto('/edit');await expect(page.getByRole('button',{name:'Load questions',exact:true})).toBeVisible();
+});
+test.afterEach(async({page})=>{expect(denied.get(page)?.count).toBe(0);});
+test('dirty PUSH cancel keeps edits and accept retires them',async({page})=>{
+ await dirty(page);const leave=()=>page.getByRole('link',{name:'Open other page',exact:true}).click();await dialog(page,false,leave);await expect(label(page)).toHaveValue('Unsaved question');await expect(page).toHaveURL(/\/edit$/);await dialog(page,true,leave);await expect(page).toHaveURL(/\/other$/);await page.getByRole('link',{name:'Open editor',exact:true}).click();await load(page);
+});
+test('replace is guarded and requires explicit discard',async({page})=>{
+ await dirty(page);const replace=()=>page.getByRole('button',{name:'Replace with other page',exact:true}).click();await dialog(page,false,replace);await expect(label(page)).toHaveValue('Unsaved question');await dialog(page,true,replace);await expect(page).toHaveURL(/\/other$/);
+});
+test('native back and forward cancellation preserves the current editor',async({page})=>{
+ await page.getByRole('link',{name:'Open other page',exact:true}).click();await page.getByRole('link',{name:'Open editor',exact:true}).click();await dirty(page);await dialog(page,false,()=>page.goBack());await expect(label(page)).toHaveValue('Unsaved question');await dialog(page,true,()=>page.goBack());await expect(page).toHaveURL(/\/other$/);await page.goBack();await dirty(page);await dialog(page,false,()=>page.goForward());await expect(label(page)).toHaveValue('Unsaved question');await dialog(page,true,()=>page.goForward());await expect(page).toHaveURL(/\/other$/);
+});
+test('deferred reads and unchanged saves deny navigation without confirmation',async({page})=>{
+ let dialogs=0;page.on('dialog',async d=>{dialogs++;await d.dismiss();});await page.getByLabel('Defer reads',{exact:true}).check();await page.getByRole('button',{name:'Load questions',exact:true}).click();await page.getByRole('link',{name:'Open other page',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);await page.getByRole('button',{name:'Resolve next read',exact:true}).click();await expect(label(page)).toHaveValue('Short question');await page.getByLabel('Defer saves',{exact:true}).check();await page.getByRole('button',{name:'Save questions',exact:true}).click();await page.getByRole('button',{name:'Replace with other page',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);expect(dialogs).toBe(0);await page.getByRole('button',{name:'Resolve next save',exact:true}).click();
+});
+test('old account save completion cannot release new account busy protection',async({page})=>{
+ await dirty(page);await page.getByLabel('Defer saves',{exact:true}).check();await page.getByRole('button',{name:'Save questions',exact:true}).click();await page.getByRole('button',{name:'Force account switch',exact:true}).click();await expect(page.getByLabel('Question label',{exact:true})).toHaveCount(0);await page.getByLabel('Defer reads',{exact:true}).check();await page.getByRole('button',{name:'Load questions',exact:true}).click();await page.getByRole('button',{name:'Resolve next save',exact:true}).click();await expect(page.getByText('Questions are loading or saving.',{exact:true})).toBeVisible();let dialogs=0;page.on('dialog',async d=>{dialogs++;await d.dismiss();});await page.getByRole('link',{name:'Open other page',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);expect(dialogs).toBe(0);await page.getByRole('button',{name:'Resolve next read',exact:true}).click();await expect(label(page)).toHaveValue('Short question');
+});
+test('preview preserves native multiline Enter while short Enter submits nothing',async({page})=>{
+ await load(page);const before=await page.evaluate(()=>window.__fieldFixture!.snapshot());await page.getByRole('button',{name:'Try questions',exact:true}).click();const short=preview(page).getByLabel('Short question',{exact:true}),long=preview(page).getByLabel('Long question',{exact:true});await short.fill('🌍🌍');await short.press('Enter');await long.fill('line');await long.press('End');await long.press('Enter');await page.keyboard.insertText('🌍');await expect(long).toHaveValue('line\n🌍');await preview(page).getByRole('button',{name:'Check answers',exact:true}).click();await expect(preview(page).getByRole('status')).toHaveText('Preview answers are valid. Nothing was submitted.');expect(await page.evaluate(()=>window.__fieldFixture!.snapshot())).toEqual(before);await expect(page.getByText('No unsaved question changes.',{exact:true})).toBeVisible();
+});
+test('Unicode limit validates codepoints and preview close discards answers',async({page})=>{
+ await load(page);await page.getByRole('button',{name:'Try questions',exact:true}).click();const answer=preview(page).getByLabel('Short question',{exact:true});await answer.fill('🌍🌍🌍');await preview(page).getByRole('button',{name:'Check answers',exact:true}).click();await expect(answer).toHaveAttribute('aria-invalid','true');await answer.fill('🌍🌍');await preview(page).getByRole('button',{name:'Check answers',exact:true}).click();await expect(answer).toHaveAttribute('aria-invalid','false');await page.getByRole('button',{name:'Close preview',exact:true}).click();await page.getByRole('button',{name:'Try questions',exact:true}).click();await expect(preview(page).getByLabel('Short question',{exact:true})).toHaveValue('');
+});
+test('parent dirty toggle and revision change clear preview without losing draft edits',async({page})=>{
+ await load(page);await label(page).fill('Kept local label');await page.getByRole('button',{name:'Try questions',exact:true}).click();await preview(page).getByLabel('Long question',{exact:true}).fill('Private preview');await page.getByLabel('Parent has unsaved changes',{exact:true}).check();await expect(preview(page)).toHaveCount(0);await expect(page.getByRole('button',{name:'Save questions',exact:true})).toBeDisabled();await page.getByLabel('Parent has unsaved changes',{exact:true}).uncheck();await expect(preview(page)).toHaveCount(0);await page.evaluate(()=>window.__fieldFixture!.setParentRevision(5));await expect(label(page)).toHaveValue('Kept local label');await expect(page.getByRole('button',{name:'Try questions',exact:true})).toBeDisabled();
+});
+test('account replacement removes preview answers and starts a fresh draft context',async({page})=>{
+ await load(page);await page.getByRole('button',{name:'Try questions',exact:true}).click();await preview(page).getByLabel('Long question',{exact:true}).fill('Old account private answer');await page.getByRole('button',{name:'Force account switch',exact:true}).click();await expect(preview(page)).toHaveCount(0);await load(page);await page.getByRole('button',{name:'Try questions',exact:true}).click();await expect(preview(page).getByLabel('Long question',{exact:true})).toHaveValue('');
+});
+test('keyboard labels and local preview allow ordinary navigation without draft confirmation',async({page})=>{
+ await load(page);await page.getByRole('button',{name:'Try questions',exact:true}).click();const short=preview(page).getByLabel('Short question',{exact:true}),long=preview(page).getByLabel('Long question',{exact:true});await short.focus();await page.keyboard.press('Tab');await expect(long).toBeFocused();await long.fill('Preview only');let dialogs=0;page.on('dialog',async d=>{dialogs++;await d.dismiss();});await page.getByRole('link',{name:'Open other page',exact:true}).click();await expect(page).toHaveURL(/\/other$/);expect(dialogs).toBe(0);
+});
+for(const viewport of [{width:390,height:844},{width:1280,height:900}])test(`question workspace fits ${viewport.width}px viewport`,async({page})=>{
+ await page.setViewportSize(viewport);await load(page);await page.getByRole('button',{name:'Try questions',exact:true}).click();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);for(const control of await preview(page).getByRole('textbox').all()){const box=await control.boundingBox();expect(box).not.toBeNull();expect(box!.width).toBeGreaterThan(100);expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(viewport.width);}
+});

@@ -252,7 +252,7 @@
       "kind": "capability",
       "owner": "W3",
       "status": "building",
-      "evidence": "docs/product/increments/FIELD_PREVIEW_EDITOR_V2.md",
+      "evidence": "docs/product/increments/FIELD_BROWSER_V2.md",
       "dependsOn": [
         "W3.1.local_candidate"
       ],
