@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {writeSync} from 'node:fs';
 import http from 'node:http';
+import {channel} from 'node:diagnostics_channel';
+import {createFieldDraftV3Client,type FieldDraftV3Client} from '../../flow-ui/src/fieldDraftV3Client';
 import type {Socket} from 'node:net';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -17,10 +19,21 @@ export function fieldHttpV3Configuration(env:NodeJS.ProcessEnv,platform:NodeJS.P
 const authoring=()=>({authoringVersion:2,config:{key:'httpv3',steps:[{key:'count',questionKey:'count',kind:'question',required:true}]},questionOverrides:{}});
 const definition=()=>({schemaVersion:3,fields:[{key:'note',kind:'textarea',required:false,minLength:0,maxLength:4096,prompt:' Exact question '},{key:'short',kind:'text',required:false,minLength:0,maxLength:20},{key:'choice',kind:'dropdown',required:true,choices:[{id:'first',label:' Same label '},{id:'second',label:' Same label '}]}]});
 async function bounded<T>(p:Promise<T>,ms:number){let timer:ReturnType<typeof setTimeout>|undefined;try{return await Promise.race([p,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('BOUND')),ms);})]);}finally{if(timer)clearTimeout(timer);}}
+/** Native Node transport with a synthetic trusted Origin; not browser CORS proof.
+ * This wrapper adds that one header only and delegates to global native fetch.
+ */
+export function createFieldClientFixtureFetch(base:string,onAttempt:()=>void):typeof fetch {
+ const origin=new URL(base);assert.equal(origin.origin,base);assert.equal(origin.protocol,'http:');assert.equal(origin.hostname,'127.0.0.1');
+ return (input,init)=>{assert.equal(typeof input,'string');assert.equal(new URL(input as string).origin,base);onAttempt();const headers=new Headers(init?.headers);headers.set('Origin','http://127.0.0.1:4193');return fetch(input,{...init,headers});};
+}
 export async function runFieldDraftV3HttpIntegration(){
- const result={schemaVersion:1,kind:'FIELD_DRAFT_V3_HTTP',status:'failed',category:'CONFIGURATION_FAILED',cases:0,httpRequests:0,serverClosed:false,connectionsClosed:false};
+ const result={schemaVersion:1,kind:'FIELD_DRAFT_V3_HTTP',status:'failed',category:'CONFIGURATION_FAILED',cases:0,httpRequests:0,clientCases:0,clientRequests:0,serverClosed:false,connectionsClosed:false};
  let pool:Pool|undefined,observer:Client|undefined,observerConnected=false,observerEnd:ReturnType<typeof observeTextDraftConnectionEnd>|undefined,fault=false;
  const pgEnds=new Map<Client,ReturnType<typeof observeTextDraftConnectionEnd>>(),servers:http.Server[]=[],sockets=new Set<Socket>(),clientSockets=new Set<Socket>(),tasks=new Set<Promise<unknown>>();
+ const clients:FieldDraftV3Client[]=[],fetchSockets=new Set<Socket>();let fetchPort=0,fetchConnectionsObserved=0;
+ const connectedChannel=channel('undici:client:connected');
+ const connectedListener=(message:unknown)=>{const socket=(message as {socket?:Socket})?.socket;if(socket?.remoteAddress==='127.0.0.1'&&socket.remotePort===fetchPort){fetchConnectionsObserved++;fetchSockets.add(socket);socket.once('close',()=>fetchSockets.delete(socket));}};
+ connectedChannel.subscribe(connectedListener);
  const agent=new http.Agent({keepAlive:false,maxSockets:2});
  const watchdog=setTimeout(()=>{writeSync(1,JSON.stringify({...result,status:'failed',category:'CLEANUP_UNOBSERVED'})+'\n');process.exit(1);},75000);
  try{
@@ -44,12 +57,14 @@ export async function runFieldDraftV3HttpIntegration(){
  const repo=createFieldDraftV3Repository(pool),tokenA='synthetic-owner-a-'+randomUUID(),tokenB='synthetic-owner-b-'+randomUUID(),staffToken='synthetic-staff-'+randomUUID();
  const abortToken='synthetic-abort-'+randomUUID();let releaseAuth!:()=>void,authStarted!:()=>void;
  const authSeen=new Promise<void>(resolve=>{authStarted=resolve;}),authWait=new Promise<void>(resolve=>{releaseAuth=resolve;});
+ const clientAbortToken='synthetic-client-abort-'+randomUUID();let clientAuthStarted!:()=>void,releaseClientAuth!:()=>void,clientDisconnected!:()=>void;
+ const clientAuthSeen=new Promise<void>(resolve=>{clientAuthStarted=resolve;}),clientAuthWait=new Promise<void>(resolve=>{releaseClientAuth=resolve;}),clientDisconnectSeen=new Promise<void>(resolve=>{clientDisconnected=resolve;});
  const identities=new Map([[tokenA,f.ownerA],[tokenB,f.ownerB],[staffToken,f.staff]]);let authCalls=0,rpcCalls=0;
  async function start(enabled:boolean){
   const server=http.createServer((req,res)=>{
    const transport=textDraftTransport(req,res);
    if(req.headers.origin!=='http://127.0.0.1:4193'){transport.send(403,{ok:false,code:'FORBIDDEN'});return;}
-   const task=handleFieldDraftV3Request(req,{allowLocalFieldDraftV3:enabled,authenticateOwner:credential=>transport.authenticate(credential,async value=>{authCalls++;if(value===abortToken){authStarted();await authWait;return f.ownerA;}return identities.get(value)??null;}),call:(name,args)=>{rpcCalls++;return repo.call(name,args);}}).then(out=>transport.send(out.status,out.body));
+   const task=handleFieldDraftV3Request(req,{allowLocalFieldDraftV3:enabled,authenticateOwner:credential=>transport.authenticate(credential,async value=>{authCalls++;if(value===clientAbortToken){res.once('close',()=>clientDisconnected());clientAuthStarted();await clientAuthWait;return f.ownerB;}if(value===abortToken){authStarted();await authWait;return f.ownerA;}return identities.get(value)??null;}),call:(name,args)=>{rpcCalls++;return repo.call(name,args);}}).then(out=>transport.send(out.status,out.body));
    tasks.add(task);void task.finally(()=>tasks.delete(task)).catch(()=>{fault=true;res.destroy();});
   });
   server.requestTimeout=12000;server.headersTimeout=10000;server.on('error',()=>{fault=true;});servers.push(server);server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
@@ -108,17 +123,37 @@ export async function runFieldDraftV3HttpIntegration(){
  assert.equal(await stored(),before);result.cases++;
  await observer.query("update public.tenant_members set role='BUSINESS_STAFF' where tenant_id=$1 and user_id=$2",[f.tenantA,f.ownerA]);assert.equal((await request(port,'GET',route())).status,403);assert.equal((await request(port,'POST',route(),tokenA,save(2,2))).status,403);assert.equal(await stored(),before);result.cases++;
  assert.equal(result.cases,8);assert.equal(result.httpRequests,29);
- assert.equal(fault,false);result.status='passed';result.category='COMPLETE';
+ // Second phase uses the actual typed client and Node native fetch. The wrapper
+ // adds only the fixture's trusted Origin header and counts issued attempts.
+ await observer.query("insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_STAFF')",[f.tenantB,f.staff]);
+ const flowC=randomUUID();await observer.query('select public.save_configurable_flow_draft($1,$2,$3,$4,0,$5,$6::jsonb)',[f.ownerB,f.tenantB,flowC,f.serviceB,'Typed client parent',JSON.stringify(authoring())]);
+ const base=`http://127.0.0.1:${port}`;fetchPort=port;
+ const fixtureFetch=createFieldClientFixtureFetch(base,()=>{result.clientRequests++;});
+ const off=createFieldDraftV3Client(base,true,fixtureFetch);clients.push(off);
+ const denial=async(promise:Promise<unknown>,code:string)=>assert.rejects(promise,(error:unknown)=>!!error&&typeof error==='object'&&'code'in error&&error.code===code);
+ await denial(off.read(tokenB,f.tenantB,flowC),'NOT_AVAILABLE');await denial(off.save(tokenB,f.tenantB,flowC,save(0)),'NOT_AVAILABLE');assert.equal(result.clientRequests,0);result.clientCases++;
+ const typed=createFieldDraftV3Client(base,true,fixtureFetch,true);clients.push(typed);
+ assert.equal((await typed.read(tokenB,f.tenantB,flowC)).status,'missing');const first=await typed.save(tokenB,f.tenantB,flowC,save(0));assert.equal(first.draftRevision,1);assert.deepEqual(first.definition,definition());assert.deepEqual(await typed.read(tokenB,f.tenantB,flowC),{status:'present',receipt:first});assert.equal((await typed.save(tokenB,f.tenantB,flowC,save(1))).draftRevision,2);result.clientCases++;
+ const clientStored=async()=>JSON.stringify((await observer!.query('select draft_revision,saved_parent_revision,definition from public.field_drafts_v3 where tenant_id=$1 and flow_id=$2',[f.tenantB,flowC])).rows);
+ const beforeClient=await clientStored();await denial(typed.save(tokenB,f.tenantB,flowC,save(1)),'CONFLICT');assert.equal(await clientStored(),beforeClient);
+ await observer.query('select public.save_configurable_flow_draft($1,$2,$3,$4,1,$5,$6::jsonb)',[f.ownerB,f.tenantB,flowC,f.serviceB,'Changed typed parent',JSON.stringify(authoring())]);
+ const clientStale=await typed.read(tokenB,f.tenantB,flowC);assert.equal(clientStale.status,'present');if(clientStale.status==='present')assert.equal(clientStale.receipt.stale,true);
+ await denial(typed.save(tokenB,f.tenantB,flowC,save(2)),'CONFLICT');assert.equal(await clientStored(),beforeClient);await typed.save(tokenB,f.tenantB,flowC,save(2,2));const protectedClient=await clientStored();
+ await denial(typed.read(staffToken,f.tenantB,flowC),'FORBIDDEN');assert.equal(await clientStored(),protectedClient);await denial(typed.save(staffToken,f.tenantB,flowC,save(3,2)),'FORBIDDEN');assert.equal(await clientStored(),protectedClient);await denial(typed.read(tokenB,f.tenantA,flowC),'FORBIDDEN');assert.equal(await clientStored(),protectedClient);result.clientCases++;
+ const callsBefore=rpcCalls;const pending=typed.read(clientAbortToken,f.tenantB,flowC);const rejected=denial(pending,'UNAUTHENTICATED');await bounded(clientAuthSeen,3000);typed.invalidate();await bounded(rejected,3000);await bounded(clientDisconnectSeen,3000);releaseClientAuth();await bounded(Promise.allSettled([...tasks]),6000);assert.equal(rpcCalls,callsBefore);assert.equal(await clientStored(),protectedClient);
+ const next=await typed.read(tokenB,f.tenantB,flowC);assert.equal(next.status,'present');if(next.status==='present')assert.equal(next.receipt.draftRevision,3);assert.equal(await clientStored(),protectedClient);result.clientCases++;
+ assert.ok(fetchConnectionsObserved>0);assert.equal(result.clientCases,4);assert.equal(result.clientRequests,13);assert.equal(fault,false);result.status='passed';result.category='COMPLETE';
+
  }catch{result.status='failed';}
  finally{
-  let failed=false;agent.destroy();for(const socket of clientSockets)socket.destroy();
-  try{await bounded(Promise.all(servers.map(server=>new Promise<void>((resolve,reject)=>{if(!server.listening){resolve();return;}server.close(error=>error?reject(error):resolve());server.closeAllConnections();}))),7000);await bounded(Promise.allSettled([...tasks]),10000);assert.equal(tasks.size,0);await bounded((async()=>{while(sockets.size||clientSockets.size)await new Promise(resolve=>setTimeout(resolve,10));})(),3000);assert.equal(sockets.size,0);assert.equal(clientSockets.size,0);result.serverClosed=true;}catch{failed=true;}
+  let failed=false;for(const client of clients)client.invalidate();agent.destroy();for(const socket of fetchSockets)socket.destroy();for(const socket of clientSockets)socket.destroy();
+  try{await bounded(Promise.all(servers.map(server=>new Promise<void>((resolve,reject)=>{if(!server.listening){resolve();return;}server.close(error=>error?reject(error):resolve());server.closeAllConnections();}))),7000);await bounded(Promise.allSettled([...tasks]),10000);assert.equal(tasks.size,0);await bounded((async()=>{while(sockets.size||clientSockets.size||fetchSockets.size)await new Promise(resolve=>setTimeout(resolve,10));})(),3000);assert.equal(sockets.size,0);assert.equal(clientSockets.size,0);assert.equal(fetchSockets.size,0);result.serverClosed=true;}catch{failed=true;}
   if(observerConnected&&observer){try{await observer.query('rollback');}catch{failed=true;}}
   try{await awaitTextDraftConnectionCleanup([...(pool?[pool.end()]:[]),...(observer?[observer.end()]:[])],[...pgEnds.values(),...(observerEnd?[observerEnd]:[])]);result.connectionsClosed=true;}catch{failed=true;}
-  if(failed){result.status='failed';result.category='CLEANUP_UNOBSERVED';}else if(fault){result.status='failed';result.category='CONNECTION_FAILED';}clearTimeout(watchdog);
+  if(failed){result.status='failed';result.category='CLEANUP_UNOBSERVED';}else if(fault){result.status='failed';result.category='CONNECTION_FAILED';}connectedChannel.unsubscribe(connectedListener);clearTimeout(watchdog);
  }
  writeSync(1,JSON.stringify(result)+'\n');return result.status==='passed'?0:1;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const terminal=()=>{writeSync(1,'{"schemaVersion":1,"kind":"FIELD_DRAFT_V3_HTTP","status":"failed","category":"CLEANUP_UNOBSERVED","cases":0,"httpRequests":0,"serverClosed":false,"connectionsClosed":false}\n');process.exit(1);};process.on('uncaughtException',terminal);process.on('unhandledRejection',terminal);void runFieldDraftV3HttpIntegration().then(code=>{process.exitCode=code;},terminal);
+ const terminal=()=>{writeSync(1,'{"schemaVersion":1,"kind":"FIELD_DRAFT_V3_HTTP","status":"failed","category":"CLEANUP_UNOBSERVED","cases":0,"httpRequests":0,"clientCases":0,"clientRequests":0,"serverClosed":false,"connectionsClosed":false}\n');process.exit(1);};process.on('uncaughtException',terminal);process.on('unhandledRejection',terminal);void runFieldDraftV3HttpIntegration().then(code=>{process.exitCode=code;},terminal);
 }

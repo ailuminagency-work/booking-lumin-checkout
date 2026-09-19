@@ -18,6 +18,8 @@ def sources():
         pins[p.relative_to(ROOT).as_posix()]=hashlib.sha256(base.bounded_read(p,4194304)).hexdigest()
     for name in ('field-drafts-v3-concurrency.integration.ts','field-drafts-v3-concurrency.integration.test.ts','field-drafts-v3-repository.ts','field-drafts-v3-repository.integration.ts','field-drafts-v3-repository.integration.test.ts','field-drafts-v3-http.ts','field-drafts-v3-http.integration.ts','field-drafts-v3-http.integration.test.ts'):
         if 'packages/action-api/server/'+name not in pins:fail('SOURCE_CHANGED')
+    for name in ('fieldDraftV3Client.ts','fieldDraftV3Client.test.ts','fieldDraftV3Client.adversarial.test.ts'):
+        if 'packages/flow-ui/src/'+name not in pins:fail('SOURCE_CHANGED')
     return migrations,pins
 def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
     try:value=json.loads(raw.decode('ascii'))
@@ -28,7 +30,7 @@ def receipt(raw,kind='FIELD_DRAFT_V2_CONCURRENCY'):
         expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':7,'httpRequests':27,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
     elif kind=='FIELD_DRAFT_V3_CONCURRENCY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':30,'parityCases':37,'connectionsClosed':True}
     elif kind=='FIELD_DRAFT_V3_REPOSITORY':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':7,'connectionsClosed':True}
-    elif kind=='FIELD_DRAFT_V3_HTTP':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'serverClosed':True,'connectionsClosed':True}
+    elif kind=='FIELD_DRAFT_V3_HTTP':expected={'schemaVersion':1,'kind':kind,'status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
     elif kind!='FIELD_DRAFT_V2_CONCURRENCY':fail('RECEIPT_REJECTED')
     if type(value)is not dict or set(value)!=set(expected) or any(type(value[k])is not type(v) or value[k]!=v for k,v in expected.items()):fail('RECEIPT_REJECTED')
     if raw!=(json.dumps(value,separators=(',',':'))+'\n').encode('ascii'):fail('RECEIPT_REJECTED')

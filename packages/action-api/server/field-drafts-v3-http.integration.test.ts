@@ -1,5 +1,5 @@
-import {expect,it} from 'vitest';
-import {fieldHttpV3Configuration} from './field-drafts-v3-http.integration';
+import {expect,it,vi} from 'vitest';
+import {fieldHttpV3Configuration,createFieldClientFixtureFetch} from './field-drafts-v3-http.integration';
 const env={FIELD_DRAFT_V3_HTTP_APPROVED:'1',TEXT_DRAFT_TEST_PROFILE:'local',TEXT_DRAFT_TEST_DISPOSABLE:'1',TEXT_DRAFT_TEST_LAYOUT:'public',TEXT_DRAFT_HTTP_DATABASE:'lumin_text_draft_'+'a'.repeat(32)};
 it('requires explicit approval and disposable identity before I/O',()=>{
  expect(()=>fieldHttpV3Configuration({},'win32')).toThrow();
@@ -13,4 +13,12 @@ it('pins loopback and bounded pool independently of inherited credentials',async
 });
 it('accepts only explicit Linux CI on both approved layouts',async()=>{
  for(const layout of ['public','extensions']){const c=fieldHttpV3Configuration({...env,TEXT_DRAFT_TEST_PROFILE:'github-ci',GITHUB_ACTIONS:'true',TEXT_DRAFT_TEST_LAYOUT:layout},'linux');expect(c.host).toBe('127.0.0.1');expect(c.port).toBe(5432);if(typeof c.password==='function')expect(await c.password()).toBe('postgres');else throw Error('NO_CALLBACK');}
+});
+
+it('fixture wrapper preserves native request controls and adds only fixed trusted origin',async()=>{
+ const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response('{}')),count=vi.fn(),controller=new AbortController();vi.stubGlobal('fetch',fetcher);
+ try{const wrapper=createFieldClientFixtureFetch('http://127.0.0.1:4199',count);const options:RequestInit={signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store',method:'POST',body:'{}',headers:{Authorization:'Bearer synthetic-test'}};
+ await wrapper('http://127.0.0.1:4199/api/test',options);expect(count).toHaveBeenCalledOnce();const sent=fetcher.mock.calls[0]?.[1];expect(sent).toMatchObject({signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store',method:'POST',body:'{}'});expect(new Headers(sent?.headers).get('Origin')).toBe('http://127.0.0.1:4193');expect(new Headers(sent?.headers).get('Authorization')).toBe('Bearer synthetic-test');
+ expect(()=>wrapper('http://external.example/api/test',options)).toThrow();expect(count).toHaveBeenCalledOnce();
+ }finally{vi.unstubAllGlobals();}
 });

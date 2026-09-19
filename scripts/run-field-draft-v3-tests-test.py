@@ -10,7 +10,7 @@ def v3_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_CONCURRENCY','st
 
 def v3_repository_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_REPOSITORY','status':'passed','category':'COMPLETE','cases':7,'connectionsClosed':True}
 
-def v3_http_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_HTTP','status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'serverClosed':True,'connectionsClosed':True}
+def v3_http_value():return {'schemaVersion':1,'kind':'FIELD_DRAFT_V3_HTTP','status':'passed','category':'COMPLETE','cases':8,'httpRequests':29,'clientCases':4,'clientRequests':13,'serverClosed':True,'connectionsClosed':True}
 
 def raw(v):return (json.dumps(v,separators=(',',':'))+'\n').encode()
 class Tests(unittest.TestCase):
@@ -109,10 +109,22 @@ class Tests(unittest.TestCase):
    with self.assertRaises(m.Failure):self.run_fixture(target=52,**kwargs)
  def test_v3_http_receipt_and_failures(self):
   good=v3_http_value();kind=good['kind'];self.assertEqual(m.receipt(raw(good),kind),good)
-  for key,bad in [('cases',7),('cases',9),('cases',True),('httpRequests',28),('httpRequests',30),('httpRequests',True),('httpRequests',29.0),('serverClosed',False),('connectionsClosed',False),('clientCases',4),('extra',1)]:
+  for key,bad in [('cases',7),('cases',9),('cases',True),('httpRequests',28),('httpRequests',30),('httpRequests',True),('httpRequests',29.0),('serverClosed',False),('connectionsClosed',False),('serverClosed',1),('connectionsClosed',1),('extra',1)]:
    with self.assertRaises(m.Failure):m.receipt(raw({**good,key:bad}),kind)
   for payload in [b'',raw(http_value()),raw(good).replace(b'"cases":8',b'"cases":8,"cases":8')]:
    with self.assertRaises(m.Failure):m.receipt(payload,kind)
   for kwargs in [{'code':1},{'stderr':b'private'},{'payload':b''},{'payload':raw({**good,'connectionsClosed':False})},{'mutate':True}]:
    with self.assertRaises(m.Failure):self.run_fixture(target=53,**kwargs)
+ def test_v3_exact_client_counts_and_closed_wire_schema(self):
+  good=v3_http_value();kind=good['kind']
+  self.assertEqual(m.receipt(raw(good),kind),good)
+  for key in ['clientCases','clientRequests']:
+   for bad in [True,False,0,good[key]-1,good[key]+1,float(good[key]),str(good[key]),None]:
+    with self.subTest(key=key,bad=bad),self.assertRaises(m.Failure):m.receipt(raw({**good,key:bad}),kind)
+   with self.assertRaises(m.Failure):m.receipt(raw({k:v for k,v in good.items() if k!=key}),kind)
+  legacy={k:v for k,v in good.items() if k not in ['clientCases','clientRequests']}
+  payloads=[raw(legacy),raw({**good,'clientCases':3}),raw({**good,'clientRequests':12}),raw({**good,'serverClosed':False}),raw({**good,'connectionsClosed':False}),raw({**good,'extra':None}),json.dumps(good).encode(),raw(good).rstrip(b'\n'),raw(good)+b'\n',raw(good).replace(b'"clientCases":4',b'"clientCases":4,"clientCases":4')]
+  for payload in payloads:
+   with self.subTest(payload_index=payloads.index(payload)),self.assertRaises(m.Failure):m.receipt(payload,kind)
+   with self.assertRaises(m.Failure):self.run_fixture(target=53,payload=payload)
 if __name__=='__main__':unittest.main()
