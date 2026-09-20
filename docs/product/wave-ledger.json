@@ -263,7 +263,7 @@
       "kind": "capability",
       "owner": "W3",
       "status": "building",
-      "evidence": "docs/product/increments/FIELD_PUBLICATION_SNAPSHOT_V1.md",
+      "evidence": "docs/product/increments/FIELD_PUBLICATION_STORAGE_DESIGN.md",
       "dependsOn": [
         "W3.1.local_candidate"
       ],
