@@ -1,0 +1,35 @@
+# V3 SQL/browser journey candidate
+
+Parentfa67b690081b93e7c6277a39bf28c39e8cb3be35; isolated branch codex/wave3-choice-journey-v3. Local dual-layout native gates passed for isolated review-branch publication; wave remains BUILDING. Compose previously reviewed resolver/environment/client/editor/host with a bounded synthetic local browser journey. Preserve main, prior stack, V2, migrations, routes and provider disconnection.
+
+## Ownership
+
+/root/choice_editor_builder_2043 owns only new scripts/run-field-journey-v3.mjs and tests/field-journey-v3/{fixture.html,fixture.tsx,browser-cases.ts}. /root/next_leaf_review_1941 owns only new scripts/run-field-journey-v3-tests-test.py and independent adversarial read-only review. /root/editor_design_review_2043 owns read-only architecture/domain/independent/Runtime review. Root owns new supervisor scripts/run-field-journey-v3-tests.py, root tsconfig.field-journey-v3.json, evidence and ledger; root runs serial checks.
+
+## Required proof
+
+Eight groups from reviewed CHOICE_BROWSER_RESOLVER_V3.md: exact mixed SQL save/reload; preview nonmutation/noHTTP; CAS; real parent advance/rebind; tenant/staff denial; revocation; held actual GET parent revision/dirty roundtrips; static-route/search/hash navigation. Origin4193 matches all layers. Synthetic credentials only, SQL controls Node-only. No mocked successful server responses. Held route.fetch response must be disposed/released even on failure.
+
+Supervisor wraps unchanged V3base53steps then step54; exact109artifacts with finite canonical receipt,8cases,closedbrowser/servers/connections true. Pin roottsconfig and every new script/fixture alongside all existing package/portal sources. Preserve base510/overall780/child240/watchdog230/cases120 bounds. Positive Chromiumdisconnect, listener/socket/task/PGclose observations and independent final zeroDBsessions required in fresh public then extensions layout. Unit/source/inert tests alone cannot qualify native gates.
+
+## Resume
+
+Heartbeat2026-09-20T00:46Z workflow/ledger read, parentcleanb693b9, main152bb909protected, PR74open/draftc53debbaa9e6fa2acc7bfe2aca96026e4450a194, exactparentfa67b69Actions0. Known collaborator blocker unchanged. Newbranch81ee32. W3/W4remainbuilding; no CI/Release/hosted claims. Implementation now underway with exclusive files. Failures return to builder; no publish before local native qualification and independent actual artifact review.
+
+Pre-freeze supervisor sourcepin defect: rootc7ce58 and independent541752/9d789b found directory pin update incorrectly outside loop after text adaptation, omitting portal sources. Root04e5bb repaired before any execution; independent regression requires portalhost/editor and roottsconfig pins. Added explicit initial host/editor presence checks. No pre-repair test/native acceptance.
+
+Supervisor repairedpinloop independently0bad10 accepted; independent supervisor15inert tests2ebce1 PASS after repair. Ledger8+resolver10b714bd PASS18; unchanged localPG acceptsconnectionsd8d233 and54d165 sees0 disposableDBsessions. Browser executable file exists fixedcache pathc7ce58, not content/launchproof. Native preflight withheld until all four builderfiles freeze and strict/source review pass.
+
+Independent source reviews before native: reviewer7544f8 requested route.fetch maxRedirects0/timeout5000 to constrain Node-side browser request; roota756bb returned unconditional route.fulfill-error suppression because nonaborted read errors could be hidden. Builder to distinguish observed parentabort from normal heldread fulfillment. Independent3fc942 found missinghelper inerttest could fail on missingrunner instead of target; testauthor repairing from baselinevalid inventory before targetremoval. Prior15inertpass does not close these review findings; no native launch yet.
+
+Builderfourfiles frozen1fa15a: runnerB3B124CCEEEB11F8DA7BB5E2E91250FC399009E622BB49080FA668715E4F7A7D fixtureECACE235B31E91996B109D3BF1460BE601BBF2C5F8EAD1A48701F1F618D8177F html8DB2C0DCC307DD31D7500E9D2581CBD60346523902EF082C4E31055C669C4C68 cases9C35B66CEF9F26A0D5DA33581E0AB6EA581B7705DFE279575B5B5972D9FA17DA. Strictb967a8 PASS0; contamination27c9d3 clean. Independentc04dcd accepts narrowed observedabort vs normalfulfillment failure, nonredirecting5-second route.fetch,7-second heldhandlercleanup and actualreorderedchoiceIDSQL proof. Root supervisor0087C4A62A50C9E8DF8A4EE9C9EB8A6D1F1CA837FD9DA917F88032E56646E8E9/tsconfig5DC6FF5C6A0301ADFD960C90082A4C9908FE726DA407EE64869BC811EA075AD3. Native still withheld awaiting corrected supervisortest oracle and finalreview.
+
+Repaired supervisortest6FCCF3619C5CB6809303D861F4C2C0DBC9710DB7BAF21AD270DC91955CCBE866 independentlya46568 accepts validbaseline/target-only removal oracle. Actuala2101b15/15PASS and sevenfinalhashes unchanged. Independentadversarial92bd6f accepts actual8groups with limits: optional-clear/required-empty preview and overlapping oldcompletion/newcheckbusy remain controlled-test-only, not nativeclaims. Sourcepreflight conditionalrequirements met; freshpublicnativeb46419 nowrunning under originalbounds. No finalnative/Runtime acceptance until receipt/artifactreview/zero sessions.
+
+Freshpublicb46419/4b9bb9 PASS54steps run4a4cfadf-03e1-4fc6-be2d-bc0cf6668d29 sourceDigest4c10ef37a307855b024f006bca4cecb5b4261034f9895e27d3de1deb6c12a49b. Rootd479ee confirms0remaining DBsessions. Independentactual109artifact/currentdigest/custody review requested; extensions remains withheld until publicreview passes. No hosted/realAuth/provider claims.
+
+Independentpublicactualartifactaadbd7 verifies exactly109regularsinglelinkfiles, canonicalancestors/noreparse,459currentpins digestmatch, finitecanonicalpassed46-54receipts/emptystderr;54exact8groups andallclosurestrue. Rootfinite54receipt82ebbc agrees, zeroDBsessionsd479ee. Fresh extensions2725cb nowrunningserially under unchangedbounds.
+
+Fresh extensions2725cb/904519 PASS54 run d6548e9b-0fda-4318-acd7-01828af8ed88 same sourceDigest4c10ef37a307855b024f006bca4cecb5b4261034f9895e27d3de1deb6c12a49b. Root41d827 confirms0DBsessions and whitespaceclean. RootIntegration accepts nine intended paths, no prior runtime/migration changes. Independentextensionsactual109artifact/currentdigest/finalRuntime review pending. All results are local synthetic identities and disposable SQL; hosted Auth, genuine providers, fullwave and Release remain unproved.
+
+Independent final71f8c0 verifies extensions109artifacts/custody/noreparse/459currentpins/digest/finitepassed46-54receipts/emptystderr and exact8browsergroups/allclosures. Final053064 verifies nine intended paths, ledgerbuilding/evidenceonly and retained review failures/limits. /root/editor_design_review_2043 grants scoped local Runtime acceptance for review-branch publication with publicaadbd7 and both rootzero-session checks. No hostedAuth/providers/exactCI/Release/fullwave/merge/deploy approval. Next preserve isolatedstack and pursue exactcandidateCI/PR access; continue remaining W3 capability gaps without relabeling this journey as full acceptance.
