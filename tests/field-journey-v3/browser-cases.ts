@@ -67,8 +67,29 @@ export async function runFieldJourneyV3BrowserCases(browser: Browser, config: Co
     await expect(preview.getByText('Preview answers are valid. Nothing was submitted.', { exact: true })).toBeVisible();
     await expect(preview.getByRole('textbox').first()).toHaveValue(previewAnswer);
     await expect(preview.getByRole('textbox').nth(1)).toHaveValue('Exact line one\n🌍 line two');
+    // Clearing an optional selection represents absence and remains valid.
+    await preview.getByRole('combobox').selectOption('');
+    await preview.getByRole('button',{name:'Check answers',exact:true}).click();
+    await expect(preview.getByRole('combobox')).toHaveValue('');
+    await expect(preview.getByText('Preview answers are valid. Nothing was submitted.',{exact:true})).toBeVisible();
     await a.getByRole('button', { name: 'Close preview', exact: true }).click();
     await expect(preview).toHaveCount(0);
+    const required=a.getByRole('group',{name:'Question 3',exact:true}).getByLabel('Answer required',{exact:true});
+    await required.check();await a.getByRole('button',{name:'Try questions',exact:true}).click();
+    await preview.getByRole('button',{name:'Check answers',exact:true}).click();
+    await expect(preview.getByRole('combobox')).toHaveAttribute('aria-invalid','true');
+    await expect(preview.getByText('Check required answers, character limits and selected options.',{exact:true})).toBeVisible();
+    await preview.getByRole('combobox').selectOption(choices[0].id);
+    await preview.getByRole('button',{name:'Check answers',exact:true}).click();
+    await expect(preview.getByRole('combobox')).toHaveValue(choices[0].id);
+    await expect(preview.getByText('Preview answers are valid. Nothing was submitted.',{exact:true})).toBeVisible();
+    await preview.getByRole('combobox').selectOption('');
+    await preview.getByRole('button',{name:'Check answers',exact:true}).click();
+    await expect(preview.getByRole('combobox')).toHaveValue('');
+    await expect(preview.getByRole('combobox')).toHaveAttribute('aria-invalid','true');
+    await expect(preview.getByText('Check required answers, character limits and selected options.',{exact:true})).toBeVisible();
+    await a.getByRole('button',{name:'Close preview',exact:true}).click();await required.uncheck();
+    await expect(required).not.toBeChecked();await expect(preview).toHaveCount(0);
     expect(previewRequests).toBe(0); a.off('request', countPreviewRequest);
     firstPhase = 'PREVIEW_SQL'; expect(await callbacks.inspectA()).toEqual(initial);
     stage = 3;
@@ -137,16 +158,61 @@ export async function runFieldJourneyV3BrowserCases(browser: Browser, config: Co
       } finally {if(timer)clearTimeout(timer);release();try{if(handlerTask){let cleanupTimer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([handlerTask,new Promise<never>((_,reject)=>{cleanupTimer=setTimeout(()=>reject(Error('HELD_GET_CLEANUP')),7000);})]);}finally{if(cleanupTimer)clearTimeout(cleanupTimer);}}}finally{await target.unroute(pattern,handler);}}
       expect(handlerFailed).toBe(false);
     }
+    async function boundedHeld<T>(task:Promise<T>,milliseconds:number):Promise<T> {
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      try{return await Promise.race([task,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('HELD_GET_TIMEOUT')),milliseconds);})]);}
+      finally{if(timer)clearTimeout(timer);}
+    }
     for(const mode of ['revision','dirty'] as const){
       await a.getByLabel('Choice 1 label',{exact:true}).fill('Unsaved '+mode);
-      await heldRead(a,async()=>{
+      // Each actual GET owns its response, release and task; neither can replace the other's cleanup.
+      function slot(expectAbort:boolean){
+        let release!:()=>void,reached!:()=>void;
+        const hold=new Promise<void>(resolve=>release=resolve),fetched=new Promise<void>(resolve=>reached=resolve);
+        return {expectAbort,release,reached,hold,fetched,response:undefined as APIResponse|undefined,task:undefined as Promise<void>|undefined,failed:false,disposed:false};
+      }
+      const old=slot(true),fresh=slot(false),slots=[old,fresh];let admitted=0,unexpected=false;
+      const pattern=config.apiUrl+'/api/field-drafts-v3/**';
+      const handler=(route:Route)=>{
+        if(route.request().method()!=='GET')return route.fallback();
+        const owned=slots[admitted++];
+        if(!owned){unexpected=true;return route.abort();}
+        owned.task=(async()=>{
+          try {
+            owned.response=await route.fetch({maxRedirects:0,timeout:5000});expect(owned.response.status()).toBe(200);owned.reached();await owned.hold;
+            try{await route.fulfill({response:owned.response});}
+            catch{if(!owned.expectAbort)throw Error('HELD_GET_FULFILL');await expect.poll(()=>route.request().failure()?.errorText??'',{timeout:5000}).toMatch(/ERR_ABORTED|NS_BINDING_ABORTED/);}
+          }catch{owned.failed=true;owned.reached();}
+          finally{if(owned.response){await owned.response.dispose();owned.disposed=true;}}
+        })();
+        // The task is also awaited explicitly below and in cleanup.
+        void owned.task.catch(()=>undefined);return owned.task;
+      };
+      await a.route(pattern,handler);
+      try{
+        await a.getByRole('button',{name:'Check latest version',exact:true}).click();await boundedHeld(old.fetched,5000);expect(old.failed).toBe(false);expect(old.response).toBeDefined();
         await expect(a.getByText('Questions are loading or saving.',{exact:true})).toBeVisible();
         if(mode==='revision') {await a.getByLabel('Parent revision',{exact:true}).fill('3');await expect(a.getByLabel('Parent revision',{exact:true})).toHaveValue('3');await expect(a.getByText('Unsaved question changes.',{exact:true})).toBeVisible();await a.getByLabel('Parent revision',{exact:true}).fill('2');await expect(a.getByLabel('Parent revision',{exact:true})).toHaveValue('2');}
         else {await a.getByLabel('Parent dirty',{exact:true}).check();await expect(a.getByLabel('Parent dirty',{exact:true})).toBeChecked();await expect(a.getByText('Unsaved question changes.',{exact:true})).toBeVisible();await a.getByLabel('Parent dirty',{exact:true}).uncheck();await expect(a.getByLabel('Parent dirty',{exact:true})).not.toBeChecked();}
         await expect(a.getByRole('button',{name:'Save questions',exact:true})).toBeDisabled();
-      },true);
-      await expect(a.getByLabel('Choice 1 label',{exact:true})).toHaveValue('Unsaved '+mode);await expect(a.getByRole('button',{name:'Save questions',exact:true})).toBeDisabled();expect(await callbacks.inspectA()).toEqual(beforeDenial);
-      await a.getByRole('button',{name:'Check latest version',exact:true}).click();await expect(a.getByRole('button',{name:'Save questions',exact:true})).toBeEnabled();await expect(a.getByLabel('Choice 1 label',{exact:true})).toHaveValue('Unsaved '+mode);
+        await a.getByRole('button',{name:'Check latest version',exact:true}).click();await boundedHeld(fresh.fetched,5000);expect(fresh.failed).toBe(false);expect(fresh.response).toBeDefined();expect(admitted).toBe(2);
+        old.release();await boundedHeld(old.task!,7000);expect(old.failed).toBe(false);expect(old.disposed).toBe(true);
+        // Old settlement must not clear the newer operation's busy state or permit navigation/save.
+        await expect(a.getByText('Questions are loading or saving.',{exact:true})).toBeVisible();
+        await expect(a.getByLabel('Choice 1 label',{exact:true})).toHaveValue('Unsaved '+mode);
+        await expect(a.getByRole('button',{name:'Save questions',exact:true})).toBeDisabled();
+        await a.getByRole('link',{name:'Other route',exact:true}).click();await expect(a).toHaveURL(config.fixtureOrigin+'/edit');
+        await expect(a.getByText('Questions are loading or saving.',{exact:true})).toBeVisible();
+        fresh.release();await boundedHeld(fresh.task!,7000);expect(fresh.failed).toBe(false);expect(fresh.disposed).toBe(true);
+        await expect(a.getByRole('button',{name:'Save questions',exact:true})).toBeEnabled();
+        await expect(a.getByText('Unsaved question changes.',{exact:true})).toBeVisible();
+        await expect(a.getByLabel('Choice 1 label',{exact:true})).toHaveValue('Unsaved '+mode);expect(await callbacks.inspectA()).toEqual(beforeDenial);expect(unexpected).toBe(false);
+      }finally{
+        old.release();fresh.release();
+        try{await boundedHeld(Promise.all(slots.map(owned=>owned.task)),7000);}
+        finally{await a.unroute(pattern,handler);}
+        for(const owned of slots)if(owned.response)expect(owned.disposed).toBe(true);
+      }
     }
     stage = 8;
     await dialog(a,false,()=>a.getByRole('link',{name:'Other route',exact:true}).click());await expect(a).toHaveURL(config.fixtureOrigin+'/edit');await expect(a.getByLabel('Choice 1 label',{exact:true})).toHaveValue('Unsaved dirty');
