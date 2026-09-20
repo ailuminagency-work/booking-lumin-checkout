@@ -7,12 +7,23 @@ create function pg_temp.reject(q text,code text) returns void language plpgsql a
 create function pg_temp.definition() returns jsonb language sql immutable as $$select '{"schemaVersion":3,"fields":[{"key":"notes","kind":"textarea","required":false,"minLength":0,"maxLength":100,"prompt":" Exact notes "},{"key":"choice","kind":"dropdown","required":false,"choices":[{"id":"First","label":" Same "},{"id":"second","label":" Same "}]}]}'::jsonb$$;
 create function pg_temp.authoring() returns jsonb language sql immutable as $$select '{"authoringVersion":2,"config":{"key":"publication_test","steps":[{"key":"count","questionKey":"count","kind":"question","required":true}]},"questionOverrides":{}}'::jsonb$$;
 create function pg_temp.call_sql(a uuid,t uuid,f uuid,p bigint,d bigint,v uuid) returns text language sql as $$select format('select public.publish_field_snapshot_v1(%L::uuid,%L::uuid,%L::uuid,%L::bigint,%L::bigint,%L::uuid)',a,t,f,p,d,v)$$;
+-- Exact complete state, not only row counts; invoked as the disposable database owner.
+create function pg_temp.publication_test_state() returns jsonb language plpgsql as $$
+declare table_name text; rows jsonb; result jsonb:='{}';begin
+ foreach table_name in array array['field_publication_versions_v1','tenants','tenant_members','services','service_questions','flows','flow_drafts','field_draft_families','text_field_drafts','field_drafts_v2','field_drafts_v3','flow_versions','bound_flow_versions','flow_installations','flow_sessions','mode_flow_installations','mode_flow_installation_history','mode_flow_sessions'] loop
+  execute format('select coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text),''[]''::jsonb) from public.%I t',table_name) into rows;
+  result:=result||jsonb_build_object(table_name,rows);
+ end loop;return result;end$$;
+create function pg_temp.fail_publication_insert() returns trigger language plpgsql as $$begin
+ if new.tenant_id::text=tg_argv[0] and new.flow_id::text=tg_argv[1] and new.version_id::text=tg_argv[2] then
+  raise exception 'TEST_PUBLICATION_INSERT_FAILURE' using errcode='PZ001';
+ end if;return new;end$$;
 
 do $$
 declare owner_a uuid:=gen_random_uuid();owner_b uuid:=gen_random_uuid();staff uuid:=gen_random_uuid();
  tenant_a uuid:=gen_random_uuid();tenant_b uuid:=gen_random_uuid();service_a uuid:=gen_random_uuid();service_b uuid:=gen_random_uuid();
  flow_a uuid:=gen_random_uuid();flow_b uuid:=gen_random_uuid();missing_flow uuid:=gen_random_uuid();family_flow uuid:=gen_random_uuid();
- version_a uuid:=gen_random_uuid();version_b uuid:=gen_random_uuid();artifact jsonb;expected jsonb;before_artifacts jsonb;legacy_before jsonb;role_name text;operation text;f uuid;function_oid oid;signature text;
+ version_a uuid:=gen_random_uuid();version_b uuid:=gen_random_uuid();version_rollback uuid:=gen_random_uuid();artifact jsonb;expected jsonb;before_artifacts jsonb;legacy_before jsonb;state_before jsonb;injected boolean:=false;role_name text;operation text;f uuid;function_oid oid;signature text;
 begin
  insert into auth.users(id,email) values(owner_a,owner_a||'@example.test'),(owner_b,owner_b||'@example.test'),(staff,staff||'@example.test');
  insert into public.tenants(id,name,slug,timezone,currency) values(tenant_a,'Synthetic publication A',tenant_a::text,'UTC','USD'),(tenant_b,'Synthetic publication B',tenant_b::text,'UTC','USD');
@@ -54,6 +65,20 @@ begin
  execute 'reset role';
  perform pg_temp.assert(not exists(select 1 from public.field_publication_versions_v1 where tenant_id in(tenant_a,tenant_b)),'denials created no artifact');
 
+ -- AFTER INSERT proves the real insert path was reached, rather than an earlier validation failure.
+ execute format('create trigger publication_test_insert_failure after insert on public.field_publication_versions_v1 for each row execute function pg_temp.fail_publication_insert(%L,%L,%L)',tenant_a::text,flow_a::text,version_a::text);
+ state_before:=pg_temp.publication_test_state();
+ execute 'set local role service_role';
+ begin
+  perform public.publish_field_snapshot_v1(owner_a,tenant_a,flow_a,1,1,version_a);
+ exception when sqlstate 'PZ001' then
+  if sqlerrm<>'TEST_PUBLICATION_INSERT_FAILURE' then raise;end if;injected:=true;
+ end;
+ execute 'reset role';
+ perform pg_temp.assert(injected,'observed exact scoped AFTER INSERT failure');
+ perform pg_temp.assert(pg_temp.publication_test_state()=state_before,'insert failure rolled back exact artifact legacy and source state');
+ drop trigger publication_test_insert_failure on public.field_publication_versions_v1;
+ -- Retry exactly the failed UUID and source pair after removing only the injected trigger.
  execute 'set local role service_role';
  artifact:=public.publish_field_snapshot_v1(owner_a,tenant_a,flow_a,1,1,version_a);
  execute 'reset role';
@@ -93,6 +118,24 @@ begin
  perform pg_temp.assert((select count(*)=2 from public.field_publication_versions_v1 where tenant_id=tenant_a and flow_id=flow_a),'exactly two distinct artifacts');
  perform pg_temp.assert((select envelope=expected from public.field_publication_versions_v1 where version_id=version_a),'old artifact unchanged after new sidecar');
  perform pg_temp.assert(legacy_before=jsonb_build_array((select count(*) from public.flow_versions),(select count(*) from public.bound_flow_versions),(select count(*) from public.flow_installations),(select count(*) from public.flow_sessions),(select count(*) from public.mode_flow_installations),(select count(*) from public.mode_flow_sessions),(select jsonb_agg(to_jsonb(x) order by id) from public.flows x where tenant_id in(tenant_a,tenant_b))),'no legacy activation, installation or session changes');
+ -- A successful RPC is still inside its caller's transaction: abort the enclosing
+ -- subtransaction after checking its exact receipt, then reuse the same UUID/pair.
+ state_before:=pg_temp.publication_test_state();injected:=false;
+ expected:=jsonb_build_object('fieldPublicationVersion',1,'tenantId',tenant_b::text,'flowId',flow_b::text,'versionId',version_rollback::text,'parentAuthoringVersion',2,'sourceParentRevision',1,'sourceFieldDraftRevision',1,'definition',pg_temp.definition(),'submissionMode','unconfirmed_request');
+ execute 'set local role service_role';
+ begin
+  artifact:=public.publish_field_snapshot_v1(owner_b,tenant_b,flow_b,1,1,version_rollback);
+  perform pg_temp.assert(artifact=expected,'real RPC succeeded before deliberate caller rollback');
+  raise exception 'TEST_PUBLICATION_CALLER_ROLLBACK' using errcode='PZ002';
+ exception when sqlstate 'PZ002' then
+  if sqlerrm<>'TEST_PUBLICATION_CALLER_ROLLBACK' then raise;end if;injected:=true;
+ end;
+ execute 'reset role';
+ perform pg_temp.assert(injected,'observed exact post-success caller rollback');
+ perform pg_temp.assert(pg_temp.publication_test_state()=state_before,'caller rollback restored exact artifact legacy and source state');
+ execute 'set local role service_role';artifact:=public.publish_field_snapshot_v1(owner_b,tenant_b,flow_b,1,1,version_rollback);execute 'reset role';
+ perform pg_temp.assert(artifact=expected,'same UUID and source pair succeeds after caller rollback');
+ perform pg_temp.assert((select count(*)=1 from public.field_publication_versions_v1 where tenant_id=tenant_b and flow_id=flow_b and version_id=version_rollback and envelope=expected),'exactly one recovered caller artifact');
  select jsonb_agg(to_jsonb(x) order by version_id) into before_artifacts from public.field_publication_versions_v1 x;
  -- Parent advance does not implicitly rebind the existing sidecar.
  perform public.save_configurable_flow_draft(owner_a,tenant_a,flow_a,service_a,1,'Synthetic field parent',pg_temp.authoring());
