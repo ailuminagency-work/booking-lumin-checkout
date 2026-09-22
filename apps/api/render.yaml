@@ -1,0 +1,37 @@
+# Render blueprint for the hostable @lumin/api service.
+#
+# OWNER STEP: creating the Render service and setting the secret VALUES below is
+# a manual owner action in the Render dashboard (or `render blueprint launch`).
+# This file declares only the secret NAMES (sync:false). It contains NO secret
+# values and none must ever be committed here.
+#
+# The production entrypoint is src/main.ts (real Supabase-JWT auth). The `dev`
+# local harness (src/local.ts, synthetic identities) is NEVER used in production.
+services:
+  - type: web
+    name: lumin-api
+    runtime: node
+    plan: starter
+    rootDir: apps/api
+    # Install the whole workspace so @lumin/* path deps resolve, then build (no-op).
+    buildCommand: npm ci --prefix ../.. && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8080"
+      # ---- Secrets: NAMES ONLY. Set values in the Render dashboard. ----
+      - key: DATABASE_URL # Postgres connection string (role may `set role service_role`)
+        sync: false
+      - key: SUPABASE_URL # https://<project-ref>.supabase.co
+        sync: false
+      - key: SUPABASE_ANON_KEY # Supabase anon/publishable key; used as the /auth/v1/user apikey
+        sync: false
+      # ---- Non-secret required config (CORS origin allowlists) ----
+      - key: OWNER_ORIGINS # comma-separated owner-console origins (command-center / portal)
+        sync: false
+      - key: CUSTOMER_ORIGINS # comma-separated hosted-checkout origins
+        sync: false
