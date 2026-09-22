@@ -29,11 +29,11 @@ describe("BookingDrawer transition buttons", () => {
     const rendered = Array.from(container.querySelectorAll("[data-transition-to]")).map((el) =>
       el.getAttribute("data-transition-to"),
     );
-    expect(new Set(rendered)).toEqual(new Set(BOOKING_TRANSITIONS[state]));
-    expect(rendered).toHaveLength(BOOKING_TRANSITIONS[state].length);
+    expect(new Set(rendered)).toEqual(new Set(BOOKING_TRANSITIONS[state].filter(to => to === "completed" || to === "cancelled")));
+    expect(rendered).toHaveLength(BOOKING_TRANSITIONS[state].filter(to => to === "completed" || to === "cancelled").length);
 
     if (BOOKING_TRANSITIONS[state].length === 0) {
-      expect(screen.getByText(/terminal state/i)).toBeInTheDocument();
+      expect(screen.getByText(/no manual actions/i)).toBeInTheDocument();
     }
   });
 
@@ -63,6 +63,7 @@ describe("BookingDrawer transition buttons", () => {
     const targets = Array.from(container.querySelectorAll("[data-transition-to]")).map((el) =>
       el.getAttribute("data-transition-to"),
     );
-    expect(targets).toEqual(["refunded"]);
+    expect(targets).toEqual([]);
   });
 });
+

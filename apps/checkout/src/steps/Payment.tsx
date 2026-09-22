@@ -188,7 +188,7 @@ export function Payment() {
         <button
           type="button"
           className="btn primary"
-          onClick={() => dispatch({ type: "GOTO", step: "service" })}
+          onClick={() => dispatch({ type: "RESET" })}
         >
           Start over
         </button>
@@ -205,11 +205,11 @@ export function Payment() {
         </p>
       )}
 
-      {!booking ? (
+      {!booking && state.paymentStatus === "working" ? (
         <div aria-hidden="true">
           <div className="skeleton card-skeleton" />
         </div>
-      ) : (
+      ) : booking ? (
         <div className="mock-card">
           <p className="mock-card-brand">Mock payment provider</p>
           <p className="mock-card-number" aria-hidden="true">
@@ -240,6 +240,12 @@ export function Payment() {
             </p>
           )}
         </div>
+      ) : null}
+
+      {state.paymentStatus === "failed" && (!booking || !state.intentId) && (
+        <button type="button" className="btn primary" onClick={() => void ensureBookingAndIntent()}>
+          Retry payment setup
+        </button>
       )}
 
       <div className="wizard-controls">

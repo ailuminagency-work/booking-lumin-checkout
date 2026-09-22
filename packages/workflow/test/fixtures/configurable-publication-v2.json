@@ -1,0 +1,350 @@
+{
+  "contractVersion": 2,
+  "catalog": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "name": "Generic request",
+    "durationMinutes": 60,
+    "questions": [
+      {
+        "id": "mode",
+        "prompt": "Which mode?",
+        "kind": "single_choice",
+        "required": true,
+        "choices": [
+          {
+            "id": "basic",
+            "label": "Basic"
+          },
+          {
+            "id": "extra",
+            "label": "Extra"
+          }
+        ]
+      },
+      {
+        "id": "tags",
+        "prompt": "Choose options",
+        "kind": "multi_choice",
+        "required": false,
+        "choices": [
+          {
+            "id": "a",
+            "label": "A"
+          },
+          {
+            "id": "b",
+            "label": "B"
+          }
+        ]
+      },
+      {
+        "id": "count",
+        "prompt": "How many?",
+        "kind": "quantity",
+        "required": false,
+        "choices": [],
+        "minQty": 1,
+        "maxQty": 10
+      }
+    ]
+  },
+  "authoring": {
+    "authoringVersion": 2,
+    "config": {
+      "key": "generic",
+      "steps": [
+        {
+          "key": "mode",
+          "questionKey": "mode",
+          "kind": "question",
+          "required": true
+        },
+        {
+          "key": "tags",
+          "questionKey": "tags",
+          "kind": "question",
+          "required": false
+        },
+        {
+          "key": "count",
+          "questionKey": "count",
+          "kind": "question",
+          "required": true,
+          "visibleWhen": {
+            "field": "mode",
+            "op": "eq",
+            "value": "extra"
+          }
+        }
+      ]
+    },
+    "questionOverrides": {
+      "mode": {
+        "prompt": "Choose request mode",
+        "choiceLabels": {
+          "extra": "Additional"
+        }
+      },
+      "count": {
+        "minQty": 2,
+        "maxQty": 4
+      }
+    }
+  },
+  "effective": {
+    "prompts": {
+      "mode": "Choose request mode",
+      "tags": "Choose options",
+      "count": "How many?"
+    },
+    "extraLabel": "Additional",
+    "countBounds": [
+      2,
+      4
+    ]
+  },
+  "cases": [
+    {
+      "name": "hidden optional omitted",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        }
+      },
+      "normalized": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        }
+      }
+    },
+    {
+      "name": "visible followup supplied",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "extra"
+          ]
+        },
+        "count": {
+          "quantity": 3
+        }
+      },
+      "normalized": {
+        "mode": {
+          "choiceIds": [
+            "extra"
+          ]
+        },
+        "count": {
+          "quantity": 3
+        }
+      }
+    },
+    {
+      "name": "visible required missing",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "extra"
+          ]
+        }
+      },
+      "error": "MISSING_REQUIRED"
+    },
+    {
+      "name": "hidden answer submitted",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "count": {
+          "quantity": 3
+        }
+      },
+      "error": "HIDDEN_ANSWER"
+    },
+    {
+      "name": "tightened range enforced",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "extra"
+          ]
+        },
+        "count": {
+          "quantity": 5
+        }
+      },
+      "error": "INVALID_ANSWER"
+    },
+    {
+      "name": "catalog choice ordering",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "b",
+            "a"
+          ]
+        }
+      },
+      "normalized": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "a",
+            "b"
+          ]
+        }
+      }
+    },
+    {
+      "name": "duplicate multichoice rejected",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "a",
+            "a"
+          ]
+        }
+      },
+      "error": "INVALID_ANSWER"
+    },
+    {
+      "name": "baseline requirement retained",
+      "answers": {},
+      "error": "MISSING_REQUIRED"
+    }
+  ],
+  "includesCases": [
+    {
+      "name": "includes visible",
+      "answers": {
+        "count": {
+          "quantity": 2
+        },
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "b"
+          ]
+        }
+      },
+      "normalized": {
+        "count": {
+          "quantity": 2
+        },
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "b"
+          ]
+        }
+      }
+    },
+    {
+      "name": "includes missing source",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        }
+      },
+      "normalized": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        }
+      }
+    },
+    {
+      "name": "includes does not match",
+      "answers": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "a"
+          ]
+        }
+      },
+      "normalized": {
+        "mode": {
+          "choiceIds": [
+            "basic"
+          ]
+        },
+        "tags": {
+          "choiceIds": [
+            "a"
+          ]
+        }
+      }
+    }
+  ],
+  "unicodeChoiceOrder": {
+    "catalog": [
+      "😀",
+      "é",
+      "中"
+    ],
+    "input": [
+      "中",
+      "é",
+      "😀"
+    ],
+    "normalized": [
+      "😀",
+      "é",
+      "中"
+    ]
+  },
+  "utf16Boundaries": [
+    {
+      "validRepeat": 250,
+      "target": "prompt",
+      "invalidRepeat": 251,
+      "character": "😀",
+      "maximumUnits": 500
+    },
+    {
+      "validRepeat": 100,
+      "target": "choiceLabel",
+      "invalidRepeat": 101,
+      "character": "😀",
+      "maximumUnits": 200
+    }
+  ]
+}

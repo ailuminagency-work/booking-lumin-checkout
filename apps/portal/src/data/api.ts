@@ -156,7 +156,7 @@ export function getBookingHistory(
 
 /** Legal next states for a booking, straight from the shared state machine. */
 export function legalNextStates(state: BookingState): readonly BookingState[] {
-  return BOOKING_TRANSITIONS[state];
+  return BOOKING_TRANSITIONS[state].filter((to) => to === "completed" || to === "cancelled");
 }
 
 export function transitionBooking(
@@ -168,7 +168,7 @@ export function transitionBooking(
 ): BookingRecord {
   const booking = getBooking(ctx, bookingId, store);
   if (!booking) throw new BookingError("BOOKING_NOT_FOUND");
-  if (!BOOKING_TRANSITIONS[booking.state].includes(to)) {
+  if (!legalNextStates(booking.state).includes(to)) {
     throw new BookingError("ILLEGAL_TRANSITION", `${booking.state} → ${to} is not allowed`);
   }
   const change: BookingStateChange = {
@@ -346,3 +346,4 @@ export function updateCheckoutSettings(
   store.notify();
   return settings;
 }
+

@@ -21,6 +21,7 @@ export function SlotPicker() {
 
   useEffect(() => {
     if (!service) return;
+    dispatch({ type: "SLOT_AVAILABILITY_PENDING", pending: true });
     let cancelled = false;
     setSlots(null);
     void (async () => {
@@ -51,6 +52,16 @@ export function SlotPicker() {
       cancelled = true;
     };
   }, [service?.id]);
+
+  useEffect(() => {
+    if (slots === null || !service) return;
+    if (state.slot) {
+      const selected = slots.find(slot => slot.start === state.slot?.start && slot.end === state.slot?.end);
+      const resourceAvailable = !resourceBacked || resourceStatusForSlot(service.id, state.slot, nowIso).satisfiable;
+      if (!selected || !resourceAvailable) dispatch({ type: "CLEAR_SLOT" });
+    }
+    dispatch({ type: "SLOT_AVAILABILITY_PENDING", pending: false });
+  }, [slots, state.slot, service, resourceBacked, nowIso, dispatch]);
 
   if (!service) return <p className="empty">Choose a service first.</p>;
 
@@ -121,7 +132,12 @@ export function SlotPicker() {
               type="button"
               className={`chip${key === activeDate ? " selected" : ""}`}
               aria-pressed={key === activeDate}
-              onClick={() => setSelectedDate(key)}
+              onClick={() => {
+                setSelectedDate(key);
+                if (state.slot && dateKeyInTz(state.slot.start, tenant.timezone) !== key) {
+                  dispatch({ type: "CLEAR_SLOT" });
+                }
+              }}
             >
               {first ? display.dayLabel(first.start) : key}
             </button>
@@ -159,6 +175,7 @@ export function SlotPicker() {
           );
         })}
       </div>
+      {state.attempted.slot && !state.slot && <p role="alert">Please choose a time before continuing.</p>}
     </section>
   );
 }

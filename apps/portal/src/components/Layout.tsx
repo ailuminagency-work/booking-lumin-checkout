@@ -1,24 +1,27 @@
-import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useState, type ReactNode } from "react";
+import { NavLink } from "react-router-dom";
 import { getTenant } from "../data/api";
 import { usePortal } from "./PortalProvider";
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { to: "/", label: "Dashboard", glyph: "▦", end: true },
   { to: "/bookings", label: "Bookings", glyph: "🗓" },
+  { to: "/calendar", label: "Calendar", glyph: "◷" },
+  { to: "/workers", label: "Workers", glyph: "♙" },
   { to: "/customers", label: "Customers", glyph: "☺" },
   { to: "/services", label: "Services", glyph: "✦" },
-  { to: "/availability", label: "Availability", glyph: "◷" },
-  { to: "/resources", label: "Resources", glyph: "▤" },
+  { to: "/pricing", label: "Pricing", glyph: "$" },
+  { to: "/invoices", label: "Invoices", glyph: "▤" },
+  { to: "/embed", label: "Embed Builder", glyph: "▣" },
   { to: "/media", label: "Media", glyph: "▨" },
-  { to: "/checkout", label: "Checkout Config", glyph: "▣" },
   { to: "/integrations", label: "Integrations", glyph: "⇄" },
   { to: "/settings", label: "Settings", glyph: "⚙" },
 ] as const;
 
-export function Layout() {
-  const { ctx, store } = usePortal();
-  const tenant = getTenant(ctx, store);
+/** Presentation only: connected mode never reads the demo tenant store. */
+export function PortalShell({ children, tenantName, roleLabel, mode }: {
+  children: ReactNode; tenantName: string; roleLabel?: string; mode: "demo" | "connected";
+}) {
   const [navOpen, setNavOpen] = useState(false);
 
   return (
@@ -37,7 +40,7 @@ export function Layout() {
           <span aria-hidden="true">☰</span> Menu
         </button>
         <span className="topbar-brand">Booking Lumin</span>
-        <span className="topbar-tenant">{tenant.name}</span>
+        <span className="topbar-tenant">{tenantName}</span>
       </header>
       <div className="shell-body">
         <nav id="portal-nav" className={`sidebar ${navOpen ? "open" : ""}`} aria-label="Portal sections">
@@ -66,14 +69,22 @@ export function Layout() {
             ))}
           </ul>
           <div className="sidebar-footer">
-            <span className="role-badge">{ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"}</span>
-            <span className="sidebar-tenant">{tenant.name}</span>
+            <span className="role-badge">{roleLabel ?? "Signed out"}</span>
+            <span className="sidebar-tenant">{tenantName}</span>
           </div>
         </nav>
         <main id="main-content" className="content">
-          <Outlet />
+          <p className="note-banner" role="note">{mode === "demo" ? "Demo workspace — sample data stays in this app and is not synchronized." : "Connected workspace — available records come from the business database. Payments and external providers remain inactive."}</p>
+          {children}
         </main>
       </div>
     </div>
   );
+}
+
+
+export function Layout({children}: {children: ReactNode}) {
+  const {ctx, store} = usePortal();
+  const tenant = getTenant(ctx, store);
+  return <PortalShell tenantName={tenant.name} roleLabel={ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"} mode="demo">{children}</PortalShell>;
 }
