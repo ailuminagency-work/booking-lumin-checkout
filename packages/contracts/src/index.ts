@@ -13,6 +13,7 @@
 export * from "./money";
 export * from "./tenant";
 export * from "./service";
+export * from "./profile";
 export * from "./pricing";
 export * from "./availability";
 export * from "./booking";

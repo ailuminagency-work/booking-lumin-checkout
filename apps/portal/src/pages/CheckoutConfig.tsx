@@ -2,14 +2,27 @@ import { useState } from "react";
 import { createWorkflowEngine } from "@lumin/workflow";
 import { usePortal } from "../components/PortalProvider";
 import { PageHeader } from "../components/ui";
-import { getCheckoutSettings, getService, updateCheckoutSettings } from "../data/api";
+import { getCheckoutSettings, getService, getTenant, updateCheckoutSettings } from "../data/api";
+import { profileGate } from "../data/profile";
 import { PREVIEW_QUESTION_ID, PREVIEW_SERVICE_ID, previewFlow } from "../data/workflows";
 
 const workflowEngine = createWorkflowEngine();
 
+/** Human labels for the embed flow step keys (mirrors the checkout wizard). */
+const EMBED_STEP_LABELS: Record<string, string> = {
+  service: "Service",
+  configure: "Options",
+  summary: "Summary",
+  slot: "Time",
+  customer: "Details",
+  payment: "Payment",
+  confirmation: "Done",
+};
+
 export function CheckoutConfigPage() {
   const { ctx, store } = usePortal();
   const settings = getCheckoutSettings(ctx, store);
+  const gate = profileGate(getTenant(ctx, store));
 
   // Workflow preview: the conditional question flow a customer would see.
   const previewService = getService(ctx, PREVIEW_SERVICE_ID, store);
@@ -24,6 +37,33 @@ export function CheckoutConfigPage() {
         title="Embed Builder"
         subtitle="Demo branding and question preview. Full flow editing and publishing are not available yet."
       />
+
+      <section className="panel" aria-label="Embed flow">
+        <div className="panel-header">
+          <h2>Embed flow</h2>
+        </div>
+        {gate.active ? (
+          <>
+            <p className="muted" data-testid="embed-profile-note">
+              Your <strong>{gate.profile!.label}</strong> profile renders these steps to each{" "}
+              {gate.profile!.terminology.customer.toLowerCase()}. Allowed archetypes:{" "}
+              {gate.allowedTemplates.map((t) => t.title).join(", ")}.
+            </p>
+            <ol className="progress" data-testid="embed-flow">
+              {gate.profile!.embedFlow.map((step) => (
+                <li key={step} data-testid={`embed-step-${step}`}>
+                  {EMBED_STEP_LABELS[step] ?? step}
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <p className="note-banner" role="note" data-testid="embed-activation-prompt">
+            No business profile is activated, so the embed shows the default flow. Activate a profile
+            to scope the embed to your vertical.
+          </p>
+        )}
+      </section>
 
       <div className="checkout-config-grid">
         <section className="panel" aria-label="Branding">

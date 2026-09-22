@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { getTenant } from "../data/api";
+import { profileFor } from "../data/profile";
 import { usePortal } from "./PortalProvider";
 
 export const NAV_ITEMS = [
@@ -19,8 +20,8 @@ export const NAV_ITEMS = [
 ] as const;
 
 /** Presentation only: connected mode never reads the demo tenant store. */
-export function PortalShell({ children, tenantName, roleLabel, mode }: {
-  children: ReactNode; tenantName: string; roleLabel?: string; mode: "demo" | "connected";
+export function PortalShell({ children, tenantName, roleLabel, mode, profileLabel }: {
+  children: ReactNode; tenantName: string; roleLabel?: string; mode: "demo" | "connected"; profileLabel?: string;
 }) {
   const [navOpen, setNavOpen] = useState(false);
 
@@ -70,6 +71,11 @@ export function PortalShell({ children, tenantName, roleLabel, mode }: {
           </ul>
           <div className="sidebar-footer">
             <span className="role-badge">{roleLabel ?? "Signed out"}</span>
+            {profileLabel ? (
+              <span className="profile-badge" data-testid="profile-badge">
+                {profileLabel}
+              </span>
+            ) : null}
             <span className="sidebar-tenant">{tenantName}</span>
           </div>
         </nav>
@@ -86,5 +92,6 @@ export function PortalShell({ children, tenantName, roleLabel, mode }: {
 export function Layout({children}: {children: ReactNode}) {
   const {ctx, store} = usePortal();
   const tenant = getTenant(ctx, store);
-  return <PortalShell tenantName={tenant.name} roleLabel={ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"} mode="demo">{children}</PortalShell>;
+  const profile = profileFor(tenant);
+  return <PortalShell tenantName={tenant.name} roleLabel={ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"} mode="demo" profileLabel={profile?.label}>{children}</PortalShell>;
 }
