@@ -65,6 +65,7 @@ jobs:
             resource_tenant_integrity_tests \
             resource_quantity_tests \
             overbooking_backstop_tests \
+            resource_backstop_composition_tests \
             worker_roster_tests \
             owner_roster_snapshot_tests \
             planning_policy_tests \
