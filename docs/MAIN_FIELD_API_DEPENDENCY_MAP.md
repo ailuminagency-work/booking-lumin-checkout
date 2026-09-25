@@ -1,0 +1,26 @@
+# Wave 3 field API dependency map
+
+This is a source-based handoff for moving the reviewed field contracts toward the current main-based API. It is an implementation map, not proof of a hosted field builder. The accepted RC-2 runtime, tenant isolation, server-authoritative booking and pricing, and demo/live separation remain the boundaries.
+
+## Current and historical positions
+
+| Layer | Current main-based stack at `b5f29034847811c3416634ad4f892bc5acf987a1` | Historical Wave 3 review stack at `885d8b6fc5a9712c4aa4ce69817a1867c10b6240` | Required reconciliation |
+| --- | --- | --- | --- |
+| Workflow contracts | V1, V2, V3 field definition/answer/draft parsers and the pure V1 publication parser/snapshot are now review-branch dependencies in `packages/workflow`. No PR/CI or merge acceptance yet. | Same contract family plus API and UI consumers. | Keep version discriminators and `unconfirmed_request`; do not treat parser success as authorization or publication. |
+| Owner HTTP | `apps/api/src/main.ts` composes the hostable flow server with Supabase identity verification. `apps/api/src/http.ts` exposes existing flow/mode/roster routes, but has no field-draft V2/V3 route. | `packages/action-api/server/field-drafts-v2-http.ts`, `field-drafts-v3-http.ts`, repositories and transport provide bounded field routes in the historical checkout. | Adapt to the current `apps/api` entrypoint and auth/repository seam; do not copy an old server root or trust client-supplied tenant/actor. |
+| Storage | Current main migrations end at `0031_overbooking_backstop.sql`, whose exclusive-resource protection must be preserved. | Historical `0031_mode_session_validation.sql`, `0032_text_field_drafts.sql`, `0033_text_field_prompts.sql`, `0034_field_drafts_v2.sql`, `0035_field_drafts_v3.sql` and matching SQL suites. | Preserve accepted main migrations. Assign new additive numbers only after reviewing current branch/PR migration claims; historical `0033` collides with PR79's proposed `0033` at the reviewed head. Fresh both-layout RLS, concurrency and rollback proof is required. |
+| Portal | `apps/portal/src/flows` has configurable and mode-owner UI but no V2/V3 field editor; `packages/flow-ui/src` has no V2/V3 draft client. | V2/V3 editors, local hosts, previews and clients exist with tests in the historical checkout. | Integrate only after a real authenticated server contract, with preview kept local and no answer persistence from rehearsal. |
+| Checkout | Current checkout remains on its existing runtime flow. | Historical field journey has additional request-side fixtures. | Do not make field publication auto-confirm a booking or imply that a local preview is a hosted customer flow. |
+
+## Dependency order
+
+1. Resolve PR/CI access for the pure contract stack and land it through protected-main review. Its current branches are review candidates, not accepted main.
+2. Refresh PR77/79 state and migration claims, then reconcile the additive SQL sequence against current main. The historical `0031_mode_session_validation.sql` is a separate prerequisite before sidecar/storage work: prove existing-session, non-issuing validation of origin, installation, version, revocation and expiry. Preserve the main `0031` exclusive-resource backstop. Then prove tenant-bound rows, single active sidecar family, revision CAS, immutable published artifact, and rollback on a disposable database in both supported extension layouts. Do not apply live migrations here.
+3. Adapt the historical repository operations to `apps/api/src` under real authenticated-owner identity, current tenant membership, exact raw-body limits, bounded response/error vocabulary, and cancellation/timeout behavior. Verify no field route becomes public/customer writable.
+4. Add V2/V3 draft HTTP routes only after repository/RLS proof. Keep draft storage and publication separate; return stale-version conflicts without overwriting newer work. Independently exercise revocation, cross-tenant access, malformed bodies, and duplicate concurrent writes.
+5. Add the server-authoritative publication action: in one transaction load tenant-bound parent and sidecar, verify both source revisions and ownership, create exactly one pinned immutable artifact, and leave customer submission as `unconfirmed_request`. Repeat publication and competing mutations in both orderings. A workflow parser or snapshot is input validation only.
+6. Wire the portal client/editor and responsive preview to the authenticated API after the server contracts pass. Preview must not send customer answers or mutate saved drafts; publish/install must be explicit owner actions. Then prove the installed customer request reaches persisted data under a genuine staging identity and trusted TLS.
+
+For each implementation leaf, record the exact parent SHA, exclusive owner paths, independent reviewer, adversarial evidence, local and exact-candidate CI, and scoped Runtime/Release decisions. A local pass never promotes the W3 parent or authorizes deployment.
+
+Real provider credentials remain inactive. Staging identity and secrets require authorized provisioning through their approved service configuration; this map does not authorize credential activation or a live migration.
