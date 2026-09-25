@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {parseRosterSnapshot,RosterWorkerInput,RosterCrewInput,RosterMemberInput,RosterEligibilityInput,RosterProvisionReceipt,RosterEntityReceipt,RosterMemberReceipt,RosterEligibilityReceipt} from '@lumin/contracts';
+import {parseRosterSnapshot,RosterWorkerInput,RosterCrewInput,RosterMemberInput,RosterEligibilityInput,RosterShiftInput,RosterProvisionReceipt,RosterEntityReceipt,RosterMemberReceipt,RosterEligibilityReceipt} from '@lumin/contracts';
 export type {RosterSnapshot} from '@lumin/contracts';
 const codes=['INVALID_REQUEST','UNAUTHENTICATED','FORBIDDEN','CONFLICT','NOT_AVAILABLE','INTERNAL_ERROR','RATE_LIMITED','ROSTER_NOT_INITIALIZED','ROSTER_TOO_LARGE','ROSTER_UNSUPPORTED_TIME'] as const;
 const messages={INVALID_REQUEST:'Check the roster fields.',UNAUTHENTICATED:'Sign in again to view this roster.',FORBIDDEN:'An active business owner account is required.',CONFLICT:'The roster changed. Refresh and review before saving again.',NOT_AVAILABLE:'This roster item is unavailable.',INTERNAL_ERROR:'The roster request could not be completed.',RATE_LIMITED:'Wait before trying again.',ROSTER_NOT_INITIALIZED:'Set up a roster for this business.',ROSTER_TOO_LARGE:'This roster exceeds the supported size. Editing is unavailable.',ROSTER_UNSUPPORTED_TIME:'A recorded shift date cannot be displayed safely. Editing is unavailable.'};
@@ -31,6 +31,11 @@ export function createRosterClient(base:string,localHarness=false,fetcher:typeof
   async provision(token:string,id:string){const value=RosterProvisionReceipt.safeParse(await call('/api/roster/provision'+tenant(id),token,{}));if(!value.success)throw new RosterError('INTERNAL_ERROR');return value.data;},
   worker(token:string,id:string,workerId:string|null,value:z.infer<typeof RosterWorkerInput>){const body=input(RosterWorkerInput,value);return receipt('/api/roster/workers'+(workerId?'/'+uuid(workerId):'')+tenant(id),token,body,RosterEntityReceipt,r=>!workerId||r.entityId.toLowerCase()===workerId.toLowerCase());},
   crew(token:string,id:string,crewId:string|null,value:z.infer<typeof RosterCrewInput>){const body=input(RosterCrewInput,value);return receipt('/api/roster/crews'+(crewId?'/'+uuid(crewId):'')+tenant(id),token,body,RosterEntityReceipt,r=>!crewId||r.entityId.toLowerCase()===crewId.toLowerCase());},
+  shift(token:string,id:string,shiftId:string|null,value:z.infer<typeof RosterShiftInput>){
+   const body=input(RosterShiftInput,value);
+   const path='/api/roster/shifts'+(shiftId===null?'':'/'+uuid(shiftId))+tenant(id);
+   return receipt(path,token,body,RosterEntityReceipt,r=>shiftId===null||r.entityId.toLowerCase()===shiftId.toLowerCase());
+  },
   member(token:string,id:string,crewId:string,value:z.infer<typeof RosterMemberInput>){const body=input(RosterMemberInput,value);return receipt('/api/roster/crews/'+uuid(crewId)+'/members'+tenant(id),token,body,RosterMemberReceipt,r=>r.crewId.toLowerCase()===crewId.toLowerCase()&&r.workerId.toLowerCase()===body.workerId.toLowerCase()&&r.present===body.present);},
   eligibility(token:string,id:string,value:z.infer<typeof RosterEligibilityInput>){const body=input(RosterEligibilityInput,value);return receipt('/api/roster/eligibility'+tenant(id),token,body,RosterEligibilityReceipt,r=>r.workerId.toLowerCase()===body.workerId.toLowerCase()&&r.serviceId.toLowerCase()===body.serviceId.toLowerCase()&&r.active===body.active);}
  };
