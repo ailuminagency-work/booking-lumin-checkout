@@ -1,0 +1,7 @@
+# Pure field-publication package entrypoint
+
+This isolated Wave 3 candidate exposes the existing `parseFieldPublicationV1` and `snapshotFieldPublicationV1` pure contracts from the workflow package entrypoint. The parsers validate a V3 field definition and an unconfirmed-request publication envelope. They do not fetch tenant rows, authorize a caller, compare revisions in storage, write an artifact, activate a flow, or confirm a booking. A future server must perform those checks atomically and enforce raw request-byte limits before decoding.
+
+Base: `f32330b74dc399e744bca2887376b3184ff5e93b` (`codex/main-field-v3-answers`). Scope is named exports, a package-entrypoint test, and this evidence note. Existing parser and snapshot implementation is unchanged. Main, SQL migrations, API routes, payment/capacity authority, provider connections and live runtime remain unchanged. Full Wave 3 publication/installation and hosted acceptance remain separate gates.
+
+Builder `/root/field_publication_export_builder` authored only the new entrypoint test. Its own workflow typecheck passed; its Vitest replay was blocked by read-only sandbox temporary-directory permissions. Root ran that targeted test (3/3), the full workflow suite (235/235 across 22 files), and repository-wide typecheck (exit 0). Independent `/root/field_v3_reviewer` passed domain, adversarial, integration, and scoped Runtime source review of the exact three-path change. Exact-candidate CI and Release Governor remain pending.

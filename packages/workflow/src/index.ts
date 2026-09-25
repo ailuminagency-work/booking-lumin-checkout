@@ -40,3 +40,6 @@ export { parseFieldAnswersV3 } from "./fieldAnswersV3";
 export type { FieldAnswerDocumentV3 } from "./fieldAnswersV3";
 export { parseFieldDraftSaveV3, parseFieldDraftReceiptV3, parseFieldDraftReadV3 } from "./fieldDraftV3";
 export type { FieldDraftSaveV3, FieldDraftReceiptV3, FieldDraftReadV3 } from "./fieldDraftV3";
+export { parseFieldPublicationV1 } from "./fieldPublicationV1";
+export type { FieldPublicationV1 } from "./fieldPublicationV1";
+export { snapshotFieldPublicationV1 } from "./fieldPublicationSnapshotV1";
