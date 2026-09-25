@@ -1,0 +1,7 @@
+# Main-based V3 field answers prerequisite
+
+This isolated Wave 3 review branch restores the pure V3 answer parser and exposes the already present V3 definition and draft parsers through the workflow package. V3 adds configured dropdown choice IDs while retaining V2 text and textarea validation. These contracts do not authorize requests, persist customer data, choose a tenant or sidecar, compute prices, or activate a live booking flow. Raw request bytes must be bounded before decoding by any future transport.
+
+Base: `2e3a6de355237018485da2086da1d07ef42fdc73` (`codex/main-field-v2-prereq`). Scope is the new parser and tests, named package exports, and this evidence note. The protected main, migrations, API, payment authority, and accepted runtime remain unchanged. Full field builder, publication, hosted request acceptance, exact-candidate CI, and release approval remain separate gates.
+
+Builder `/root/field_v3_builder` authored only the new answer parser and tests. Its focused tests passed 7/7 and workflow typecheck passed. Root independently ran all workflow tests (232/232 across 21 files) and repository-wide typecheck (exit 0). Independent `/root/field_v3_reviewer` verified Unicode source bytes after a PowerShell rendering ambiguity and passed domain, adversarial and scoped Runtime source review. That reviewer's separate test replay was blocked by read-only sandbox temporary-directory permissions; the root and builder runs supply executable local evidence. Exact-candidate CI and Release Governor are pending.
