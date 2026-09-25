@@ -9,3 +9,5 @@ export { createFieldDraftV2Client } from './fieldDraftV2Client';
 export type { FieldDraftV2Client } from './fieldDraftV2Client';
 export { createFieldDraftV3Client } from './fieldDraftV3Client';
 export type { FieldDraftV3Client } from './fieldDraftV3Client';
+export { FieldQuestionPreviewV3 } from './FieldQuestionPreviewV3';
+export type { FieldQuestionPreviewV3Props } from './FieldQuestionPreviewV3';
