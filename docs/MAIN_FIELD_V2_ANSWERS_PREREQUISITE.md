@@ -1,0 +1,7 @@
+# Main-based V2 field answers prerequisite
+
+This isolated review branch restores the pure V2 field-answer parser beside the existing main-based V1 and V2 definition/draft contracts. The parser enforces exact V2 wire shape, defined keys, Unicode and aggregate limits, and frozen detached output. It does not authorize requests, persist answers, compute prices, select a live sidecar, or alter the accepted booking runtime. Raw request-byte limits belong to the caller before JSON decoding.
+
+Base: `200b507dcf65e2501ebfafc62d496b435b0c6880` (`codex/main-field-v1-prereq`). Only the new parser, its unit tests, the workflow package export, and this evidence note are in scope. The active protected main and historical Wave 3 migration sequence remain unchanged. Full builder/runtime publication and hosted proof remain later Wave 3 gates; no real credentials or deployment are involved.
+
+Builder `/root/field_v2_builder` restored the historical answer parser byte for byte and added V1/V3 and commerce/accessor boundary tests. Independent domain/adversarial reviewer `/root/field_v2_reviewer` inspected the exact parser/test diff and found no blocker. Builder focused V2 checks passed 40/40; root independently ran the full workflow suite (225/225 across 20 files) and repository-wide typecheck (exit 0). CI and Release Governor remain pending until a draft PR can be opened and exact-candidate checks run.

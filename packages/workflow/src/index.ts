@@ -30,5 +30,7 @@ export * from "./fieldAnswers";
 export * from "./textFieldDraft";
 export { parseFieldDocumentV2 } from "./fieldDocumentV2";
 export type { FieldV2, FieldDocumentV2 } from "./fieldDocumentV2";
+export { parseFieldAnswersV2 } from "./fieldAnswersV2";
+export type { FieldAnswerDocumentV2 } from "./fieldAnswersV2";
 export { parseFieldDraftSaveV2, parseFieldDraftReceiptV2, parseFieldDraftReadV2 } from "./fieldDraftV2";
 export type { FieldDraftSaveV2, FieldDraftReceiptV2, FieldDraftReadV2 } from "./fieldDraftV2";
