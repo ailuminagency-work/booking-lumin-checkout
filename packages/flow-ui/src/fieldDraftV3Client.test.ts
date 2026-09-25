@@ -1,0 +1,42 @@
+import {expect,it,vi} from 'vitest';
+import {createFieldDraftV3Client} from './fieldDraftV3Client';
+const id='11111111-1111-4111-8111-111111111111',token='synthetic-owner-token';
+const definition=()=>({schemaVersion:3,fields:[{key:'note',kind:'textarea',required:false,minLength:0,maxLength:100,prompt:' Exact '},{key:'short',kind:'text',required:false,minLength:0,maxLength:20},{key:'choice',kind:'dropdown',required:true,prompt:' Choose ',choices:[{id:'first',label:' Same '},{id:'second',label:' Same '}]}]});
+const save=()=>({fieldDraftVersion:3,parentAuthoringVersion:2,expectedRevision:0,expectedFlowRevision:1,definition:definition()});
+const receipt=()=>({fieldDraftVersion:3,parentAuthoringVersion:2,draftRevision:1,savedParentRevision:1,currentParentRevision:1,definition:definition(),runtimePublishable:false});
+const missing=()=>({status:'missing',fieldDraftVersion:3,parentAuthoringVersion:2,currentParentRevision:1,runtimePublishable:false});
+const setup=(data:unknown=receipt(),status=200)=>{const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ok:true,data}),{status}));return {fetcher,client:createFieldDraftV3Client('http://127.0.0.1:4193',true,fetcher,true)};};
+it('denies by default before fetching or examining save',async()=>{const fetcher=vi.fn();const c=createFieldDraftV3Client('https://example.test',false,fetcher);await expect(c.read('',id,id)).rejects.toMatchObject({code:'NOT_AVAILABLE'});await expect(c.save('',id,id,undefined)).rejects.toMatchObject({code:'NOT_AVAILABLE'});expect(fetcher).not.toHaveBeenCalled();});
+it('uses exact V3 route and private fetch settings, preserves copies and binds save',async()=>{const {client,fetcher}=setup();const input=save();const pending=client.save(token,id,id,input);input.definition.fields[0]!.prompt='mutated';expect(await pending).toMatchObject({stale:false,definition:definition()});expect(fetcher.mock.calls[0]?.[0]).toBe(`http://127.0.0.1:4193/api/field-drafts-v3/${id}?tenantId=${id}`);expect(fetcher.mock.calls[0]?.[1]).toMatchObject({credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer'});});
+it('reads missing and derives stale only from strict raw receipt',async()=>{expect(await setup(missing()).client.read(token,id,id)).toEqual(missing());expect(await setup({status:'present',receipt:{...receipt(),currentParentRevision:2}}).client.read(token,id,id)).toMatchObject({receipt:{stale:true}});});
+it('rejects save confusion, exhausted revision and malformed receipt association',async()=>{const {client,fetcher}=setup();for(const input of [{...save(),expectedRevision:Number.MAX_SAFE_INTEGER},{...save(),fieldDraftVersion:1},{...save(),tenant:id}])await expect(client.save(token,id,id,input)).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(fetcher).not.toHaveBeenCalled();for(const data of [{...receipt(),draftRevision:2},{...receipt(),currentParentRevision:2},{...receipt(),definition:{schemaVersion:3,fields:[]}},{...receipt(),stale:false}])await expect(setup(data).client.save(token,id,id,save())).rejects.toMatchObject({code:'INTERNAL_ERROR'});});
+it('enforces exact response status/code correspondence',async()=>{await expect(setup(missing(),201).client.read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});for(const status of [400,409]){const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ok:false,code:'CONFLICT'}),{status}));await expect(createFieldDraftV3Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:status===409?'CONFLICT':'INTERNAL_ERROR'});}});
+it('rejects UTF8 and oversized response bytes',async()=>{for(const bytes of [new Uint8Array([255]),new Uint8Array(32769)]){const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(bytes));await expect(createFieldDraftV3Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});}});
+it('invalidation aborts and disposes a late response body without accepting its data',async()=>{let finish!:(value:Response)=>void;const fetcher=vi.fn<typeof fetch>().mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));const c=createFieldDraftV3Client('https://example.test',false,fetcher,true),pending=c.read(token,id,id);c.invalidate();await expect(pending).rejects.toMatchObject({code:'UNAUTHENTICATED'});const cancel=vi.fn();finish(new Response(new ReadableStream({cancel})));await Promise.resolve();await Promise.resolve();expect(cancel).toHaveBeenCalledOnce();expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);});
+it('deadline rejects a stalled fetch without awaiting its cooperation',async()=>{vi.useFakeTimers();try{const c=createFieldDraftV3Client('https://example.test',false,vi.fn<typeof fetch>().mockImplementation(()=>new Promise(()=>{})),true);const promise=expect(c.read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});await vi.advanceTimersByTimeAsync(15001);await promise;}finally{vi.useRealTimers();}});
+it('rejects redirected adapter responses and cancels their body',async()=>{const cancel=vi.fn();const response=new Response(new ReadableStream({cancel}));Object.defineProperty(response,'redirected',{value:true});const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response);await expect(createFieldDraftV3Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});expect(cancel).toHaveBeenCalledOnce();});
+
+it('rejects nonprimitive base before URL coercion',()=>{
+ const coerce=vi.fn(()=> 'https://example.test');
+ for(const base of [{toString:coerce},new Proxy({}, {get:coerce})])expect(()=>createFieldDraftV3Client(base as unknown as string)).toThrow();
+ expect(coerce).not.toHaveBeenCalled();
+});
+it('rejects V2 envelopes and definitions without transport fallback',async()=>{
+ const {client,fetcher}=setup();
+ for(const input of [{...save(),fieldDraftVersion:2},{...save(),definition:{schemaVersion:2,fields:[]}}])await expect(client.save(token,id,id,input)).rejects.toMatchObject({code:'INVALID_REQUEST'});
+ expect(fetcher).not.toHaveBeenCalled();
+ await expect(setup({...missing(),fieldDraftVersion:2}).client.read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+});
+it('binds exact choice IDs labels and order rather than only field keys',async()=>{
+ for(const change of ['id','label','order']){
+  const data=receipt();const choices=data.definition.fields[2]!.choices!;
+  if(change==='order')choices.reverse();else if(change==='id')choices[0]!.id='substitute';else choices[0]!.label='Substitute';
+  await expect(setup(data).client.save(token,id,id,save())).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+ }
+});
+it('enforces serialized UTF8 request budget including dropdown labels before fetch',async()=>{
+ const {client,fetcher}=setup();
+ const fields=Array.from({length:8},(_,i)=>({key:'choice'+i,kind:'dropdown',required:false,choices:Array.from({length:32},(_,j)=>({id:'option'+j,label:String.fromCodePoint(128512).repeat(200)}))}));
+ await expect(client.save(token,id,id,{...save(),definition:{schemaVersion:3,fields}})).rejects.toMatchObject({code:'INVALID_REQUEST'});
+ expect(fetcher).not.toHaveBeenCalled();
+});

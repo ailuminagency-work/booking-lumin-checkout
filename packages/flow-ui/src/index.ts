@@ -7,3 +7,5 @@ export * from './rosterClient';
 export * from './modeDocument';
 export { createFieldDraftV2Client } from './fieldDraftV2Client';
 export type { FieldDraftV2Client } from './fieldDraftV2Client';
+export { createFieldDraftV3Client } from './fieldDraftV3Client';
+export type { FieldDraftV3Client } from './fieldDraftV3Client';
