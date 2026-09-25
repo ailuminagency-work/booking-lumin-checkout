@@ -17,7 +17,7 @@ it('creates and updates shifts with exact requests and existing transport flags'
  for(const id of [null,other]){
   const fetcher=vi.fn(async()=>ok({rosterVersion:2,entityId:other}));
   await expect(createRosterClient(base,true,fetcher).shift('synthetic-secret',tenant,id,shiftInput)).resolves.toEqual({rosterVersion:2,entityId:other});
-  expect(fetcher.mock.calls).toEqual([[base+'/api/roster/shifts'+(id===null?'':'/'+id)+'?tenantId='+tenant,{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Authorization:'Bearer synthetic-secret'},body:JSON.stringify(shiftInput)}]]);
+  expect(fetcher.mock.calls).toEqual([[base+'/api/roster/shifts'+(id===null?'':'/'+id)+'?tenantId='+tenant,expect.objectContaining({method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Authorization:'Bearer synthetic-secret'},body:JSON.stringify(shiftInput),signal:expect.any(AbortSignal)})]]);
  }
 });
 it('requires literal null for shift creation and validates IDs and strict input before fetch',()=>{
@@ -51,4 +51,140 @@ it('rejects a shift receipt that arrives after account invalidation',async()=>{
  finish(ok({rosterVersion:2,entityId:other}));
  await expect(pending).rejects.toMatchObject({code:'UNAUTHENTICATED'});
  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it('settles a stalled mutation fetch on invalidation and keeps the next generation usable',async()=>{
+ let finish!:(value:Response)=>void;
+ const fetcher=vi.fn<typeof fetch>().mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;})).mockResolvedValueOnce(ok(snapshot));
+ const client=createRosterClient(base,true,fetcher);
+ const old=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+ const signal=fetcher.mock.calls[0]![1]!.signal;
+ client.invalidate();
+ await old;
+ expect(signal?.aborted).toBe(true);
+ expect(await client.snapshot('new',tenant)).toEqual(snapshot);
+ const cancel=vi.fn();finish(new Response(new ReadableStream({cancel})));
+ await Promise.resolve();await Promise.resolve();expect(cancel).toHaveBeenCalledTimes(1);
+ expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('bounds a never-settling fetch and body by one deadline without waiting for cancel',async()=>{
+ vi.useFakeTimers();try{
+  for(const phase of ['fetch','body']){
+   const cancel=vi.fn(()=>new Promise<void>(()=>{}));
+   const fetcher=vi.fn<typeof fetch>(()=>phase==='fetch'?new Promise(()=>{}):Promise.resolve(new Response(new ReadableStream({cancel}))));
+   const client=createRosterClient(base,true,fetcher);
+   const pending=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+   await vi.advanceTimersByTimeAsync(15000);await pending;
+   expect(fetcher.mock.calls[0]![1]!.signal?.aborted).toBe(true);
+   expect(fetcher).toHaveBeenCalledTimes(1);
+   if(phase==='body')expect(cancel).toHaveBeenCalledTimes(1);
+   expect(vi.getTimerCount()).toBe(0);
+  }
+ }finally{vi.useRealTimers();}
+});
+it('uses the original deadline across slow response chunks',async()=>{
+ vi.useFakeTimers();try{
+  let stream!:ReadableStreamDefaultController<Uint8Array>;
+  const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({start(controller){stream=controller;}})));
+  const client=createRosterClient(base,true,fetcher);
+  const pending=expect(client.snapshot('token',tenant)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+  await vi.advanceTimersByTimeAsync(10000);stream.enqueue(new TextEncoder().encode('{'));
+  await vi.advanceTimersByTimeAsync(5000);await pending;
+  expect(fetcher).toHaveBeenCalledTimes(1);expect(vi.getTimerCount()).toBe(0);
+ }finally{vi.useRealTimers();}
+});
+it('consumes a late fetch rejection after invalidation',async()=>{
+ let fail!:(error:Error)=>void;
+ const fetcher=vi.fn<typeof fetch>(()=>new Promise((_,reject)=>{fail=reject;}));
+ const client=createRosterClient(base,true,fetcher);
+ const pending=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+ client.invalidate();await pending;
+ fail(new Error('private driver failure'));
+ await Promise.resolve();await Promise.resolve();
+ expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it('invalidates a stalled body promptly even when reader cancellation never settles',async()=>{
+ const cancel=vi.fn(()=>new Promise<void>(()=>{}));
+ const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({cancel})));
+ const client=createRosterClient(base,true,fetcher);
+ const pending=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+ await new Promise(resolve=>setTimeout(resolve,0));
+ client.invalidate();await pending;
+ expect(cancel).toHaveBeenCalledTimes(1);
+ expect(fetcher.mock.calls[0]![1]!.signal?.aborted).toBe(true);
+ expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it('invalidates simultaneous stalled requests and clears both deadlines',async()=>{
+ vi.useFakeTimers();try{
+  const fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{}));
+  const client=createRosterClient(base,true,fetcher);
+  const first=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+  const second=expect(client.snapshot('token',tenant)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  const signals=fetcher.mock.calls.map(call=>call[1]!.signal);
+  client.invalidate();await Promise.all([first,second]);
+  expect(signals.every(signal=>signal?.aborted)).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+ }finally{vi.useRealTimers();}
+});
+it('does not let late old cleanup cancel or settle a new request',async()=>{
+ let finishOld!:(value:Response)=>void;
+ let finishNew!:(value:Response)=>void;
+ const oldCancel=vi.fn();
+ const fetcher=vi.fn<typeof fetch>()
+  .mockImplementationOnce(()=>new Promise(resolve=>{finishOld=resolve;}))
+  .mockImplementationOnce(()=>new Promise(resolve=>{finishNew=resolve;}));
+ const client=createRosterClient(base,true,fetcher);
+ const old=expect(client.snapshot('old',tenant)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+ client.invalidate();await old;
+ const next=client.snapshot('new',tenant);
+ const newSignal=fetcher.mock.calls[1]![1]!.signal;
+ finishOld(new Response(new ReadableStream({cancel:oldCancel})));
+ await Promise.resolve();await Promise.resolve();
+ expect(oldCancel).toHaveBeenCalledTimes(1);
+ expect(newSignal?.aborted).toBe(false);
+ finishNew(ok(snapshot));
+ expect(await next).toEqual(snapshot);
+ expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('clears the deadline after a response completes just before it',async()=>{
+ vi.useFakeTimers();try{
+  let finish!:(value:Response)=>void;
+  const fetcher=vi.fn<typeof fetch>(()=>new Promise(resolve=>{finish=resolve;}));
+  const client=createRosterClient(base,true,fetcher);
+  const pending=client.snapshot('token',tenant);
+  await vi.advanceTimersByTimeAsync(14999);
+  finish(ok(snapshot));
+  expect(await pending).toEqual(snapshot);
+  expect(vi.getTimerCount()).toBe(0);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher.mock.calls[0]![1]!.signal?.aborted).toBe(false);
+ }finally{vi.useRealTimers();}
+});
+it('keeps the first stop reason when invalidation precedes the deadline',async()=>{
+ vi.useFakeTimers();try{
+  const fetcher=vi.fn<typeof fetch>(()=>new Promise(()=>{}));
+  const client=createRosterClient(base,true,fetcher);
+  const pending=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+  await vi.advanceTimersByTimeAsync(14999);
+  client.invalidate();
+  await vi.advanceTimersByTimeAsync(1);
+  await pending;
+  expect(vi.getTimerCount()).toBe(0);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+ }finally{vi.useRealTimers();}
+});
+it('keeps timeout as the first stop reason when abort synchronously invalidates',async()=>{
+ vi.useFakeTimers();try{
+  let client!:ReturnType<typeof createRosterClient>;
+  const fetcher=vi.fn<typeof fetch>((_,options)=>{
+   options?.signal?.addEventListener('abort',()=>client.invalidate());
+   return new Promise(()=>{});
+  });
+  client=createRosterClient(base,true,fetcher);
+  const pending=expect(client.shift('token',tenant,null,shiftInput)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+  await vi.advanceTimersByTimeAsync(15000);
+  await pending;
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+ }finally{vi.useRealTimers();}
 });

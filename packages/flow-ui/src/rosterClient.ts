@@ -8,25 +8,48 @@ export function createRosterClient(base:string,localHarness=false,fetcher:typeof
  let url:URL;try{url=new URL(base);}catch{throw new RosterError('INVALID_REQUEST');}
  if(url.origin!==base||url.username||url.password||!(url.protocol==='https:'||(localHarness&&url.protocol==='http:'&&['localhost','127.0.0.1'].includes(url.hostname))))throw new RosterError('INVALID_REQUEST');
  let generation=0;
+ const active=new Set<()=>void>();
  const uuid=(value:string)=>{const result=z.string().uuid().safeParse(value);if(!result.success)throw new RosterError('INVALID_REQUEST');return result.data;};
  const tenant=(value:string)=>'?tenantId='+encodeURIComponent(uuid(value));
  function input<T>(schema:z.ZodType<T>,value:unknown):T{const result=schema.safeParse(value);if(!result.success)throw new RosterError('INVALID_REQUEST');return result.data;}
  async function call(path:string,token:string,body?:unknown):Promise<unknown>{
-  const at=generation;try{
+  const at=generation;
+  const controller=new AbortController();
+  let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+  let stopped:'UNAUTHENTICATED'|'INTERNAL_ERROR'|undefined;
+  let finished=false,cancelStarted=false;
+  let rejectStopped!:(error:RosterError)=>void;
+  const interrupted=new Promise<never>((_,reject)=>{rejectStopped=reject;});
+  void interrupted.catch(()=>undefined);
+  function cancelReader(){if(!reader||cancelStarted)return;cancelStarted=true;try{void reader.cancel().catch(()=>undefined);}catch{/* Cleanup cannot mask the public error. */}}
+  function stop(code:'UNAUTHENTICATED'|'INTERNAL_ERROR'){
+   if(finished||stopped)return;stopped=code;rejectStopped(new RosterError(code));controller.abort();cancelReader();
+  }
+  const invalidate=()=>stop('UNAUTHENTICATED');
+  active.add(invalidate);
+  const deadline=Date.now()+15000;
+  const timer=setTimeout(()=>stop('INTERNAL_ERROR'),15000);
+  function check(){if(stopped)throw new RosterError(stopped);if(at!==generation)stop('UNAUTHENTICATED');if(Date.now()>=deadline)stop('INTERNAL_ERROR');if(stopped)throw new RosterError(stopped);}
+  try{
    if(!token||/[\r\n]/.test(token))throw new RosterError('UNAUTHENTICATED');
-   const response=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},...(body===undefined?{}:{body:JSON.stringify(body)})});
-   if(at!==generation)throw new RosterError('UNAUTHENTICATED');
+   const fetching=Promise.resolve(fetcher(base+path,{signal:controller.signal,method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},...(body===undefined?{}:{body:JSON.stringify(body)})})).then(response=>{
+    if(stopped||finished){try{void response.body?.cancel().catch(()=>undefined);}catch{/* Ignore late adapter cleanup. */}}
+    return response;
+   });
+   const response=await Promise.race([fetching,interrupted]);
+   check();
    if(!response.body)throw new RosterError('INTERNAL_ERROR');
-   const reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let size=0,text='';
-   try{for(;;){const part=await reader.read();if(at!==generation)throw new RosterError('UNAUTHENTICATED');if(part.done)break;size+=part.value.byteLength;if(size>525312)throw new RosterError('INTERNAL_ERROR');text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-   if(at!==generation)throw new RosterError('UNAUTHENTICATED');
+   reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let size=0,text='';
+   try{for(;;){check();const part=await Promise.race([reader.read(),interrupted]);check();if(part.done)break;size+=part.value.byteLength;if(size>525312)throw new RosterError('INTERNAL_ERROR');text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{cancelReader();try{reader.releaseLock();}catch{/* A native read may still be pending. */}}
+   check();
    const value:unknown=JSON.parse(text);
    const failure=z.object({ok:z.literal(false),code:z.enum(codes)}).strict().safeParse(value);if(failure.success)throw new RosterError(failure.data.code);
-   const success=z.object({ok:z.literal(true),data:z.unknown()}).strict().safeParse(value);if(!response.ok||!success.success||!Object.hasOwn(success.data,'data'))throw new RosterError('INTERNAL_ERROR');return success.data.data;
-  }catch(e){if(e instanceof RosterError)throw e;throw new RosterError('INTERNAL_ERROR');}
+   const success=z.object({ok:z.literal(true),data:z.unknown()}).strict().safeParse(value);if(!response.ok||!success.success||!Object.hasOwn(success.data,'data'))throw new RosterError('INTERNAL_ERROR');check();return success.data.data;
+  }catch(e){if(stopped)throw new RosterError(stopped);if(at!==generation)throw new RosterError('UNAUTHENTICATED');if(e instanceof RosterError)throw e;throw new RosterError('INTERNAL_ERROR');}
+  finally{finished=true;clearTimeout(timer);active.delete(invalidate);cancelReader();}
  }
  async function receipt<T extends {rosterVersion:number}>(path:string,token:string,body:{expectedRosterVersion:number},schema:z.ZodType<T>,match:(value:T)=>boolean){const value=schema.safeParse(await call(path,token,body));if(!value.success||value.data.rosterVersion!==body.expectedRosterVersion+1||!match(value.data))throw new RosterError('INTERNAL_ERROR');return value.data;}
- return {invalidate(){generation++;},
+ return {invalidate(){generation++;for(const invalidate of active)invalidate();},
   async snapshot(token:string,id:string){const value=await call('/api/roster'+tenant(id),token);try{return parseRosterSnapshot(value);}catch{throw new RosterError('INTERNAL_ERROR');}},
   async provision(token:string,id:string){const value=RosterProvisionReceipt.safeParse(await call('/api/roster/provision'+tenant(id),token,{}));if(!value.success)throw new RosterError('INTERNAL_ERROR');return value.data;},
   worker(token:string,id:string,workerId:string|null,value:z.infer<typeof RosterWorkerInput>){const body=input(RosterWorkerInput,value);return receipt('/api/roster/workers'+(workerId?'/'+uuid(workerId):'')+tenant(id),token,body,RosterEntityReceipt,r=>!workerId||r.entityId.toLowerCase()===workerId.toLowerCase());},
