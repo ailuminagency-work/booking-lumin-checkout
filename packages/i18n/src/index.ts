@@ -18,5 +18,7 @@ export * from "./currency";
 export * from "./datetime";
 export * from "./address";
 export * from "./phone";
+export { parseShiftWallTimeInput, parseShiftWallResolution, selectShiftWallInstant, selectShiftWallInterval } from "./shiftWallTime";
+export type { ShiftWallTimeInput, ShiftWallResolution, ShiftWallSelection, ShiftWallInterval } from "./shiftWallTime";
 
 export const I18N_VERSION = "0.1.0";
