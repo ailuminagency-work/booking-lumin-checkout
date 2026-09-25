@@ -9,6 +9,8 @@ create schema compat_test;
 create table compat_test.fixture(tenant_id uuid, flow_id uuid, installation_id uuid,
  version_id uuid, session_id uuid, issued_at timestamptz, expires_at timestamptz,
  token_hash text, issue_receipt jsonb, rotation_version_id uuid, concurrent_version_id uuid);
+create table compat_test.expiry_race(session_id uuid primary key, token_hash text not null unique,
+ expires_at timestamptz not null);
 insert into lumin.installation_profiles values('compat-unit','https://renderer.test','https://api.test','https://portal.test',repeat('a',64));
 insert into auth.users(id,email) values('e1000000-0000-4000-8000-000000000001','owner@test.invalid');
 insert into public.tenants(id,name,slug,timezone,currency) values('e1000000-0000-4000-8000-000000000002','Compatibility test','compat-test-tenant','UTC','USD');

@@ -103,6 +103,22 @@ def finish(process: subprocess.Popen[str], label: str) -> str:
     return out.strip()
 
 
+def observed_blocked_by(db: str, waiter_app: str, holder_app: str, process: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 3
+    query = f"""select count(*)=1 from pg_stat_activity w
+      join pg_stat_activity h on h.pid=any(pg_blocking_pids(w.pid))
+      where w.datname=current_database() and w.application_name='{waiter_app}'
+      and w.state='active' and w.wait_event_type='Lock'
+      and h.datname=current_database() and h.application_name='{holder_app}'"""
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            finish(process, f"{waiter_app} before identified lock wait")
+            raise RuntimeError(f"{waiter_app} completed before identified lock wait")
+        if sql(db, query) == "t": return
+        time.sleep(0.05)
+    raise RuntimeError(f"Did not observe {waiter_app} blocked by {holder_app}")
+
+
 PROTOCOL = "set local transaction isolation level read committed; set local statement_timeout='5s'; set local lock_timeout='5s'; set local idle_in_transaction_session_timeout='1s';"
 CALL = "public.mode_validate_existing_flow_session(f.token_hash,f.session_id,f.installation_id,'https://renderer.test','https://merchant.test','compat-unit',f.version_id,1,1,f.issued_at,f.expires_at)"
 STATE = """select jsonb_build_object(
@@ -179,6 +195,82 @@ rollback;
       end;
     end $expired$; rollback;"""
     sql(db, expiry)
+
+
+def expiry_during_lock_wait(db: str) -> None:
+    # A privileged synthetic INSERT is committed before either actor starts.
+    # One captured clock value makes the immutable row's 15-minute span exact.
+    inserted = sql(db, """with stamp as (select clock_timestamp() as at),
+      source as (select s.* from public.mode_flow_sessions s
+        join compat_test.fixture f on f.session_id=s.id
+        where f.tenant_id='e1000000-0000-4000-8000-000000000002'),
+      created as (insert into public.mode_flow_sessions
+        (token_hash,tenant_id,flow_id,installation_id,version_id,service_id,mode,
+         profile_version,renderer_origin,parent_origin,target_revision,policy_revision,
+         issued_history_sequence,issued_at,expires_at)
+       select repeat('c',64),s.tenant_id,s.flow_id,s.installation_id,s.version_id,
+         s.service_id,s.mode,s.profile_version,s.renderer_origin,s.parent_origin,
+         s.target_revision,s.policy_revision,s.issued_history_sequence,
+         stamp.at-interval '14 minutes 57 seconds',stamp.at+interval '3 seconds'
+       from source s cross join stamp returning id,token_hash,expires_at)
+      insert into compat_test.expiry_race(session_id,token_hash,expires_at)
+      select id,token_hash,expires_at from created returning session_id""")
+    if not re.fullmatch(r"[0-9a-f-]{36}", inserted):
+        raise RuntimeError("Near-expiry fixture insert did not return one session")
+    before = sql(db, STATE)
+    holder_statement = f"""{PROTOCOL}
+      select id from public.mode_flow_sessions
+      where id=(select session_id from compat_test.expiry_race) for update;
+      select pg_sleep(4); commit;"""
+    holder = start(db, "compat_expiry_holder", holder_statement)
+    waiter = None
+    waiter_result = None
+    try:
+        observed(db, "compat_expiry_holder", "Timeout", holder)
+        waiter_statement = f"""{PROTOCOL}
+          do $race$ declare f compat_test.fixture; race compat_test.expiry_race;
+          begin
+            select * into f from compat_test.fixture where tenant_id='e1000000-0000-4000-8000-000000000002';
+            select * into race from compat_test.expiry_race;
+            f.token_hash:=race.token_hash; f.session_id:=race.session_id;
+            select issued_at,expires_at into f.issued_at,f.expires_at
+              from public.mode_flow_sessions where id=race.session_id;
+            if clock_timestamp()>=f.expires_at then
+              raise exception 'RACE_EXPIRED_BEFORE_INVOCATION';
+            end if;
+            begin perform {CALL}; raise exception 'EXPIRED_WAIT_ACCEPTED';
+            exception when sqlstate '42501' then
+              if sqlerrm <> 'MODE_SESSION_FORBIDDEN' then raise; end if;
+            end;
+          end $race$;
+          select 'EXPECTED_42501_MODE_SESSION_FORBIDDEN'; rollback;"""
+        waiter = start(db, "compat_expiry_waiter", waiter_statement)
+        observed_blocked_by(db, "compat_expiry_waiter", "compat_expiry_holder", waiter)
+        if sql(db, "select clock_timestamp()<expires_at from compat_test.expiry_race") != "t":
+            raise RuntimeError("Expiry passed before the identified lock wait was observed")
+        # The row was inserted with a three-second future expiry. This observer
+        # budget spans that full interval; it does not extend either SQL lock.
+        deadline = time.monotonic() + 4
+        while sql(db, "select clock_timestamp()>=expires_at from compat_test.expiry_race") != "t":
+            if waiter.poll() is not None:
+                finish(waiter, "expiry waiter before expiry")
+                raise RuntimeError("Expiry waiter completed before expiry while blocked")
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Session did not expire while lock was held")
+            time.sleep(0.05)
+        observed_blocked_by(db, "compat_expiry_waiter", "compat_expiry_holder", waiter)
+    finally:
+        try:
+            finish(holder, "expiry lock holder")
+        finally:
+            if waiter is not None:
+                waiter_result = finish(waiter, "expiry validator")
+    if waiter is None:
+        raise RuntimeError("Expiry validator never started")
+    if waiter_result != "EXPECTED_42501_MODE_SESSION_FORBIDDEN":
+        raise RuntimeError("Expiry validator did not prove exact forbidden result")
+    if sql(db, STATE) != before:
+        raise RuntimeError("Expiry race changed selected persistent state beyond fixture setup")
 
 
 def rotation(db: str) -> None:
@@ -272,6 +364,7 @@ def run(args: argparse.Namespace) -> None:
         file(db, CANDIDATE)
         file(db, FIXTURE)
         test_sql(db)
+        expiry_during_lock_wait(db)
         rotation(db)
         concurrent_disable(db)
         print(f"{layout}: candidate signature, grants, receipt, selected-state unchanged and adversarial checks PASS; observed lock ordering only in disposable {db}")
