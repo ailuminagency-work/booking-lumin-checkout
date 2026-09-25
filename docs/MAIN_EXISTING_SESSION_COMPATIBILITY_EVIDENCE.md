@@ -1,0 +1,15 @@
+# Existing-session compatibility harness: disposable evidence
+
+This is a test candidate on `codex/main-existing-session-compat-harness`, based on `e5ac959f1369ee2acbaf37102730b4bc3d39f866`. The experimental validator is a test fixture, not a numbered migration or a hosted API function. The harness pins the historical validator fixture to SHA-256 `e6ddd08cd77a7c96d1316d89d02389a01bd21fe764a730c97dbbe1c8c15a696d` and checks the accepted `0001`–`0031_overbooking_backstop` inventory before any connection.
+
+## Local execution
+
+Root `/root` initialized a new private PostgreSQL 18.6 cluster under the workspace, bound to `127.0.0.1:55437`, and created two uniquely named empty UTF-8 databases. The runner required an explicit disposable opt-in, local host/port, separate database names, preexisting local test roles and an empty pair before setup. It applied the accepted migrations and candidate fixture only to those databases. No Supabase, Render, Netlify or production database was contacted.
+
+The first disposable pair stopped in the rotation race: the test writer used a 15-character idempotency key and exited before a lock wait. This was a harness defect, not evidence that the validator failed. Builder `/root/field_publication_export_builder` corrected both keys to meet the SQL 16-character floor and made an early child exit fail explicitly. Independent `/root/field_v3_reviewer` passed focused source re-review before root ran a fresh second pair.
+
+The second pair returned exit code 0 in both `public` and `extensions` pgcrypto layouts. The controlled test checked exact function signature and service-only execution, a pinned existing receipt, denial of direct session-table reads, forged tuples and cross-tenant bindings, invalid origin/version/expiry arguments, an expired stored session, old-pin preservation after target rotation in both observed lock orderings, and denial after tenant disable. It compared selected session, request, booking, customer, installation and history state around validation. Its concurrency evidence is observed lock ordering in these synthetic cases; its state comparison is not a database-wide proof of no writes.
+
+Builder static checks and Python AST parsing passed. Independent `/root/field_v3_reviewer` passed domain, integration and scoped Runtime Guardian source review after the repair. Adversarial `/root/resource_composition_builder` found no remaining source blocker and gave a bounded pass for the reported disposable run. Root performed integration and local runtime execution. The reviewers did not themselves run SQL.
+
+This establishes a narrow local compatibility result only. The candidate still needs a correctly allocated additive migration, broader required regression and exact-candidate CI, a stacked draft PR, independent release review and hosted admission work. The connected GitHub identity's `must be a collaborator` error currently blocks draft PR creation and therefore exact PR CI. No protected-main change, live migration, provider activation or deployment occurred.
