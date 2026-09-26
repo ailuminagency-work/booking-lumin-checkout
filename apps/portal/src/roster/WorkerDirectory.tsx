@@ -2,6 +2,7 @@ import {useMemo,useState} from 'react';
 import type {RosterSnapshot} from '@lumin/flow-ui';
 
 type Filter='all'|'active'|'retired';
+const sameId=(a:string,b:string)=>a.toLowerCase()===b.toLowerCase();
 export function WorkerDirectory({snapshot,phase,selectedId,navigationBlocked,onView}:{
  snapshot?:RosterSnapshot; phase:'loading'|'ready'|'uninitialized'|'blocked'|'denied'|'unavailable';
  selectedId:string; navigationBlocked:boolean; onView:(id:string)=>void;
@@ -26,8 +27,8 @@ export function WorkerDirectory({snapshot,phase,selectedId,navigationBlocked,onV
    </div>
    {navigationBlocked&&<p role="status">Save or discard the current worker edits before viewing another worker.</p>}
    {snapshot.workers.length===0?<p>No workers have been added.</p>:rows.length===0?<p>No workers match this search and status.</p>:<ul>{rows.map(w=>{
-    const crews=snapshot.crews.filter(c=>c.workerIds.includes(w.id));
-    const eligible=snapshot.eligibility.filter(e=>e.workerId===w.id&&e.active).map(e=>snapshot.services.find(s=>s.id===e.serviceId)).filter((s):s is RosterSnapshot['services'][number]=>!!s);
+    const crews=snapshot.crews.filter(c=>c.workerIds.some(id=>sameId(id,w.id)));
+    const eligible=snapshot.eligibility.filter(e=>sameId(e.workerId,w.id)&&e.active).map(e=>snapshot.services.find(s=>sameId(s.id,e.serviceId))).filter((s):s is RosterSnapshot['services'][number]=>!!s);
     return <li key={w.id} style={{marginBlock:'1rem'}}><strong>{w.displayName}</strong> — {w.active?'Active':'Retired'}
      <div>Crews: {crews.length?crews.map(c=>`${c.name}${c.active?'':' (retired crew)'}`).join(', '):'None'}</div>
      <div>Service eligibility: {eligible.length?eligible.map(s=>`${s.name||'Unnamed service'}${s.active?'':' (inactive service)'}`).join(', '):'None'}</div>
