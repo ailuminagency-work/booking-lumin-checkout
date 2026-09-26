@@ -1,6 +1,13 @@
 import {useEffect,useMemo,useRef,useState,type FormEvent} from 'react';
 import {createRuntimeClient,type RuntimeConfig,type ServiceRow} from '@lumin/runtime-client';
 export function ConnectedCheckout({config}:{config:RuntimeConfig}){
+ // A new connection is a new checkout session, including on A -> B -> A.
+ // Keying the child resets its catalog, form, saved reference and retry identity
+ // before a different tenant's view can use any of them.
+ const context=JSON.stringify([config.url,config.publishableKey,config.tenantId]);
+ return <ConnectedCheckoutSession key={context} config={config}/>;
+}
+function ConnectedCheckoutSession({config}:{config:RuntimeConfig}){
  const client=useMemo(()=>{try{return createRuntimeClient(config)}catch{return null}},[config.url,config.publishableKey,config.tenantId]);
  const [services,setServices]=useState<ServiceRow[]>([]),[service,setService]=useState(''),[date,setDate]=useState(''),[name,setName]=useState(''),[email,setEmail]=useState('');
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState('');
