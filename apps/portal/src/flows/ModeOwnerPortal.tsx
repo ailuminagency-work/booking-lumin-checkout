@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { createFlowClient, type FlowClient, type FlowList, type ServiceRender } from '@lumin/flow-ui';
+import { createFlowClient, createTemplateAdoptionClient, type FlowClient, type FlowList, type ServiceRender } from '@lumin/flow-ui';
 import { createModeOwnerClient } from '../../../../packages/flow-ui/src/modeOwnerClient';
 import { modeUuid, type ModeProfile, type RequestPage, type Mutation, type MutationBodies, type OwnerBodies, type OperationReceipt, type ModeEditorAdapter } from '../../../../packages/flow-ui/src/modeOwnerTypes';
 import { PortalShell } from '../components/Layout';
@@ -7,6 +7,7 @@ import { PortalRoutes } from '../components/PortalRoutes';
 import { VersionedEditor } from './FlowPortal';
 import { InstallationPanel } from './InstallationPanel';
 import { ModeRequestHistory } from './ModeRequestHistory';
+import { TemplateAdoptionPanel } from './TemplateAdoptionPanel';
 type Session = {
     token: string;
     tenant: string;
@@ -35,7 +36,7 @@ export function ModeOwnerPortal({ ownerApiUrl, draftApiUrl }: {
             const d = new URL(draftApiUrl), p = new URL(location.origin);
             if (!((p.protocol === 'http:' && p.hostname === '127.0.0.1') || (p.protocol === 'https:' && p.hostname === 'localhost')) || !p.port || d.origin !== draftApiUrl || d.protocol !== 'http:' || d.hostname !== '127.0.0.1' || !d.port || Number(d.port) < 1024 || d.port === p.port || new URL(ownerApiUrl).port === p.port || new URL(ownerApiUrl).port === d.port)
                 return null;
-            return { draft: createFlowClient(draftApiUrl, true), owner: createModeOwnerClient(ownerApiUrl) };
+            return { draft: createFlowClient(draftApiUrl, true), owner: createModeOwnerClient(ownerApiUrl), adoption: createTemplateAdoptionClient(draftApiUrl, true) };
         }
         catch {
             return null;
@@ -46,7 +47,7 @@ export function ModeOwnerPortal({ ownerApiUrl, draftApiUrl }: {
     const getPending = (): Pending | null => pendingRef.current;
     const publishPending = (p: Pending | null) => { pendingRef.current = p; setPending(p); };
     const current = (at: number, s: Session) => at === generation.current && sessionRef.current === s;
-    useEffect(() => () => { generation.current++; sessionRef.current = null; pendingRef.current = null; clients?.owner.invalidate(); clients?.draft.invalidate(); }, [clients]);
+    useEffect(() => () => { generation.current++; sessionRef.current = null; pendingRef.current = null; clients?.owner.invalidate(); clients?.draft.invalidate(); clients?.adoption.invalidate(); }, [clients]);
     useEffect(() => {
         if (!pending)
             return;
@@ -97,6 +98,7 @@ export function ModeOwnerPortal({ ownerApiUrl, draftApiUrl }: {
         mutationBusy.current = false;
         clients?.owner.invalidate();
         clients?.draft.invalidate();
+        clients?.adoption.invalidate();
         setSession(null);
         setCredential('');
         setTenantInput('');
@@ -338,6 +340,6 @@ export function ModeOwnerPortal({ ownerApiUrl, draftApiUrl }: {
                     if (current(at, s))
                         setBusy(false);
                 });
-            }}>Refresh current settings</button><div><PortalRoutes mode="connected" bookings={<ModeRequestHistory key={session.tenant} client={clients.owner} token={session.token} tenant={session.tenant} initial={session.requests}/>} services={<section><h1>Services</h1><ul>{session.services.map(s => <li key={s.id}>{s.name}</li>)}</ul></section>} embed={<><VersionedEditor key={session.tenant} client={clients.draft} token={session.token} tenant={session.tenant} services={session.services} initialFlows={session.flows} modeAdapter={adapter}/>{flowId && <InstallationPanel key={session.tenant + flowId + ":" + refreshVersion} client={clients.owner} token={session.token} tenant={session.tenant} flowId={flowId} publishedVersionId={published} profile={session.profile} locked={!!pending || unresolved || currentUnavailable} refreshVersion={refreshVersion} mutate={async (method, body) => { if (activeEditor())
+            }}>Refresh current settings</button><div><PortalRoutes mode="connected" bookings={<ModeRequestHistory key={session.tenant} client={clients.owner} token={session.token} tenant={session.tenant} initial={session.requests}/>} services={<section><h1>Services</h1><ul>{session.services.map(s => <li key={s.id}>{s.name}</li>)}</ul><TemplateAdoptionPanel key={session.tenant + ':' + session.token} client={clients.adoption} token={session.token} tenant={session.tenant} locked={!!pending || unresolved || currentUnavailable}/></section>} embed={<><VersionedEditor key={session.tenant} client={clients.draft} token={session.token} tenant={session.tenant} services={session.services} initialFlows={session.flows} modeAdapter={adapter}/>{flowId && <InstallationPanel key={session.tenant + flowId + ":" + refreshVersion} client={clients.owner} token={session.token} tenant={session.tenant} flowId={flowId} publishedVersionId={published} profile={session.profile} locked={!!pending || unresolved || currentUnavailable} refreshVersion={refreshVersion} mutate={async (method, body) => { if (activeEditor())
             await mutate(method, body); }}/>}</>}/></div></>}{busy && <p role="status">Loading business settings…</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}</PortalShell>;
 }
