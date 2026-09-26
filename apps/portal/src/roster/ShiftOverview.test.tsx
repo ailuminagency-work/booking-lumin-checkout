@@ -70,8 +70,31 @@ it('offers retirement only for active available rows and requires an explicit co
  expect(onRetire).not.toHaveBeenCalled();
  fireEvent.click(within(rows[0]!).getByText('Retire available shift'));
  fireEvent.click(screen.getByText('Confirm retirement'));
- expect(onRetire).toHaveBeenCalledExactlyOnceWith(snapshot.shifts[2]!.id,1);
+ expect(onRetire).toHaveBeenCalledExactlyOnceWith(snapshot.shifts[2],1);
  expect(view.container.querySelector('input[type="datetime-local"]')).toBeNull();
+});
+it('requires confirmation for active blocked time off and refuses a changed record',()=>{
+ const onRetire=vi.fn();const blocked={...snapshot.shifts[0]!,active:true};
+ const view=render(<ShiftOverview snapshot={{...snapshot,shifts:[blocked]}} canRetire onRetire={onRetire}/>);
+ const action=screen.getByRole('button',{name:/Retire blocked shift for Sam/});
+ fireEvent.click(action);expect(screen.getByText('Retire blocked time off?')).toBeTruthy();
+ expect(screen.getByText(/does not cancel bookings or release holds. Booking availability is managed separately/)).toBeTruthy();
+ fireEvent.click(screen.getByText('Cancel'));expect(onRetire).not.toHaveBeenCalled();
+ fireEvent.click(action);
+ view.rerender(<ShiftOverview snapshot={{...snapshot,shifts:[{...blocked,active:false}]}} canRetire onRetire={onRetire}/>);
+ expect(screen.getByText('Confirm retirement')).toBeDisabled();expect(onRetire).not.toHaveBeenCalled();
+ view.rerender(<ShiftOverview snapshot={{...snapshot,shifts:[blocked]}} canRetire onRetire={onRetire}/>);
+ fireEvent.click(screen.getByText('Confirm retirement'));
+ expect(onRetire).toHaveBeenCalledExactlyOnceWith(blocked,snapshot.rosterVersion);
+});
+it('disables a pending blocked retirement when recorded details change within the same version',()=>{
+ const onRetire=vi.fn();const blocked={...snapshot.shifts[0]!,active:true};
+ const view=render(<ShiftOverview snapshot={{...snapshot,shifts:[blocked]}} canRetire onRetire={onRetire}/>);
+ fireEvent.click(screen.getByText('Retire blocked time off'));
+ view.rerender(<ShiftOverview snapshot={{...snapshot,shifts:[{...blocked,endsAt:'2030-01-02T12:00:00.000002Z'}]}} canRetire onRetire={onRetire}/>);
+ expect(screen.getByText('Confirm retirement')).toBeDisabled();
+ expect(screen.getByText('This shift changed. Refresh and review the roster before trying again.')).toBeTruthy();
+ expect(onRetire).not.toHaveBeenCalled();
 });
 it('fails closed when the accepted snapshot changes while confirmation is open',()=>{
  const onRetire=vi.fn();const view=render(<ShiftOverview snapshot={snapshot} canRetire onRetire={onRetire}/>);
