@@ -1,5 +1,5 @@
 import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import type {RosterSnapshot} from '@lumin/flow-ui';
 import {ShiftOverview} from './ShiftOverview';
 
@@ -51,4 +51,33 @@ it('joins accepted worker and shift UUIDs without case-sensitive misses',()=>{
  fireEvent.change(screen.getByLabelText('Search shift workers'),{target:{value:'case worker'}});
  expect(screen.getByRole('listitem').textContent).toContain('Case worker');
  expect(screen.queryByText('Unknown worker')).toBeNull();
+});
+it('offers retirement only for active available rows and requires an explicit confirmation',()=>{
+ const onRetire=vi.fn();
+ const view=render(<ShiftOverview snapshot={snapshot} canRetire onRetire={onRetire}/>);
+ const rows=within(screen.getByRole('region',{name:'Recorded shifts'})).getAllByRole('listitem');
+ expect(within(rows[0]!).getByText('Retire available shift')).toBeTruthy();
+ expect(within(rows[1]!).getByText('Retire available shift')).toBeTruthy();
+ expect(within(rows[2]!).queryByText('Retire available shift')).toBeNull();
+ const names=screen.getAllByRole('button',{name:/Retire available shift for/}).map(button=>button.getAttribute('aria-label'));
+ expect(names).toHaveLength(2);
+ expect(new Set(names).size).toBe(2);
+ expect(names[0]).toMatch(/Sam, .+ to .+ \(UTC\); record aaaaaaaa/);
+ expect(names[1]).toContain('Zoë <script>alert(1)</script>');
+ fireEvent.click(within(rows[0]!).getByText('Retire available shift'));
+ expect(screen.getByText(/Retiring this recorded shift does not cancel bookings or release holds/).textContent).toContain('Sam');
+ fireEvent.click(screen.getByText('Cancel'));
+ expect(onRetire).not.toHaveBeenCalled();
+ fireEvent.click(within(rows[0]!).getByText('Retire available shift'));
+ fireEvent.click(screen.getByText('Confirm retirement'));
+ expect(onRetire).toHaveBeenCalledExactlyOnceWith(snapshot.shifts[2]!.id,1);
+ expect(view.container.querySelector('input[type="datetime-local"]')).toBeNull();
+});
+it('fails closed when the accepted snapshot changes while confirmation is open',()=>{
+ const onRetire=vi.fn();const view=render(<ShiftOverview snapshot={snapshot} canRetire onRetire={onRetire}/>);
+ fireEvent.click(within(screen.getAllByRole('listitem')[0]!).getByText('Retire available shift'));
+ view.rerender(<ShiftOverview snapshot={{...snapshot,rosterVersion:2}} canRetire onRetire={onRetire}/>);
+ expect(screen.getByText('This shift changed. Refresh and review the roster before trying again.')).toBeTruthy();
+ expect(screen.getByText('Confirm retirement')).toBeDisabled();
+ expect(onRetire).not.toHaveBeenCalled();
 });

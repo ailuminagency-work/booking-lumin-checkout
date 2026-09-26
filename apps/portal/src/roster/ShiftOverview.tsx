@@ -10,9 +10,10 @@ function displayTime(instant:string,zone:string){
  catch{return {text:new Intl.DateTimeFormat(undefined,{...options,timeZone:'UTC'}).format(new Date(instant)),zone:'UTC',fallback:true};}
 }
 
-/** Read-only projection of a single accepted roster snapshot. */
-export function ShiftOverview({snapshot}:{snapshot:RosterSnapshot}){
+/** The overview reads one accepted roster snapshot; retirement is delegated to its owner. */
+export function ShiftOverview({snapshot,canRetire=false,onRetire}:{snapshot:RosterSnapshot;canRetire?:boolean;onRetire?:(shiftId:string,rosterVersion:number)=>void}){
  const [query,setQuery]=useState(''),[kind,setKind]=useState<KindFilter>('all'),[status,setStatus]=useState<StatusFilter>('all');
+ const [pending,setPending]=useState<{id:string;rosterVersion:number}|null>(null);
  const rows=useMemo(()=>{
   const workers=new Map(snapshot.workers.map(worker=>[worker.id.toLowerCase(),worker.displayName]));
   const term=query.trim().toLocaleLowerCase();
@@ -21,8 +22,10 @@ export function ShiftOverview({snapshot}:{snapshot:RosterSnapshot}){
    return name.toLocaleLowerCase().includes(term)&&(kind==='all'||shift.kind===kind)&&(status==='all'||shift.active===(status==='active'));
   }).sort((a,b)=>a.startsAt<b.startsAt?-1:a.startsAt>b.startsAt?1:a.id<b.id?-1:a.id>b.id?1:0).map(shift=>({shift,workerName:workers.get(shift.workerId.toLowerCase())??'Unknown worker'}));
  },[snapshot,query,kind,status]);
+ const selected=pending?.rosterVersion===snapshot.rosterVersion?snapshot.shifts.find(shift=>shift.id===pending.id&&shift.kind==='available'&&shift.active):undefined;
+ const selectedWorker=selected&&snapshot.workers.find(worker=>worker.id.toLowerCase()===selected.workerId.toLowerCase());
  return <section aria-labelledby="recorded-shifts-title"><h2 id="recorded-shifts-title">Recorded shifts</h2>
-  <p>Read-only shifts recorded for this roster. These entries do not promise booking availability.</p>
+  <p>Shifts recorded for this roster. These entries do not promise booking availability. Active available shifts can be retired.</p>
   <div style={{display:'flex',flexWrap:'wrap',gap:'0.75rem'}}>
    <label>Search shift workers<input type="search" value={query} onChange={e=>setQuery(e.target.value)}/></label>
    <label>Shift kind<select value={kind} onChange={e=>setKind(e.target.value as KindFilter)}><option value="all">All kinds</option><option value="available">Available</option><option value="blocked">Blocked</option></select></label>
@@ -32,7 +35,13 @@ export function ShiftOverview({snapshot}:{snapshot:RosterSnapshot}){
    const start=displayTime(shift.startsAt,shift.sourceTimeZone),end=displayTime(shift.endsAt,shift.sourceTimeZone);
    return <li key={shift.id} style={{marginBlock:'0.75rem',overflowWrap:'anywhere'}}><strong>{workerName}</strong> · {shift.kind==='blocked'?'Blocked':'Available'} · {shift.active?'Active':'Retired'}<br/>
     <span>Start: {start.text}</span><br/><span>End: {end.text}</span><br/><span>Time zone: {start.zone}</span>{start.fallback&&<span> (UTC display fallback; recorded zone: {shift.sourceTimeZone})</span>}
+    {shift.kind==='available'&&shift.active&&onRetire&&<div><button type="button" aria-label={`Retire available shift for ${workerName}, ${start.text} to ${end.text} (${shift.sourceTimeZone}); record ${shift.id}`} disabled={!canRetire} onClick={()=>setPending({id:shift.id,rosterVersion:snapshot.rosterVersion})}>Retire available shift</button></div>}
    </li>;
   })}</ul>}
+  {pending&&<div role="group" aria-label="Confirm shift retirement"><h3>Retire available shift?</h3>
+   {selected&&selectedWorker?<p>{selectedWorker.displayName}: {displayTime(selected.startsAt,selected.sourceTimeZone).text} to {displayTime(selected.endsAt,selected.sourceTimeZone).text} ({selected.sourceTimeZone}). Retiring this recorded shift does not cancel bookings or release holds.</p>:<p>This shift changed. Refresh and review the roster before trying again.</p>}
+   <button type="button" disabled={!selected||!selectedWorker||!canRetire||!onRetire} onClick={()=>{if(selected&&selectedWorker&&onRetire){onRetire(selected.id,pending.rosterVersion);setPending(null);}}}>Confirm retirement</button>
+   <button type="button" onClick={()=>setPending(null)}>Cancel</button>
+  </div>}
  </section>;
 }
