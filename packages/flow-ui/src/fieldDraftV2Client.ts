@@ -3,6 +3,11 @@ import { FlowError } from './client';
 
 const LIMIT = 32768;
 const REQUEST_TIMEOUT_MS = 15000;
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const typedArrayTag = Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag)?.get;
+const typedArrayBuffer = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')?.get;
+const typedArrayOffset = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')?.get;
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')?.get;
 const codes = ['INVALID_REQUEST', 'UNAUTHENTICATED', 'FORBIDDEN', 'CONFLICT', 'NOT_AVAILABLE', 'UNSUPPORTED_CONFIG', 'INTERNAL_ERROR', 'RATE_LIMITED'] as const;
 
 /** Owner draft transport only. Tenant is an untrusted selector; the server verifies
@@ -88,11 +93,19 @@ export function createFieldDraftV2Client(base: string, localHarness = false, fet
           const chunk = await Promise.race([reader.read(), interrupted]);
           check();
           if (chunk.done) break;
-          if (!(chunk.value instanceof Uint8Array) || chunk.value.byteLength > LIMIT - size) {
+          // Intrinsic getters inspect typed-array slots across realms. Instance properties,
+          // Symbol.toStringTag and DataView index/BPE shims cannot change the bytes copied.
+          let bytes: Uint8Array;
+          try {
+            if (!ArrayBuffer.isView(chunk.value) || typedArrayTag?.call(chunk.value) !== 'Uint8Array') throw new Error();
+            const length = typedArrayByteLength!.call(chunk.value) as number;
+            if (length > LIMIT - size) throw new Error();
+            bytes = new Uint8Array(typedArrayBuffer!.call(chunk.value) as ArrayBuffer, typedArrayOffset!.call(chunk.value) as number, length);
+          } catch {
             stop('INTERNAL_ERROR');
             throw new FlowError('INTERNAL_ERROR');
           }
-          buffer.set(chunk.value, size); size += chunk.value.byteLength;
+          buffer.set(bytes, size); size += bytes.byteLength;
         }
       } finally {
         cancelReader();
