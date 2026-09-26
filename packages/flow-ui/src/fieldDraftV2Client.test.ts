@@ -1,4 +1,5 @@
 import {expect,it,vi} from 'vitest';
+import {runInNewContext} from 'node:vm';
 import {createFieldDraftV2Client} from './fieldDraftV2Client';
 const id='11111111-1111-4111-8111-111111111111',token='synthetic-owner-token';
 const definition=()=>({schemaVersion:2,fields:[{key:'note',kind:'textarea',required:false,minLength:0,maxLength:100,prompt:' Exact '} ]});
@@ -12,6 +13,32 @@ it('reads missing and derives stale only from strict raw receipt',async()=>{expe
 it('rejects save confusion, exhausted revision and malformed receipt association',async()=>{const {client,fetcher}=setup();for(const input of [{...save(),expectedRevision:Number.MAX_SAFE_INTEGER},{...save(),fieldDraftVersion:1},{...save(),tenant:id}])await expect(client.save(token,id,id,input)).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(fetcher).not.toHaveBeenCalled();for(const data of [{...receipt(),draftRevision:2},{...receipt(),currentParentRevision:2},{...receipt(),definition:{schemaVersion:2,fields:[]}},{...receipt(),stale:false}])await expect(setup(data).client.save(token,id,id,save())).rejects.toMatchObject({code:'INTERNAL_ERROR'});});
 it('enforces exact response status/code correspondence',async()=>{await expect(setup(missing(),201).client.read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});for(const status of [400,409]){const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ok:false,code:'CONFLICT'}),{status}));await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:status===409?'CONFLICT':'INTERNAL_ERROR'});}});
 it('rejects UTF8 and oversized response bytes',async()=>{for(const bytes of [new Uint8Array([255]),new Uint8Array(32769)]){const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(bytes));await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});}});
+it('accepts genuine cross-realm byte chunks from their backing storage',async()=>{
+ const payload=JSON.stringify({ok:true,data:missing()});
+ const bytes=runInNewContext('new Uint8Array(input)',{input:new TextEncoder().encode(payload)});
+ expect(bytes instanceof Uint8Array).toBe(false);
+ Object.defineProperties(bytes,{byteLength:{value:0},[Symbol.toStringTag]:{value:'DataView'}});
+ const response=new Response(new ReadableStream({start(controller){controller.enqueue(bytes);controller.close();}}));
+ const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response);
+ await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).resolves.toEqual(missing());
+});
+it('rejects spoofed DataView and non-byte typed arrays without accepting fake indexes',async()=>{
+ const payload=new TextEncoder().encode(JSON.stringify({ok:true,data:missing()}));
+ const fake=new DataView(payload.buffer.slice(0));
+ Object.defineProperties(fake,{[Symbol.toStringTag]:{value:'Uint8Array'},BYTES_PER_ELEMENT:{value:1},length:{value:payload.length},0:{value:payload[0]}});
+ const chunks=[fake,new Int8Array(payload.buffer.slice(0)),new Uint16Array(payload.buffer.slice(0,Math.floor(payload.length/2)*2))];
+ for(const value of chunks){
+  const response=new Response(new ReadableStream({start(controller){controller.enqueue(value);controller.close();}}));
+  const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response);
+  await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+ }
+});
+it('enforces the response byte ceiling for cross-realm chunks',async()=>{
+ const bytes=runInNewContext('new Uint8Array(32769)');
+ const response=new Response(new ReadableStream({start(controller){controller.enqueue(bytes);controller.close();}}));
+ const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response);
+ await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+});
 it('invalidation aborts and disposes a late response body without accepting its data',async()=>{let finish!:(value:Response)=>void;const fetcher=vi.fn<typeof fetch>().mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));const c=createFieldDraftV2Client('https://example.test',false,fetcher,true),pending=c.read(token,id,id);c.invalidate();await expect(pending).rejects.toMatchObject({code:'UNAUTHENTICATED'});const cancel=vi.fn();finish(new Response(new ReadableStream({cancel})));await Promise.resolve();await Promise.resolve();expect(cancel).toHaveBeenCalledOnce();expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);});
 it('deadline rejects a stalled fetch without awaiting its cooperation',async()=>{vi.useFakeTimers();try{const c=createFieldDraftV2Client('https://example.test',false,vi.fn<typeof fetch>().mockImplementation(()=>new Promise(()=>{})),true);const promise=expect(c.read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});await vi.advanceTimersByTimeAsync(15001);await promise;}finally{vi.useRealTimers();}});
 it('rejects redirected adapter responses and cancels their body',async()=>{const cancel=vi.fn();const response=new Response(new ReadableStream({cancel}));Object.defineProperty(response,'redirected',{value:true});const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response);await expect(createFieldDraftV2Client('https://example.test',false,fetcher,true).read(token,id,id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});expect(cancel).toHaveBeenCalledOnce();});
