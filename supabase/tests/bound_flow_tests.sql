@@ -130,9 +130,12 @@ reset role; rollback to malformed_service;
 savepoint malformed_service; update public.services set base_price=1 where id='a0000000-0000-4000-8000-000000000001'; set local role service_role;
 select pg_temp.reject($q$select public.save_bound_flow_draft('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000001',2,'Flow','{"key":"request","steps":[{"key":"count","questionKey":"count","kind":"question","required":true},{"key":"type","questionKey":"type","kind":"question","required":true}]}')$q$,'0A000');
 reset role; rollback to malformed_service;
-savepoint malformed_service; update public.service_questions set tenant_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' where service_id='a0000000-0000-4000-8000-000000000001' and question_key='type'; set local role service_role;
-select pg_temp.reject($q$select public.save_bound_flow_draft('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000001',2,'Flow','{"key":"request","steps":[{"key":"count","questionKey":"count","kind":"question","required":true},{"key":"type","questionKey":"type","kind":"question","required":true}]}')$q$,'0A000');
-reset role; rollback to malformed_service;
+-- 0032 makes a cross-tenant question impossible even for service_role. Assert
+-- the storage FK at mutation time; downstream draft validation cannot be
+-- exercised with an invalid tenant/service pair anymore.
+set local role service_role;
+select pg_temp.reject($q$update public.service_questions set tenant_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' where service_id='a0000000-0000-4000-8000-000000000001' and question_key='type'$q$,'23503');
+reset role;
 savepoint malformed_service; update public.service_questions set choices='[{"id":"x","label":"X","priceDelta":1}]' where service_id='a0000000-0000-4000-8000-000000000001' and question_key='type'; set local role service_role;
 select pg_temp.reject($q$select public.save_bound_flow_draft('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','a0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000001',2,'Flow','{"key":"request","steps":[{"key":"count","questionKey":"count","kind":"question","required":true},{"key":"type","questionKey":"type","kind":"question","required":true}]}')$q$,'0A000');
 reset role; rollback to malformed_service;
