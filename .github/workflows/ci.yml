@@ -74,6 +74,8 @@ jobs:
             group_lifecycle_tests \
             group_financial_boundary_tests \
             planning_allocator_tests \
+            service_draft_ingestion_tests \
+            service_adoption_intent \
             crypto_extension_binding_tests \
             bound_flow_tests \
             configurable_flow_tests \
