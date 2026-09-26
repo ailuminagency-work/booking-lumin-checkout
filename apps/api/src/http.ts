@@ -1,4 +1,5 @@
 import { handleRosterRoute } from "./roster-http";
+import { handleOwnerPlanningAllocation, type OwnerAllocator } from "./owner-planning-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -8,6 +9,8 @@ import { FlowError,type FlowCode,type FlowRepository } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ /** Tentative draft allocation only; actor is sourced from verified owner auth. */
+ allocatePlanning?:OwnerAllocator;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -67,6 +70,11 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const actor=await owner();
    if([...url.searchParams.keys()].some(k=>k!=="tenantId")||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/planning/allocate"){
+    if(!options.allocatePlanning)throw new FlowError("NOT_AVAILABLE");
+    const result=await handleOwnerPlanningAllocation(req.method,actor,tenant,req.method==="POST"?await jsonBody(req):null,options.allocatePlanning);
+    send(res,result.status,result.body);return;
+   }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
    }
