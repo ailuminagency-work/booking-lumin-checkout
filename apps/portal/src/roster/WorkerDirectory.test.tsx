@@ -25,3 +25,13 @@ it('distinguishes an empty roster from a filtered empty result',()=>{
  render(<WorkerDirectory snapshot={{...snapshot,workers:[]}} phase="ready" selectedId="" navigationBlocked={false} onView={vi.fn()}/>);
  expect(screen.getByText('No workers have been added.')).toBeTruthy();expect(screen.queryByText('No workers match this search and status.')).toBeNull();
 });
+it('joins mixed-case UUID references in both directions without attaching unrelated records',()=>{
+ const first='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', second='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', serviceId='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+ const mixed={...snapshot,workers:[{id:first.toUpperCase(),displayName:'First',active:true},{id:second,displayName:'Second',active:true}],crews:[{id:one,name:'Matching crew',active:true,workerIds:[first]},{id:two,name:'Other crew',active:true,workerIds:[second.toUpperCase()]}],services:[{id:serviceId,name:'Matching service',active:true}],eligibility:[{workerId:first,serviceId:serviceId.toUpperCase(),active:true},{workerId:second.toUpperCase(),serviceId:serviceId,active:false}]} as RosterSnapshot;
+ render(<WorkerDirectory snapshot={mixed} phase="ready" selectedId="" navigationBlocked={false} onView={vi.fn()}/>);
+ const rows=screen.getAllByRole('listitem');
+ expect(within(rows[0]!).getByText('Crews: Matching crew')).toBeTruthy();
+ expect(within(rows[0]!).getByText('Service eligibility: Matching service')).toBeTruthy();
+ expect(within(rows[1]!).getByText('Crews: Other crew')).toBeTruthy();
+ expect(within(rows[1]!).getByText('Service eligibility: None')).toBeTruthy();
+});
