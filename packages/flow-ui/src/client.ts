@@ -8,16 +8,51 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  let url:URL;try{url=new URL(base);}catch{throw new FlowError('INVALID_REQUEST');}
  if(url.origin!==base||url.username||url.password||!(url.protocol==='https:'||(localHarness&&url.protocol==='http:'&&['localhost','127.0.0.1'].includes(url.hostname))))throw new FlowError('INVALID_REQUEST');
  let generation=0;
- async function call<T>(path:string,schema:z.ZodType<T>,token?:string,body?:unknown):Promise<T>{
- const at=generation;let response:Response;let value:unknown;
- try{response=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});value=await response.json();}catch{throw new FlowError('INTERNAL_ERROR');}
- if(at!==generation)throw new FlowError('UNAUTHENTICATED');
- const failure=z.object({ok:z.literal(false),code:z.enum(codes)}).strict().safeParse(value);if(failure.success)throw new FlowError(failure.data.code);
- const parsed=z.object({ok:z.literal(true),data:schema}).strict().safeParse(value);if(!response.ok||!parsed.success)throw new FlowError('INTERNAL_ERROR');return schema.parse(parsed.data.data);
+ const active=new Set<(code:'UNAUTHENTICATED'|'INTERNAL_ERROR')=>void>();
+ function discardBody(response:Response){try{void response.body?.cancel().catch(()=>{});}catch{/* Body may already be locked or absent. */}}
+ function call<T>(path:string,schema:z.ZodType<T>,token?:string,body?:unknown):Promise<T>{
+  const at=generation,controller=new AbortController(),started=performance.now();
+  const deadlineExceeded=()=>{try{const elapsed=performance.now()-started;return !Number.isFinite(elapsed)||elapsed<0||elapsed>=15000;}catch{return true;}};
+  return new Promise<T>((resolve,reject)=>{
+   let settled=false,response:Response|undefined;
+   let timer:ReturnType<typeof setTimeout>;
+   function finish(error?:FlowError,value?:T){
+    if(settled)return;
+    if(error?.code!=='UNAUTHENTICATED'&&deadlineExceeded())error=new FlowError('INTERNAL_ERROR');
+    settled=true; // Claim settlement before cleanup can reenter invalidate().
+    let cleanupFailed=false;
+    try{clearTimeout(timer);}catch{cleanupFailed=true;}
+    active.delete(cancel);
+    if(error?.code!=='UNAUTHENTICATED'){
+     if(at!==generation)error=new FlowError('UNAUTHENTICATED');
+     else if(cleanupFailed||deadlineExceeded())error=new FlowError('INTERNAL_ERROR');
+    }
+    if(error){controller.abort();if(response)discardBody(response);reject(error);}else resolve(value as T);
+   }
+   function cancel(code:'UNAUTHENTICATED'|'INTERNAL_ERROR'){finish(new FlowError(code));}
+   active.add(cancel);
+   timer=setTimeout(()=>cancel('INTERNAL_ERROR'),15000);
+   void (async()=>{
+    try{
+     const next=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+     if(settled){discardBody(next);return;}response=next;
+     if(deadlineExceeded()){cancel('INTERNAL_ERROR');return;}
+     const value:unknown=await next.json();
+     if(settled)return;
+     if(deadlineExceeded()){cancel('INTERNAL_ERROR');return;}
+     if(at!==generation){cancel('UNAUTHENTICATED');return;}
+     const failure=z.object({ok:z.literal(false),code:z.enum(codes)}).strict().safeParse(value);
+     if(failure.success){finish(new FlowError(failure.data.code));return;}
+     const parsed=z.object({ok:z.literal(true),data:schema}).strict().safeParse(value);
+     if(!next.ok||!parsed.success){cancel('INTERNAL_ERROR');return;}
+     finish(undefined,schema.parse(parsed.data.data));
+    }catch{if(!settled)cancel(at!==generation?'UNAUTHENTICATED':'INTERNAL_ERROR');}
+   })();
+  });
  }
  const tenant=(id:string)=>'?tenantId='+encodeURIComponent(z.string().uuid().parse(id));
  const uuid=(id:string)=>z.string().uuid().parse(id);
- return {invalidate(){generation++;},
+ return {invalidate(){generation++;for(const cancel of [...active])cancel('UNAUTHENTICATED');},
  services:(token:string,id:string)=>call('/api/services'+tenant(id),z.object({services:z.array(ServiceRender).max(100)}).strict(),token),
  flows:(token:string,id:string)=>call('/api/flows'+tenant(id),FlowList,token),
  draft:(token:string,id:string,flow:string)=>call('/api/flows/'+uuid(flow)+'/draft'+tenant(id),Draft,token),
