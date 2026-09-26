@@ -15,6 +15,7 @@ function harness(key: string, override?: (sql: string, values?: unknown[]) => Pr
       calls.push({ sql, values });
       if (override) return override(sql, values);
       if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: key, active: false } }] };
       if (sql.startsWith('SELECT public.ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: key, active: false } }] };
       return { command: sql === 'COMMIT' ? 'COMMIT' : sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
     },
@@ -25,6 +26,43 @@ function harness(key: string, override?: (sql: string, values?: unknown[]) => Pr
 }
 
 describe('server-authoritative template adoption', () => {
+  it('commits the durable intent before ingestion on a fresh connection', async () => {
+    const events: string[] = [];
+    let connections = 0;
+    const client = (name: string): AdoptionClient => ({
+      async query(sql) {
+        events.push(`${name}:${sql}`);
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+        if (sql.startsWith('SELECT public.ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'housekeeping', active: false } }] };
+        return { command: sql === 'COMMIT' ? 'COMMIT' : sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
+      },
+      release() { events.push(`${name}:RELEASE`); },
+    });
+    const pool: AdoptionPool = { async connect() { connections += 1; return client(`c${connections}`); } };
+    expect(await adoptServiceTemplate(pool, actor, { tenantId, templateKey: 'housekeeping', idempotencyKey })).toEqual({ kind: 'committed', serviceId, templateKey: 'housekeeping', active: false });
+    const intent = events.findIndex(event => event.includes('SELECT public.begin_service_draft_intent'));
+    const firstCommit = events.findIndex(event => event === 'c1:COMMIT');
+    const ingestionBegin = events.findIndex(event => event === 'c2:BEGIN ISOLATION LEVEL READ COMMITTED');
+    const ingestion = events.findIndex(event => event.includes('SELECT public.ingest_service_draft'));
+    expect(connections).toBe(2);
+    expect(intent).toBeGreaterThan(-1);
+    expect(firstCommit).toBeGreaterThan(intent);
+    expect(ingestionBegin).toBeGreaterThan(firstCommit);
+    expect(ingestion).toBeGreaterThan(ingestionBegin);
+  });
+
+  it('returns a committed intent replay without reopening ingestion', async () => {
+    const h = harness('housekeeping', async sql => {
+      if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'committed', serviceId, templateKey: 'housekeeping', active: false } }] };
+      if (sql === 'COMMIT') return { command: 'COMMIT', rows: [] };
+      return { command: sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
+    });
+    expect(await adoptServiceTemplate(h.pool, actor, h.request)).toEqual({ kind: 'committed', serviceId, templateKey: 'housekeeping', active: false });
+    expect(h.calls.some(call => call.sql.includes('ingest_service_draft'))).toBe(false);
+  });
+
   it.each(listTemplates().map(t => t.key))('builds canonical %s without forwarding authority fields', async key => {
     const h = harness(key);
     expect(await adoptServiceTemplate(h.pool, actor, h.request)).toEqual({ kind: 'committed', serviceId, templateKey: key, active: false });
@@ -37,7 +75,7 @@ describe('server-authoritative template adoption', () => {
     expect(Object.keys(body)).not.toContain('active');
     expect(body.name).toBeTruthy();
     expect(h.calls.at(-1)?.sql).toBe('COMMIT');
-    expect(h.releases).toEqual([undefined]);
+    expect(h.releases).toEqual([undefined, undefined]);
   });
 
   it.each(['constructor', 'prototype', '__proto__', 'unknown', ''])('rejects unregistered key %s before connecting', async key => {
@@ -74,25 +112,30 @@ describe('server-authoritative template adoption', () => {
     const h = harness('housekeeping', async sql => {
       if (sql.includes('ingest_service_draft')) throw Object.assign(new Error('SERVICE_DRAFT_CONFLICT'), { code: '40001' });
       if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+      if (sql === 'COMMIT') return { command: 'COMMIT', rows: [] };
       return { command: sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
     });
     expect(await adoptServiceTemplate(h.pool, actor, h.request)).toMatchObject({ kind: 'failed', code: 'CONFLICT' });
-    expect(h.calls.some(c => c.sql === 'COMMIT')).toBe(false);
+    expect(h.calls.filter(c => c.sql === 'COMMIT')).toHaveLength(1);
   });
 
   it('rejects a malformed or mismatched receipt before commit', async () => {
     const h = harness('housekeeping', async sql => {
       if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
       if (sql.includes('ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'car-detailing', active: true } }] };
+      if (sql === 'COMMIT') return { command: 'COMMIT', rows: [] };
       return { command: sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
     });
     expect(await adoptServiceTemplate(h.pool, actor, h.request)).toMatchObject({ kind: 'failed', code: 'INTERNAL_ERROR' });
-    expect(h.calls.some(c => c.sql === 'COMMIT')).toBe(false);
+    expect(h.calls.filter(c => c.sql === 'COMMIT')).toHaveLength(1);
   });
 
   it('reports a lost commit acknowledgement as uncertain with the original key', async () => {
     const h = harness('housekeeping', async sql => {
       if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
       if (sql.includes('ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'housekeeping', active: false } }] };
       if (sql === 'COMMIT') throw Error('disconnect');
       return { command: sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
@@ -104,6 +147,7 @@ describe('server-authoritative template adoption', () => {
   it('treats a server rollback response as not committed', async () => {
     const h = harness('housekeeping', async sql => {
       if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
       if (sql.includes('ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'housekeeping', active: false } }] };
       return { command: sql === 'COMMIT' ? 'ROLLBACK' : sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
     });
