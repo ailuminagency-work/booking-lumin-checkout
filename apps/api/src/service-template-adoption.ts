@@ -13,6 +13,11 @@ export type AdoptionOutcome =
   | { kind: 'failed'; code: 'INVALID_REQUEST' | 'FORBIDDEN' | 'CONFLICT' | 'UNAVAILABLE' | 'DEADLINE' | 'INTERNAL_ERROR'; transaction: 'not_started' | 'not_committed' }
   | { kind: 'unknown_commit'; code: 'COMMIT_UNCERTAIN'; reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' };
 
+type IntentReceipt =
+  | { state: 'pending'; serviceId: null; templateKey: string; active: false }
+  | { state: 'committed'; serviceId: string; templateKey: string; active: false }
+  | { state: 'changed'; serviceId: string; templateKey: string };
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KEY = /^[a-z][a-z0-9-]{0,99}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9_-]{16,128}$/;
@@ -43,6 +48,24 @@ function errorCode(error: unknown): 'FORBIDDEN' | 'CONFLICT' | 'UNAVAILABLE' | '
     if (code === 'P0002') return 'UNAVAILABLE';
   }
   return 'INTERNAL_ERROR';
+}
+
+function intentReceipt(input: unknown, templateKey: string): IntentReceipt | null {
+  if (input === null || typeof input !== 'object' || Array.isArray(input) || types.isProxy(input)) return null;
+  try {
+    const value = input as Record<string, unknown>;
+    if (value.templateKey !== templateKey || typeof value.state !== 'string') return null;
+    if (value.state === 'pending' && Reflect.ownKeys(value).length === 4 && value.serviceId === null && value.active === false) {
+      return { state: 'pending', serviceId: null, templateKey, active: false };
+    }
+    if (value.state === 'committed' && Reflect.ownKeys(value).length === 4 && typeof value.serviceId === 'string' && UUID.test(value.serviceId) && value.active === false) {
+      return { state: 'committed', serviceId: value.serviceId, templateKey, active: false };
+    }
+    if (value.state === 'changed' && Reflect.ownKeys(value).length === 3 && typeof value.serviceId === 'string' && UUID.test(value.serviceId) && !Object.hasOwn(value, 'active')) {
+      return { state: 'changed', serviceId: value.serviceId, templateKey };
+    }
+    return null;
+  } catch { return null; }
 }
 
 /** Server-only seam. Caller identity must already be verified by the authentication boundary. */
@@ -84,6 +107,9 @@ export async function adoptServiceTemplate(pool: AdoptionPool, actorInput: unkno
   // A timeout discards the physical connection, including an in-flight COMMIT.
   const work = (async (): Promise<AdoptionOutcome> => {
     try {
+      // Record the canonical request intent in its own committed transaction.
+      // This makes an uncertain or interrupted second transaction recoverable by
+      // exact idempotency key without moving any authority into the browser.
       client = await pool.connect();
       ensureTime();
       beginSent = true;
@@ -98,6 +124,31 @@ export async function adoptServiceTemplate(pool: AdoptionPool, actorInput: unkno
       const service = Service.parse(template.build({ tenantId, currency, timezone }));
       if (service.tenantId !== tenantId || service.currency !== currency || service.archetype !== template.archetype) throw Error('INVALID_TEMPLATE');
       const { id: _id, tenantId: _tenantId, currency: _currency, active: _active, ...payload } = service;
+      const intent = await command('SELECT public.begin_service_draft_intent($1::uuid,$2::uuid,$3::text,$4::text,$5::jsonb) AS result',
+        'SELECT', [userId, tenantId, idempotencyKey, templateKey, JSON.stringify(payload)]);
+      if (intent.rows.length !== 1) throw Error('INVALID_INTENT_RECEIPT');
+      const intentResult = intentReceipt(intent.rows[0]?.result, templateKey);
+      if (!intentResult) throw Error('INVALID_INTENT_RECEIPT');
+      await command('SET CONSTRAINTS ALL IMMEDIATE', 'SET');
+      ensureTime();
+      submittedCommit = true;
+      const intentCommit = await client.query('COMMIT');
+      if (expired) return { kind: 'unknown_commit', code: 'COMMIT_UNCERTAIN', reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' };
+      if (intentCommit.command === 'ROLLBACK') return { kind: 'failed', code: 'INTERNAL_ERROR', transaction: 'not_committed' };
+      if (intentCommit.command !== 'COMMIT') return { kind: 'unknown_commit', code: 'COMMIT_UNCERTAIN', reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' };
+      if (!released) { released = true; client.release(); }
+      client = undefined;
+      if (intentResult.state === 'committed') return { kind: 'committed', serviceId: intentResult.serviceId, templateKey, active: false };
+      if (intentResult.state === 'changed') throw Error('SERVICE_DRAFT_STATE_CHANGED');
+
+      // Ingest in a fresh transaction. The database RPC re-checks the owner
+      // and tenant, while the trigger atomically advances the pending intent.
+      submittedCommit = false;
+      released = false;
+      client = await pool.connect();
+      ensureTime();
+      await command('BEGIN ISOLATION LEVEL READ COMMITTED', 'BEGIN');
+      for (const sql of ["SET LOCAL statement_timeout='5s'", "SET LOCAL lock_timeout='5s'", "SET LOCAL idle_in_transaction_session_timeout='1s'", 'SET LOCAL ROLE service_role']) await command(sql, 'SET');
       const rpc = await command('SELECT public.ingest_service_draft($1::uuid,$2::uuid,$3::text,$4::text,$5::jsonb) AS result',
         'SELECT', [userId, tenantId, idempotencyKey, templateKey, JSON.stringify(payload)]);
       const receipt = rpc.rows[0]?.result;

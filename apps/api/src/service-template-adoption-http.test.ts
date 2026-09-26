@@ -71,6 +71,7 @@ it('connects authenticated HTTP adoption to canonical housekeeping material in o
   async query(sql,values){
    calls.push({sql,values});
    if(sql.startsWith('SELECT t.currency'))return {command:'SELECT',rows:[{currency:'EUR',timezone:'Europe/Amsterdam'}]};
+   if(sql.startsWith('SELECT public.begin_service_draft_intent'))return {command:'SELECT',rows:[{result:{state:'pending',serviceId:null,templateKey:'housekeeping',active:false}}]};
    if(sql.startsWith('SELECT public.ingest_service_draft'))return {command:'SELECT',rows:[{result:{serviceId:service,templateKey:'housekeeping',active:false}}]};
    return {command:sql.startsWith('BEGIN')?'BEGIN':sql==='COMMIT'?'COMMIT':sql.startsWith('SET')?'SET':'SELECT',rows:[{}]};
   },release(){},
