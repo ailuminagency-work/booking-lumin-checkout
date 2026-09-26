@@ -20,6 +20,7 @@ import { Pool } from "pg";
 import { createFlowRepository } from "./repository";
 import { createFlowHttpServer } from "./http";
 import { createSupabaseIdentityVerifier } from "./supabase-auth";
+import { adoptServiceTemplate } from "./service-template-adoption";
 
 /** Read a required env var or fail fast. Never prints the value. */
 function required(name: string): string {
@@ -100,6 +101,7 @@ function main(): void {
 
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
+    adoptTemplate: (actor, request) => adoptServiceTemplate(pool, actor, request),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,
