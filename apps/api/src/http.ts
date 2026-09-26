@@ -5,9 +5,12 @@ import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository } from "./repository";
+import type { AdoptionOutcome } from "./service-template-adoption";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ /** Server-only template materialization. The verified owner identity is supplied below. */
+ adoptTemplate?:(actor:{userId:string},request:{tenantId:string;templateKey:string;idempotencyKey:string})=>Promise<AdoptionOutcome>;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -67,6 +70,21 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const actor=await owner();
    if([...url.searchParams.keys()].some(k=>k!=="tenantId")||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/service-templates/adopt"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    if(!options.adoptTemplate)throw new FlowError("NOT_AVAILABLE");
+    const body=z.object({key:z.string().regex(/^[a-z][a-z0-9-]{0,99}$/).refine(s=>s!=="constructor"&&s!=="prototype"),idempotencyKey:z.string().regex(/^[A-Za-z0-9_-]{16,128}$/)}).strict().parse(await jsonBody(req));
+    const outcome=await options.adoptTemplate({userId:actor},{tenantId:tenant,templateKey:body.key,idempotencyKey:body.idempotencyKey});
+    if(outcome.kind==="committed"){
+     if(outcome.templateKey!==body.key||outcome.active!==false||!Uuid.safeParse(outcome.serviceId).success)throw new FlowError("INTERNAL_ERROR");
+     send(res,200,{ok:true,data:{serviceId:outcome.serviceId,templateKey:outcome.templateKey,active:false}});return;
+    }
+    if(outcome.kind==="unknown_commit"){
+     send(res,503,{ok:false,code:"COMMIT_UNCERTAIN",reconciliation:"RETRY_WITH_SAME_KEY_ONLY"});return;
+    }
+    const failure:Record<typeof outcome.code,number>={INVALID_REQUEST:400,FORBIDDEN:403,CONFLICT:409,UNAVAILABLE:404,DEADLINE:503,INTERNAL_ERROR:500};
+    send(res,failure[outcome.code],{ok:false,code:outcome.code});return;
+   }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
    }
