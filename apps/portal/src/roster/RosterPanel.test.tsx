@@ -1,10 +1,19 @@
 import {fireEvent,render,screen,waitFor,cleanup} from '@testing-library/react';
 import {afterEach,it,expect,vi} from 'vitest';
-import {RosterPanel,formatRosterTime} from './RosterPanel';
+import {RosterPanel,formatRosterTime,withCurrentRetirementShift} from './RosterPanel';
 const tenant='11111111-1111-4111-8111-111111111111',worker='22222222-2222-4222-8222-222222222222',crew='33333333-3333-4333-8333-333333333333',service='44444444-4444-4444-8444-444444444444';
 const initial={rosterVersion:1,workers:[{id:worker,displayName:'Sam',active:true}],crews:[{id:crew,name:'Morning crew',active:true,workerIds:[]}],eligibility:[],shifts:[{id:service,workerId:worker,kind:'available',startsAt:'2030-01-02T10:00:00.000000Z',endsAt:'2030-01-02T11:00:00.000000Z',sourceTimeZone:'posix/UTC',active:true}],services:[{id:service,name:'',active:true}]};
 const reply=(data:unknown)=>new Response(JSON.stringify({ok:true,data}));
 const failure=(code:string)=>new Response(JSON.stringify({ok:false,code}),{status:409});
+it('parent retirement guard rejects same-version interval substitution before any POST',()=>{
+ const confirmed={...initial.shifts[0]!,kind:'blocked'};
+ const post=vi.fn();
+ const accepted={...initial,shifts:[{...confirmed,endsAt:'2030-01-02T12:00:00.000000Z'}]};
+ expect(withCurrentRetirementShift(accepted as any,confirmed as any,1,0,post)).toBe(false);
+ expect(post).not.toHaveBeenCalled();
+ expect(withCurrentRetirementShift({...initial,shifts:[confirmed]} as any,confirmed as any,1,0,post)).toBe(true);
+ expect(post).toHaveBeenCalledExactlyOnceWith(confirmed);
+});
 function mount(token='local-token',id=tenant){return render(<RosterPanel apiUrl="http://127.0.0.1:8787" token={token} tenant={id}/>);}
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 function fillTimeOff(){fireEvent.change(screen.getByLabelText('Worker for time off'),{target:{value:worker}});fireEvent.change(screen.getByLabelText('Start local time'),{target:{value:'2026-01-01T09:00'}});fireEvent.change(screen.getByLabelText('End local time'),{target:{value:'2026-01-01T10:00'}});fireEvent.change(screen.getByLabelText('Time zone'),{target:{value:'Asia/Kathmandu'}});}
@@ -74,4 +83,39 @@ it('projects mixed-case relationships and updates existing eligibility using can
  expect(posts[0]!.body).toEqual({expectedRosterVersion:1,serviceId:canonicalService,workerId:canonicalWorker,active:false,create:false});
  expect(posts[1]!.body).toEqual({expectedRosterVersion:2,workerId:canonicalWorker,present:false});
  expect(posts[1]!.url).toContain('/crews/'+crew+'/members');
+});
+it('retires recorded blocked time off with exact server fields, then refreshes before another action',async()=>{
+ const blocked={...initial.shifts[0]!,kind:'blocked',sourceTimeZone:'UTC'};
+ const posts:any[]=[];let version=1;
+ vi.stubGlobal('fetch',vi.fn(async(url:string,options:RequestInit)=>{
+  if(options.method==='POST'){posts.push({url,body:JSON.parse(options.body as string)});version=2;return reply({rosterVersion:2,entityId:service});}
+  return reply({...initial,rosterVersion:version,shifts:[{...blocked,active:version===1}]});
+ }));
+ mount();await screen.findByRole('button',{name:/Retire blocked shift for Sam/});
+ fireEvent.click(screen.getByText('Retire blocked time off'));
+ expect(screen.getByText('Retire blocked time off?')).toBeTruthy();
+ fireEvent.click(screen.getByText('Confirm retirement'));
+ await screen.findByText('Change saved and roster refreshed.');
+ expect(posts).toEqual([{url:expect.stringContaining('/api/roster/shifts/'+service),body:{expectedRosterVersion:1,workerId:worker,kind:'blocked',startsAt:blocked.startsAt,endsAt:blocked.endsAt,sourceTimeZone:'UTC',active:false}}]);
+ expect(screen.queryByText('Retire blocked time off')).toBeNull();
+});
+it('does not send blocked retirement after a roster revision or tenant switch',async()=>{
+ const blocked={...initial.shifts[0]!,kind:'blocked'};let version=1;
+ const fetcher=vi.fn(async(_url:string,options:RequestInit)=>{
+  if(options.method==='POST'){version=2;return reply({rosterVersion:2,entityId:crew});}
+  return reply({...initial,rosterVersion:version,shifts:[blocked]});
+ });vi.stubGlobal('fetch',fetcher);
+ const view=mount();await screen.findByText('Retire blocked time off');fireEvent.click(screen.getByText('Retire blocked time off'));
+ fireEvent.change(screen.getByLabelText('Choose crew'),{target:{value:crew}});
+ fireEvent.change(screen.getByLabelText('Crew name'),{target:{value:'Changed'}});
+ fireEvent.click(screen.getByText('Save crew'));await screen.findByText('Change saved and roster refreshed.');
+ expect(screen.getByText('Confirm retirement')).toBeDisabled();expect(fetcher).toHaveBeenCalledTimes(3);
+ view.rerender(<RosterPanel apiUrl="http://127.0.0.1:8787" token="other-token" tenant={crew}/>);
+ expect(screen.queryByText('Confirm retirement')).toBeNull();
+});
+it('does not retry blocked retirement when the save receipt is lost',async()=>{
+ const blocked={...initial.shifts[0]!,kind:'blocked'};
+ const fetcher=vi.fn(async(_url:string,options:RequestInit)=>{if(options.method==='POST')throw Error('private transport failure');return reply({...initial,shifts:[blocked]});});vi.stubGlobal('fetch',fetcher);
+ mount();await screen.findByText('Retire blocked time off');fireEvent.click(screen.getByText('Retire blocked time off'));fireEvent.click(screen.getByText('Confirm retirement'));
+ await screen.findByText(/save outcome is unknown/);expect(screen.queryByRole('region',{name:'Recorded shifts'})).toBeNull();expect(fetcher).toHaveBeenCalledTimes(2);expect(screen.queryByText('private transport failure')).toBeNull();
 });
