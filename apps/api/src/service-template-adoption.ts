@@ -138,12 +138,12 @@ export async function adoptServiceTemplate(pool: AdoptionPool, actorInput: unkno
       if (intentCommit.command !== 'COMMIT') return { kind: 'unknown_commit', code: 'COMMIT_UNCERTAIN', reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' };
       if (!released) { released = true; client.release(); }
       client = undefined;
+      submittedCommit = false;
       if (intentResult.state === 'committed') return { kind: 'committed', serviceId: intentResult.serviceId, templateKey, active: false };
-      if (intentResult.state === 'changed') throw Error('SERVICE_DRAFT_STATE_CHANGED');
+      if (intentResult.state === 'changed') throw Object.assign(Error('SERVICE_DRAFT_STATE_CHANGED'), { code: '40001' });
 
       // Ingest in a fresh transaction. The database RPC re-checks the owner
       // and tenant, while the trigger atomically advances the pending intent.
-      submittedCommit = false;
       released = false;
       client = await pool.connect();
       ensureTime();

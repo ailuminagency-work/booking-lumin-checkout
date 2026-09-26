@@ -25,7 +25,139 @@ function harness(key: string, override?: (sql: string, values?: unknown[]) => Pr
   return { pool, calls, releases, request: { tenantId, templateKey: key, idempotencyKey } };
 }
 
+type Script = (sql: string, values?: unknown[]) => Promise<{ command: string; rows: Record<string, unknown>[] }> | { command: string; rows: Record<string, unknown>[] };
+function scriptedPool(scripts: Script[]) {
+  const calls: { connection: number; sql: string; values?: unknown[] }[] = [];
+  const releases: { connection: number; error?: Error }[] = [];
+  let next = 0;
+  const pool: AdoptionPool = { async connect() {
+    const connection = ++next;
+    const script = scripts[connection - 1];
+    if (!script) throw Error('UNEXPECTED_CONNECTION');
+    return {
+      async query(sql, values) { calls.push({ connection, sql, values }); return script(sql, values); },
+      release(error) { releases.push({ connection, error }); },
+    };
+  } };
+  return { pool, calls, releases, connections: () => next };
+}
+
+function defaultCommand(sql: string): { command: string; rows: Record<string, unknown>[] } {
+  return { command: sql === 'COMMIT' ? 'COMMIT' : sql === 'ROLLBACK' ? 'ROLLBACK' : sql.startsWith('BEGIN') ? 'BEGIN' : sql.startsWith('SET') ? 'SET' : 'SELECT', rows: [{}] };
+}
+
 describe('server-authoritative template adoption', () => {
+  it('classifies Transaction A commit acknowledgement loss as unknown and discards the connection', async () => {
+    const h = scriptedPool([async sql => {
+      if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+      if (sql === 'COMMIT') throw Error('lost transaction A acknowledgement');
+      return defaultCommand(sql);
+    }]);
+    expect(await adoptServiceTemplate(h.pool, actor, { tenantId, templateKey: 'housekeeping', idempotencyKey })).toEqual({ kind: 'unknown_commit', code: 'COMMIT_UNCERTAIN', reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' });
+    expect(h.calls.some(call => call.sql.includes('ingest_service_draft'))).toBe(false);
+    expect(h.releases).toHaveLength(1);
+    expect(h.releases[0]?.error).toBeInstanceOf(Error);
+  });
+
+  it('classifies Transaction B commit acknowledgement loss after a durable intent', async () => {
+    const h = scriptedPool([
+      async sql => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+        return defaultCommand(sql);
+      },
+      async sql => {
+        if (sql.startsWith('SELECT public.ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'housekeeping', active: false } }] };
+        if (sql === 'COMMIT') throw Error('lost transaction B acknowledgement');
+        return defaultCommand(sql);
+      },
+    ]);
+    expect(await adoptServiceTemplate(h.pool, actor, { tenantId, templateKey: 'housekeeping', idempotencyKey })).toEqual({ kind: 'unknown_commit', code: 'COMMIT_UNCERTAIN', reconciliation: 'RETRY_OR_LOOKUP_WITH_SAME_KEY' });
+    expect(h.calls.filter(call => call.sql.includes('ingest_service_draft'))).toHaveLength(1);
+    expect(h.releases).toHaveLength(2);
+    expect(h.releases[0]?.error).toBeUndefined();
+    expect(h.releases[1]?.error).toBeInstanceOf(Error);
+  });
+
+  it('keeps a pending intent after pre-commit ingestion failure and completes the same key on retry', async () => {
+    let firstIngest = true;
+    const h = scriptedPool([
+      async sql => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+        return defaultCommand(sql);
+      },
+      async sql => {
+        if (sql.startsWith('SELECT public.ingest_service_draft') && firstIngest) { firstIngest = false; throw Object.assign(Error('invalid draft'), { code: '22023' }); }
+        return defaultCommand(sql);
+      },
+      async sql => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+        return defaultCommand(sql);
+      },
+      async sql => {
+        if (sql.startsWith('SELECT public.ingest_service_draft')) return { command: 'SELECT', rows: [{ result: { serviceId, templateKey: 'housekeeping', active: false } }] };
+        return defaultCommand(sql);
+      },
+    ]);
+    const request = { tenantId, templateKey: 'housekeeping', idempotencyKey };
+    expect(await adoptServiceTemplate(h.pool, actor, request)).toMatchObject({ kind: 'failed', code: 'INTERNAL_ERROR', transaction: 'not_committed' });
+    expect(await adoptServiceTemplate(h.pool, actor, request)).toEqual({ kind: 'committed', serviceId, templateKey: 'housekeeping', active: false });
+    expect(h.calls.filter(call => call.sql.startsWith('SELECT public.ingest_service_draft'))).toHaveLength(2);
+    expect(h.calls.filter(call => call.sql.startsWith('SELECT public.ingest_service_draft')).map(call => call.values?.[2])).toEqual([idempotencyKey, idempotencyKey]);
+  });
+
+  it('maps a changed intent state to a conflict without asserting draft authority', async () => {
+    const h = scriptedPool([async sql => {
+      if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+      if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'changed', serviceId, templateKey: 'housekeeping' } }] };
+      return defaultCommand(sql);
+    }]);
+    expect(await adoptServiceTemplate(h.pool, actor, { tenantId, templateKey: 'housekeeping', idempotencyKey })).toMatchObject({ kind: 'failed', code: 'CONFLICT', transaction: 'not_committed' });
+    expect(h.calls.some(call => call.sql.includes('ingest_service_draft'))).toBe(false);
+  });
+
+  it('retries an unknown Transaction A result with the same key and does not duplicate ingestion', async () => {
+    const beginKeys: unknown[] = [];
+    const h = scriptedPool([
+      async (sql, values) => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) { beginKeys.push(values?.[2]); return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] }; }
+        if (sql === 'COMMIT') throw Error('unknown first attempt');
+        return defaultCommand(sql);
+      },
+      async (sql, values) => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) { beginKeys.push(values?.[2]); return { command: 'SELECT', rows: [{ result: { state: 'committed', serviceId, templateKey: 'housekeeping', active: false } }] }; }
+        return defaultCommand(sql);
+      },
+    ]);
+    const request = { tenantId, templateKey: 'housekeeping', idempotencyKey };
+    expect(await adoptServiceTemplate(h.pool, actor, request)).toMatchObject({ kind: 'unknown_commit' });
+    expect(await adoptServiceTemplate(h.pool, actor, request)).toEqual({ kind: 'committed', serviceId, templateKey: 'housekeeping', active: false });
+    expect(beginKeys).toEqual([idempotencyKey, idempotencyKey]);
+    expect(h.calls.some(call => call.sql.includes('ingest_service_draft'))).toBe(false);
+  });
+
+  it('fails closed when owner authorization is revoked between intent and ingestion transactions', async () => {
+    const h = scriptedPool([
+      async sql => {
+        if (sql.startsWith('SELECT t.currency')) return { command: 'SELECT', rows: [{ currency: 'USD', timezone: 'America/Chicago' }] };
+        if (sql.startsWith('SELECT public.begin_service_draft_intent')) return { command: 'SELECT', rows: [{ result: { state: 'pending', serviceId: null, templateKey: 'housekeeping', active: false } }] };
+        return defaultCommand(sql);
+      },
+      async sql => {
+        if (sql.startsWith('SELECT public.ingest_service_draft')) throw Object.assign(Error('FORBIDDEN'), { code: '42501', message: 'FORBIDDEN' });
+        return defaultCommand(sql);
+      },
+    ]);
+    expect(await adoptServiceTemplate(h.pool, actor, { tenantId, templateKey: 'housekeeping', idempotencyKey })).toMatchObject({ kind: 'failed', code: 'FORBIDDEN', transaction: 'not_committed' });
+    expect(h.calls.filter(call => call.sql.includes('SELECT public.begin_service_draft_intent'))).toHaveLength(1);
+    expect(h.calls.filter(call => call.sql.includes('SELECT public.ingest_service_draft'))).toHaveLength(1);
+  });
+
   it('commits the durable intent before ingestion on a fresh connection', async () => {
     const events: string[] = [];
     let connections = 0;
