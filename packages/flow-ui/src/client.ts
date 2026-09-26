@@ -3,6 +3,10 @@ import {Draft,FlowList,ServiceRender,type FlowConfig,type Answers} from './types
 import {ConfigurableDraft,ConfigurableAuthoringV2,SessionRender} from './configurable';
 const codes=['INVALID_REQUEST','UNAUTHENTICATED','FORBIDDEN','CONFLICT','NOT_AVAILABLE','UNSUPPORTED_CONFIG','INTERNAL_ERROR','RATE_LIMITED'] as const;
 const messages={INVALID_REQUEST:'Check the form and try again.',UNAUTHENTICATED:'Your session is unavailable. Sign in again.',FORBIDDEN:'This account cannot perform this action.',CONFLICT:'The saved version changed. Refresh before trying again.',NOT_AVAILABLE:'This item is unavailable.',UNSUPPORTED_CONFIG:'This service or questionnaire is not supported yet.',INTERNAL_ERROR:'The request could not be completed.',RATE_LIMITED:'Too many requests. Wait before trying again.'};
+// Only the session-issuance result has a documented 1 MiB inner contract.
+// Leave room for its API envelope. Other endpoints, including service catalogs,
+// have no proven output-byte ceiling and retain their existing JSON behavior.
+const MAX_SESSION_RESPONSE_BYTES=2097152;
 export class FlowError extends Error{constructor(readonly code:typeof codes[number]){super(messages[code]);}}
 export function createFlowClient(base:string,localHarness=false,fetcher:typeof fetch=fetch){
  let url:URL;try{url=new URL(base);}catch{throw new FlowError('INVALID_REQUEST');}
@@ -14,7 +18,7 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   const at=generation,controller=new AbortController(),started=performance.now();
   const deadlineExceeded=()=>{try{const elapsed=performance.now()-started;return !Number.isFinite(elapsed)||elapsed<0||elapsed>=15000;}catch{return true;}};
   return new Promise<T>((resolve,reject)=>{
-   let settled=false,response:Response|undefined;
+   let settled=false,response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
    let timer:ReturnType<typeof setTimeout>;
    function finish(error?:FlowError,value?:T){
     if(settled)return;
@@ -27,7 +31,7 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
      if(at!==generation)error=new FlowError('UNAUTHENTICATED');
      else if(cleanupFailed||deadlineExceeded())error=new FlowError('INTERNAL_ERROR');
     }
-    if(error){controller.abort();if(response)discardBody(response);reject(error);}else resolve(value as T);
+    if(error){controller.abort();if(reader)void reader.cancel().catch(()=>{});else if(response)discardBody(response);reject(error);}else resolve(value as T);
    }
    function cancel(code:'UNAUTHENTICATED'|'INTERNAL_ERROR'){finish(new FlowError(code));}
    active.add(cancel);
@@ -37,7 +41,25 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
      const next=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
      if(settled){discardBody(next);return;}response=next;
      if(deadlineExceeded()){cancel('INTERNAL_ERROR');return;}
-     const value:unknown=await next.json();
+     let value:unknown;
+     if(path.startsWith('/api/installations/')&&path.endsWith('/sessions')){
+      if(!next.body){cancel('INTERNAL_ERROR');return;}
+      reader=next.body.getReader();const buffer=new Uint8Array(MAX_SESSION_RESPONSE_BYTES);
+      let size=0,complete=false;
+      try{
+       for(;;){
+        const part=await reader.read();
+        if(settled||deadlineExceeded()||at!==generation){cancel(at!==generation?'UNAUTHENTICATED':'INTERNAL_ERROR');return;}
+        if(part.done){complete=true;break;}
+        // Browser/test realms can supply distinct constructors. Copy the raw
+        // view bytes, not indexed elements that a DataView can spoof or lack.
+        if(!ArrayBuffer.isView(part.value)||part.value.byteLength>MAX_SESSION_RESPONSE_BYTES-size){cancel('INTERNAL_ERROR');return;}
+        const bytes=new Uint8Array(part.value.buffer,part.value.byteOffset,part.value.byteLength);
+        buffer.set(bytes,size);size+=bytes.byteLength;
+       }
+      }finally{if(!complete)void reader.cancel().catch(()=>{});reader.releaseLock();reader=undefined;}
+      value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer.subarray(0,size)));
+     }else value=await next.json();
      if(settled)return;
      if(deadlineExceeded()){cancel('INTERNAL_ERROR');return;}
      if(at!==generation){cancel('UNAUTHENTICATED');return;}
