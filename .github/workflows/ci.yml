@@ -82,3 +82,49 @@ jobs:
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
+
+  planning_route_pg:
+    name: planning owner route (disposable PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: lumin_allocator_transport_ci
+      LOCAL_HARNESS: '1'
+      FLOW_TEST_DISPOSABLE: '1'
+      ALLOCATOR_TRANSPORT_TEST_DISPOSABLE: '1'
+      ALLOCATOR_TRANSPORT_CRYPTO_LAYOUT: public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Prepare isolated allocator test database
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres -c "create database ${PGDATABASE}"
+          psql -v ON_ERROR_STOP=1 -d "${PGDATABASE}" -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -d "${PGDATABASE}" -f "$f"
+          done
+      - name: Prove owner route, tentative holds and roster race
+        run: node_modules/.bin/tsx apps/api/src/owner-planning-route.integration.ts
+      - name: Remove isolated allocator test database
+        if: always()
+        run: psql -v ON_ERROR_STOP=1 -d postgres -c "drop database if exists ${PGDATABASE} with (force)"
