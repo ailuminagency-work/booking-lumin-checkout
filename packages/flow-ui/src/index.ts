@@ -4,6 +4,7 @@ export * from './QuestionForm';
 export * from './configurable';
 export * from './ConfigurableQuestionForm';
 export * from './rosterClient';
+export * from './templateAdoptionClient';
 export * from './modeDocument';
 export { createFieldDraftV2Client } from './fieldDraftV2Client';
 export type { FieldDraftV2Client } from './fieldDraftV2Client';
