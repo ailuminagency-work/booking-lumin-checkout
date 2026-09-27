@@ -1,7 +1,7 @@
 # Current System State
 
-**State:** PARTIAL / RECONCILIATION REQUIRED  
-**Protected main:** `c5663c59e134e71beb511f509b3287ab0046bdff`  
+**State:** PARTIAL / RECONCILIATION REQUIRED
+**Protected main:** `c5663c59e134e71beb511f509b3287ab0046bdff`
 **RC-2:** preserved as the protected working foundation
 
 ## Confirmed

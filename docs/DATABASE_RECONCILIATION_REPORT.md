@@ -1,6 +1,6 @@
 # Database Reconciliation Report
 
-**As of:** 2026-09-26  
+**As of:** 2026-09-26
 **Live project:** `pplwyfbxrnodimhzlvdl` (Supabase, ACTIVE_HEALTHY, us-east-1)
 
 The live range, health, inventory counts, and empty Edge Function inventory are from the read-only Supabase connector snapshot recorded in `docs/RECOVERY_STATUS_AFTER_OUTAGE.md` on 2026-09-26. They are point-in-time observations, not a substitute for a fresh staging replay or current hosted authorization.

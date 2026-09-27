@@ -1,7 +1,7 @@
 # Booking Lumin Checkout — Recovery Status After Session / Credit Outage
 
-**Reconstruction date:** 2026-09-26  
-**Repository:** `ailuminagency-work/booking-lumin-checkout`  
+**Reconstruction date:** 2026-09-26
+**Repository:** `ailuminagency-work/booking-lumin-checkout`
 **Scope:** read-only reconstruction of GitHub, CI, repository evidence, Supabase, Render access, Netlify evidence, and recovery ledgers. No migration, deploy, merge, credential activation, or provider connection was performed.
 
 This document is the authoritative recovery snapshot for the interrupted recovery/merge program. A branch, passing local test, draft PR, or hosted preview is not treated as production proof.
@@ -98,7 +98,7 @@ The last direct browser evidence recorded:
 
 Those URLs could not be rechecked through the current web connector, and no Netlify connector is available in this session. Therefore:
 
-`NETLIFY CURRENT SYNC: UNKNOWN`  
+`NETLIFY CURRENT SYNC: UNKNOWN`
 `LAST VERIFIED PREVIEW: STALE DEMO BUILD, NOT LIVE OPERATIONS`
 
 The available evidence does not show a current checkout/portal/command-center deployment sourced from protected `main`, pointed at the Render API, and reconciled to the active Supabase project.
@@ -117,8 +117,8 @@ The live migration history is exactly:
 
 Migrations `0010–0031` are **not applied**. `0032–0033` are not in `main` and are not live. No `0034` intent migration is live. The live database has no evidence of capacity holds, resource reservations, later worker/planning, flow storage, allocator, or service-adoption intent structures.
 
-`REPO MIGRATIONS: 0001–0031 on main; 0032–0034 only on review branches`  
-`LIVE MIGRATIONS: 0001–0009`  
+`REPO MIGRATIONS: 0001–0031 on main; 0032–0034 only on review branches`
+`LIVE MIGRATIONS: 0001–0009`
 `DRIFT: YES`
 
 No migration was applied during this reconstruction.
