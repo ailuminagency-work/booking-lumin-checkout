@@ -9,8 +9,10 @@
 - Main protection and required verify/database checks are active.
 - Supabase is healthy but contains only migrations 0001-0009.
 - Repository and draft PR stack contain substantially newer W3/W4 work.
-- Tenant, booking, payment, and capacity authority remain server/database concerns; no browser-only booking authority is accepted.
+- The repository/runtime invariant keeps tenant, booking, payment, and capacity authority in server/database concerns; hosted runtime authority is still unverified.
 - No real Stripe, Google, email, SMS, CRM, Render, or other provider credentials were activated.
+
+No live migration, deployment, merge, or provider activation occurred during this recovery pass.
 
 ## Unverified
 

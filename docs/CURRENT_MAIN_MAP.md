@@ -4,6 +4,8 @@
 **Repository:** `ailuminagency-work/booking-lumin-checkout`  
 **Protected main:** `c5663c59e134e71beb511f509b3287ab0046bdff`
 
+This is a point-in-time snapshot. Protection and required checks are based on previously verified evidence; the current GitHub protection-rule JSON request returned an access failure and was not treated as proof of a changed state.
+
 ## Authority
 
 `main` is the only protected integration authority. Its required checks are `verify (typecheck, test, build, contamination)` and `database (migrations + RLS attack suite)`. No branch-only or local-only candidate is treated as merged, deployed, or live.
@@ -26,6 +28,8 @@
 ## Superseded / duplicate handling
 
 Older Codex/Claude branches are not merged authority. They remain review inputs only. No blind cherry-pick or duplicate vertical application is authorized.
+
+The inspection checkout also contains unrelated untracked artifacts (`docs/RECOVERY_STATUS_AFTER_OUTAGE.md`, `main-field-v3-preview/`, and a generated `.cache/` directory). They are excluded from this candidate and must not be mistaken for committed product state.
 
 ## Immediate disposition
 
