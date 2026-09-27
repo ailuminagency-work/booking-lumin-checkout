@@ -24,3 +24,5 @@ No live migration, deployment, merge, or provider activation occurred during thi
 ## Recovery rule
 
 Do not promote a local test, preview URL, or draft PR into live status. Every candidate must retain the full Builder → Unit → Domain → Independent → Adversarial → Integration → Runtime → CI → Release loop.
+
+The current wave ledger and execution workflow were read from the local recovery checkout; they are not present in the protected-main tree and therefore are not claimed as main-validated program control files.

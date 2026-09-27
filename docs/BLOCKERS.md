@@ -6,6 +6,7 @@
 4. **Netlify synchronization:** current authoritative site/project linkage is unknown; the last verified preview is stale demo-in-memory and is not live operations.
 5. **Hosted acceptance:** authenticated owner/worker/customer staging golden flows are not proven.
 6. **Provider activation:** real credentials remain explicitly deferred.
+7. **Program-ledger provenance:** protected main does not currently contain `docs/product/EXECUTION_WORKFLOW.md` or `docs/product/wave-ledger.json`; those authoritative queue files exist only in the local recovery checkout and must be reconciled without silently promoting a non-main planning snapshot.
 
 ## Active work
 
