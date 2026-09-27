@@ -17,6 +17,7 @@ INTEGRATION TESTED → SECURITY TESTED → ADVERSARIAL TESTED → RELEASED → P
 | W-009 | WS11 | cc-builder | Command center | UNIT TESTED | 21 tests; GMV/revenue separation + no-PII asserted; no defects found. |
 | W-010 | WS12 | reviewers | Adversarial pass + generalization proofs | INTEGRATION TESTED | 2 independent reviewers; 6 defects found (1 HIGH, 4 MED, 2 LOW), all resolved; generalization proof holds. |
 | W-011 | WS1/WS2 | — | Legacy + contamination forensics | READY (BLOCKED: external access) | — |
+| A-001 | Phase A reconciliation | governor | Main, database, Render, Netlify, and confirmation-authority maps | IN PROGRESS (BLOCKED: staging/hosted access) | `W3_RECONCILIATION_REPORT.md`, `STAGING_DATABASE_CERTIFICATION.md`, `NETLIFY_CANONICAL_MAP.md`, `CONFIRM_AUTHORITY_MAP.md`; docs-only candidate `639c11c` |
 
 ## Adversarial findings ledger (WS12)
 
