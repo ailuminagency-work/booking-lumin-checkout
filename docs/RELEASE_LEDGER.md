@@ -131,3 +131,12 @@ builder passed API typecheck and two fresh 32-migration disposable runs;
 independent review passed. The harness is sequential and does not replace the
 dedicated concurrency suites. No hosted runtime, browser/auth proof, Render or
 Netlify mutation, live migration, or provider credential was used.
+
+The runner follow-up `59a21f6bdbced5bb1c74b16aea96ce6b52e29d01` registers that
+golden flow in `apps/api/scripts/run-integration.sh` after the existing HTTP
+and roster checks. It enforces IPv4 loopback for the disposable database,
+rejects remote host/address overrides, and preserves cleanup and lexical
+migration replay. Bash syntax and negative host/address fixtures passed with an
+independent review. The complete runner was not executed in this Windows slice;
+the previously recorded disposable PostgreSQL golden-flow runs remain the
+runtime evidence. No hosted/live/provider action occurred.
