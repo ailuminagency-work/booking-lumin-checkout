@@ -1,4 +1,4 @@
-import { ConfirmationInput,type BookingConfirmation } from './confirmation';
+import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
@@ -78,9 +78,9 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
     const body=ConfirmationInput.parse(await jsonBody(req));
     if(!options.confirmation)throw new FlowError("UNSUPPORTED_CONFIG");
-    await options.confirmation(actor,tenant,body.bookingId);
-    // Even an incorrectly resolving adapter must never fabricate confirmation.
-    throw new FlowError("INTERNAL_ERROR");
+    const result=ConfirmationReceipt.safeParse(await options.confirmation(actor,tenant,body.bookingId));
+    if(!result.success||result.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...result.data}});return;
    }
    if(url.pathname==="/api/reservations/hold"){
     if(req.method!=="POST"||!options.reservation)throw new FlowError("NOT_AVAILABLE");
