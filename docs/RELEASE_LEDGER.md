@@ -109,3 +109,15 @@ all external endpoints and secrets as `sync: false`. The validator now checks
 the exact service identity, gate values, uniqueness, allowed environment keys,
 and absence of inline secrets; seven negative configuration fixtures pass.
 Independent review and API typecheck passed. No Render mutation occurred.
+
+The local golden-flow candidate `1b374de4af40b9da35616e1e9be85bac05f80877`
+adds `apps/api/src/phase-a-golden.integration.ts`, an explicitly disposable
+loopback PostgreSQL harness for the first complete housekeeping adapter path:
+profile, availability, draft, hold, staging mock payment, and atomic
+confirmation. It uses per-run fixture IDs, rejects non-disposable settings,
+and checks tenant boundaries, server-derived pricing, replay behavior, payment
+linkage, state history, hold consumption, and occupied-slot exclusion. The
+builder passed API typecheck and two fresh 32-migration disposable runs;
+independent review passed. The harness is sequential and does not replace the
+dedicated concurrency suites. No hosted runtime, browser/auth proof, Render or
+Netlify mutation, live migration, or provider credential was used.
