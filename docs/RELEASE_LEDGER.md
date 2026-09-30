@@ -65,3 +65,13 @@ workspace typecheck, API 32 tests, templates 31 tests, three frontend builds,
 staging config validation and `git diff --check`. The candidate is still not a
 hosted staging certification: no Render service, Netlify deployment, or live
 Supabase migration is present.
+
+The owner/staff draft candidate `6385ec2f655d3900cfde9fc77e74f30999c9bee4`
+adds a bounded authenticated booking-creation boundary without changing the
+customer flow route or the legacy anonymous draft RPC. Exact-head verification
+passed workspace typecheck, API 37 tests and `git diff --check`; the builder's
+fresh 32-migration disposable PostgreSQL harness passed staff creation/replay,
+tenant and service isolation, interval replay conflict and no-payment/no-hold
+side-effect checks. Independent review passed. This remains an unhosted
+staging candidate: no Render service, Netlify deployment, live migration or
+provider credential was used.
