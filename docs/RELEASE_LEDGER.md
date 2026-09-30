@@ -76,6 +76,16 @@ side-effect checks. Independent review passed. This remains an unhosted
 staging candidate: no Render service, Netlify deployment, live migration or
 provider credential was used.
 
+The candidate is integrated locally on `phase-a/staging-operationalization` at
+`938aa73` (six commits ahead of the recorded remote integration head). The
+integration push was attempted after exact-head checks but remains blocked by
+the local Git transport credential error `SEC_E_NO_CREDENTIALS`; GitHub write
+operations also remain unavailable to this session. The builder branch
+`codex/phase-a-golden` and its implementation commit are already pushed, so the
+source is preserved remotely while the integration line awaits restored write
+credentials. No merge, deployment, live migration, or provider activation was
+attempted.
+
 The read-only staging smoke candidate `ae36f68aad1d26acf151d31d4b4bbd970cfe0bb5`
 adds `npm run smoke:phase-a`. It verifies the liveness/readiness probes and,
 when explicitly supplied with a staging token, tenant, service and origin,
