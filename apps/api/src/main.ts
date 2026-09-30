@@ -1,3 +1,4 @@
+import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
 /**
  * @lumin/api — production entrypoint for the hostable Booking Lumin API service.
@@ -104,6 +105,7 @@ function main(): void {
     tenantProfile: createTenantProfileReader(pool),
     availability: createAvailabilityReader(pool),
     reservation: createReservationWriter(pool),
+    confirmation: createBookingConfirmation(pool),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,

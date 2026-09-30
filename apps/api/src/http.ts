@@ -1,3 +1,4 @@
+import { ConfirmationInput,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
@@ -12,6 +13,7 @@ export interface FlowHttpOptions{
  tenantProfile?:TenantProfileReader;
  availability?:AvailabilityReader;
  reservation?:ReservationWriter;
+ confirmation?:BookingConfirmation;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -72,6 +74,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/bookings/confirm"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=ConfirmationInput.parse(await jsonBody(req));
+    if(!options.confirmation)throw new FlowError("UNSUPPORTED_CONFIG");
+    await options.confirmation(actor,tenant,body.bookingId);
+    // Even an incorrectly resolving adapter must never fabricate confirmation.
+    throw new FlowError("INTERNAL_ERROR");
+   }
    if(url.pathname==="/api/reservations/hold"){
     if(req.method!=="POST"||!options.reservation)throw new FlowError("NOT_AVAILABLE");
     const body=HoldInput.parse(await jsonBody(req));

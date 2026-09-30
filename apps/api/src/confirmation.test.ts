@@ -1,0 +1,23 @@
+import {afterEach,describe,it,expect,vi} from 'vitest';
+import type {Server} from 'node:http';
+import {createFlowHttpServer} from './http';
+import {createBookingConfirmation,type BookingConfirmation} from './confirmation';
+import {FlowError} from './repository';
+const actor='a4200000-0000-4000-8000-000000000001',tenant='a4200000-0000-4000-8000-000000000002',booking='a4200000-0000-4000-8000-000000000003',foreign='b4200000-0000-4000-8000-000000000002',origin='https://portal.example.test';
+let server:Server;
+afterEach(async()=>{server?.closeAllConnections();if(server)await new Promise<void>(r=>server.close(()=>r()));});
+async function setup(confirmation?:BookingConfirmation){server=createFlowHttpServer({repository:{call:async()=>{throw Error('unexpected');}},ownerOrigins:[origin],customerOrigins:[],authenticateOwner:async t=>t==='owner-token-123456'?actor:null,...(confirmation?{confirmation}:{})});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;return(body:unknown,t=tenant,token='owner-token-123456')=>fetch(`${base}/api/bookings/confirm?tenantId=${t}`,{method:'POST',headers:{origin,authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});}
+describe('fail-closed authenticated booking confirmation',()=>{
+ it('denies by default without claiming a confirmed state',async()=>{const post=await setup();const response=await post({bookingId:booking});expect(response.status).toBe(422);expect(await response.json()).toEqual({ok:false,code:'UNSUPPORTED_CONFIG'});});
+ it('authenticates before invoking the boundary',async()=>{const confirm=vi.fn<BookingConfirmation>();const post=await setup(confirm);expect((await post({bookingId:booking},tenant,'invalid-token-123456')).status).toBe(401);expect(confirm).not.toHaveBeenCalled();});
+ it('rejects caller-controlled payment, confirmation and authority fields',async()=>{const confirm=vi.fn<BookingConfirmation>();const post=await setup(confirm);for(const extra of [{confirmed:true},{state:'confirmed'},{paymentState:'succeeded'},{paymentId:foreign},{provider:'mock'},{tenantId:foreign},{actorId:foreign},{serviceId:foreign},{capacity:100}])expect((await post({bookingId:booking,...extra})).status).toBe(400);expect(confirm).not.toHaveBeenCalled();});
+ it('passes verified identity and rejects foreign tenant',async()=>{const confirm=vi.fn<BookingConfirmation>(async()=>{throw new FlowError('FORBIDDEN');});const post=await setup(confirm);const response=await post({bookingId:booking},foreign);expect(response.status).toBe(403);expect(confirm).toHaveBeenCalledWith(actor,foreign,booking);});
+ it('cannot turn an unexpectedly resolving implementation into success',async()=>{const post=await setup((async()=>({confirmed:true})) as unknown as BookingConfirmation);const response=await post({bookingId:booking});expect(response.status).toBe(500);expect(await response.json()).toEqual({ok:false,code:'INTERNAL_ERROR'});});
+});
+describe('database confirmation gate',()=>{
+ function harness(member=true,target=true,fail=false){const query=vi.fn(async(sql:string)=>{if(fail)throw Error('secret');if(sql.startsWith('select t.id'))return{rows:member?[{id:tenant}]:[]};if(sql.startsWith('select id'))return{rows:target?[{id:booking}]:[]};return{rows:[]};});const release=vi.fn();return{query,release,confirm:createBookingConfirmation({connect:async()=>({query,release})} as never)};}
+ it('uses a read-only transaction and never dispatches a mutation/RPC/provider',async()=>{const h=harness();await expect(h.confirm(actor,tenant,booking)).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});expect(h.query.mock.calls.map(c=>c[0])).toEqual(['begin read only',"set local statement_timeout='5s'",'set local role service_role',expect.stringContaining('select t.id'),expect.stringContaining('select id'),'rollback']);expect(h.release).toHaveBeenCalledWith(false);});
+ it('denies membership before reading booking',async()=>{const h=harness(false);await expect(h.confirm(actor,foreign,booking)).rejects.toMatchObject({code:'FORBIDDEN'});expect(h.query.mock.calls.some(c=>c[0].startsWith('select id'))).toBe(false);});
+ it('does not disclose a foreign or absent booking',async()=>{const h=harness(true,false);await expect(h.confirm(actor,tenant,foreign)).rejects.toMatchObject({code:'NOT_AVAILABLE'});});
+ it('redacts database failures and discards a connection whose rollback fails',async()=>{const h=harness(true,true,true);await expect(h.confirm(actor,tenant,booking)).rejects.toMatchObject({code:'INTERNAL_ERROR',message:'INTERNAL_ERROR'});expect(h.release).toHaveBeenCalledWith(true);});
+});
