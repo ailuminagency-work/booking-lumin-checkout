@@ -33,3 +33,9 @@ CI integration.
 Read-only Render inventory for confirmed workspace `My Workspace`
 (`tea-d9pp87ad0e5s73enrog0`) shows only `leadgate-api` and `leadgate-backup`;
 no Booking Lumin staging service exists yet. No Render mutation was performed.
+
+The confirmation surface is intentionally fail-closed at `667090844990cae2837792a41a9f7b456fc8f552`:
+it authorizes the tenant-owned booking but performs no payment, hold, booking,
+or history mutation until a durable atomic payment-and-hold authority is
+implemented. This keeps staging from claiming a confirmation that the current
+database/provider boundary cannot prove.
