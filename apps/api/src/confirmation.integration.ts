@@ -19,7 +19,7 @@ try{
  await assert.rejects(confirm(id(1),id(20),id(10)),{code:'FORBIDDEN'});
  await assert.rejects(confirm(id(1),id(2),id(99)),{code:'NOT_AVAILABLE'});
  const browser=await pool.connect();try{await browser.query('begin');await browser.query('set local role authenticated');await assert.rejects(browser.query('select public.confirm_succeeded_payment($1)',[id(110)]),{code:'42501'});}finally{await browser.query('rollback');browser.release();}
- const results=await Promise.all([confirm(id(1),id(2),id(10)),confirm(id(1),id(2),id(10))]);assert.deepEqual(results.map(x=>x.replayed).sort(),[false,true]);
+ const results=await Promise.all([confirm(id(1),id(2),id(10).toUpperCase()),confirm(id(1),id(2),id(10))]);assert.deepEqual(results.map(x=>x.replayed).sort(),[false,true]);
  assert.equal((await confirm(id(1),id(2),id(10))).replayed,true);
  assert.equal((await confirm(id(1),id(2),id(11))).state,'confirmed');
  await pool.query('update public.bookings set payment_id=null where id=$1',[id(12)]);await assert.rejects(confirm(id(1),id(2),id(12)),{code:'UNSUPPORTED_CONFIG'});
