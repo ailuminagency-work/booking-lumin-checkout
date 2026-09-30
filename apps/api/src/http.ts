@@ -1,3 +1,4 @@
+import {MockPaymentInput,MockPaymentReceipt,type MockPaymentWriter} from './mock-payment';
 import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
 import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
@@ -16,6 +17,7 @@ export interface FlowHttpOptions{
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
+ mockPayment?:MockPaymentWriter;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -76,6 +78,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/bookings/mock-payment"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=MockPaymentInput.parse(await jsonBody(req));
+    if(!options.mockPayment)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=MockPaymentReceipt.safeParse(await options.mockPayment(actor,tenant,body.bookingId));
+    if(!receipt.success||receipt.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
    if(url.pathname==="/api/bookings/draft"){
     if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
     const body=DraftInput.parse(await jsonBody(req));
