@@ -14,7 +14,7 @@ This report reconciles the bounded W3 service-template/adoption recovery candida
 |---|---|---|
 | `codex/main-template-adoption-api-intent-recovery-v2` | `294aa0a35e77bdcca3b8f2209d01f37e885dfe2`; parent `6013923d03e5d9d61d06ae77a4484432d37d1d1e` (PR96/SQL0034 review stack) | `BRANCH_ONLY` / review hold |
 | SQL migration 0034 | Present in the candidate branch ancestry, absent from protected `main` and live Supabase snapshot | `DO NOT PROMOTE` |
-| Phase A documentation branch | `codex/phase-a-recovery-reconciliation-main` at `4c801aa` (local exact candidate) | `BRANCH_ONLY` / docs candidate |
+| Phase A documentation branch | `codex/phase-a-recovery-reconciliation-main` at the remote branch head verified after this push | `BRANCH_ONLY` / docs candidate |
 
 The GitHub connector can read these refs and push branches, but draft pull-request creation returns `422 must be a collaborator`. Therefore there is no exact-candidate PR, CI run, integration-gate result, or Release Governor approval for either candidate.
 
