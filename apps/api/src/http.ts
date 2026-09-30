@@ -1,3 +1,4 @@
+import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
@@ -10,6 +11,7 @@ export interface FlowHttpOptions{
  repository:FlowRepository;
  tenantProfile?:TenantProfileReader;
  availability?:AvailabilityReader;
+ reservation?:ReservationWriter;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -70,6 +72,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/reservations/hold"){
+    if(req.method!=="POST"||!options.reservation)throw new FlowError("NOT_AVAILABLE");
+    const body=HoldInput.parse(await jsonBody(req));
+    const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
+    if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
    if(url.pathname==="/api/profile"){
     if(req.method!=="GET"||!options.tenantProfile)throw new FlowError("NOT_AVAILABLE");
     const profile=await options.tenantProfile(actor,tenant);
