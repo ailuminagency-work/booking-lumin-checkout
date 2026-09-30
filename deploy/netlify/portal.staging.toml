@@ -1,11 +1,12 @@
 [build]
-  base = "apps/portal"
-  command = "npm run build"
-  publish = "dist"
+  command = "npm run build --workspace @lumin/portal"
+  publish = "apps/portal/dist"
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_RUNTIME_ENV = "staging"
   VITE_RUNTIME_MODE = "supabase"
+  VITE_API_ORIGIN = "__SET_RENDER_STAGING_API_URL__"
   VITE_FLOW_API_URL = "__SET_RENDER_STAGING_API_URL__"
   VITE_SUPABASE_URL = "__SET_STAGING_SUPABASE_URL__"
   VITE_SUPABASE_PUBLISHABLE_KEY = "__SET_STAGING_SUPABASE_PUBLISHABLE_KEY__"

@@ -1,14 +1,13 @@
 [build]
-  base = "apps/command-center"
-  command = "npm run build"
-  publish = "dist"
+  command = "npm run build --workspace @lumin/command-center"
+  publish = "apps/command-center/dist"
 
 [build.environment]
   NODE_VERSION = "20"
-  VITE_RUNTIME_MODE = "supabase"
-  VITE_SUPABASE_URL = "__SET_STAGING_SUPABASE_URL__"
-  VITE_SUPABASE_PUBLISHABLE_KEY = "__SET_STAGING_SUPABASE_PUBLISHABLE_KEY__"
-  VITE_TENANT_ID = "__PLATFORM_CONTEXT_ONLY__"
+  VITE_RUNTIME_ENV = "staging"
+  # Command Center remains mock-mode until an explicit platform-admin runtime
+  # context exists; a tenant UUID must never be invented here.
+  VITE_RUNTIME_MODE = "mock"
 
 [context.deploy-preview]
   command = "npm run build"
