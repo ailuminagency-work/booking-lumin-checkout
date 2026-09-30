@@ -39,3 +39,17 @@ it authorizes the tenant-owned booking but performs no payment, hold, booking,
 or history mutation until a durable atomic payment-and-hold authority is
 implemented. This keeps staging from claiming a confirmation that the current
 database/provider boundary cannot prove.
+
+Phase A candidate `f826320` adds the provider-neutral durable authority as
+migration `0032_atomic_confirmation.sql`. Its service-role-only RPC accepts a
+persisted payment id, derives all tenant, booking, service and pricing context,
+requires a stored `succeeded` payment plus an exact active/consumed hold, and
+atomically consumes/links/confirms with idempotent replay. Resource-linked and
+planning services remain explicitly unsupported; the browser endpoint remains
+fail-closed and no provider webhook or live database wiring was added. Source
+candidate `bc0a95c8ea0197e4c7993a5ee660c20fbf0c2129` passed a fresh 32-migration
+disposable PostgreSQL replay and independent review. Exact integrated-head
+checks on `f826320` passed: workspace typecheck, API 27 tests, templates 31
+tests, three frontend builds, staging config validation and `git diff --check`.
+GitHub still reports no CI statuses/workflow runs because PR integration is
+blocked; Render/Netlify mutations and live migration remain out of scope.
