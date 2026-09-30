@@ -1,3 +1,4 @@
+import {createDraftWriter} from './draft';
 import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
 /**
@@ -106,6 +107,7 @@ function main(): void {
     availability: createAvailabilityReader(pool),
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
+    draft: createDraftWriter(pool),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,
