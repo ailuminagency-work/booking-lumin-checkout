@@ -13,6 +13,10 @@ services:
     healthCheckPath: /health
     autoDeploy: false
     envVars:
+      - key: BOOKING_LUMIN_ENV
+        value: staging
+      - key: BOOKING_LUMIN_FAKE_PAYMENTS
+        value: "1"
       - key: NODE_ENV
         value: staging
       - key: PORT
