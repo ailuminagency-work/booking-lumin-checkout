@@ -53,3 +53,13 @@ checks on `f826320` passed: workspace typecheck, API 27 tests, templates 31
 tests, three frontend builds, staging config validation and `git diff --check`.
 GitHub still reports no CI statuses/workflow runs because PR integration is
 blocked; Render/Netlify mutations and live migration remain out of scope.
+
+The integrated confirmation API candidate `d4b4015ff4b0fe13a63358e3e0c5c10d4d3e7351`
+now reaches the durable authority only from a tenant-authorized booking's
+persisted `payment_id`. It commits only after strict receipt and final binding
+checks; absent payment linkage or an unapplied migration remains
+`UNSUPPORTED_CONFIG`. Exact-head checks for the source integration passed with
+workspace typecheck, API 32 tests, templates 31 tests, three frontend builds,
+staging config validation and `git diff --check`. The candidate is still not a
+hosted staging certification: no Render service, Netlify deployment, or live
+Supabase migration is present.
