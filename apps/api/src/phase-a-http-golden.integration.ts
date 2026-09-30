@@ -10,6 +10,10 @@ import {createMockPaymentWriter,MockPaymentReceipt} from './mock-payment';
 import {createBookingConfirmation,ConfirmationReceipt} from './confirmation';
 
 if(process.env.LOCAL_HARNESS!=='1'||process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^lumin_[a-z0-9_]+$/.test(process.env.PGDATABASE??'')||!/^\d{4,5}$/.test(process.env.PGPORT??''))throw Error('explicit disposable loopback HTTP fixture configuration required');
+// localPool reads libpq-style environment settings; reject ambient routing/config
+// overrides before constructing it. A local fixture role is explicitly postgres.
+if(process.env.PGHOSTADDR!==undefined&&process.env.PGHOSTADDR!=='127.0.0.1')throw Error('PGHOSTADDR must be exact IPv4 loopback');
+if(['PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'].some(key=>process.env[key]!==undefined)||process.env.PGUSER!=='postgres')throw Error('explicit local postgres role and no ambient PostgreSQL overrides required');
 const pool=localPool(),tenant=randomUUID(),foreign=randomUUID(),service=randomUUID(),run=randomUUID();
 const server=createFlowHttpServer({repository:createFlowRepository(pool),authenticateOwner:localIdentity,ownerOrigins:[F.ownerOrigin],customerOrigins:[F.customerOrigin],tenantProfile:createTenantProfileReader(pool),availability:createAvailabilityReader(pool),draft:createDraftWriter(pool),reservation:createReservationWriter(pool),confirmation:createBookingConfirmation(pool),mockPayment:createMockPaymentWriter(pool,{BOOKING_LUMIN_ENV:'staging',BOOKING_LUMIN_FAKE_PAYMENTS:'1'})});
 let base='';
