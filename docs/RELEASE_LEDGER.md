@@ -151,3 +151,9 @@ migration replay. Bash syntax and negative host/address fixtures passed with an
 independent review. The complete runner was not executed in this Windows slice;
 the previously recorded disposable PostgreSQL golden-flow runs remain the
 runtime evidence. No hosted/live/provider action occurred.
+
+Draft-PR creation for `codex/phase-a-http-golden` was attempted after review
+and was rejected by GitHub with `422 must be a collaborator`. The tested
+builder branch remains pushed and the corrected implementation is integrated
+locally; this access blocker does not change the implementation or staging
+evidence gates.
