@@ -108,6 +108,27 @@ describe("Phase A golden booking flows", () => {
     expect(confirmed.paymentId).not.toBeNull();
   });
 
+  it("tenant spoof: a second tenant cannot reuse the first tenant's service or hold", async () => {
+    const { fixture, engine, payments } = setup("housekeeping");
+    const primary = await engine.createBooking(request(fixture, "golden-isolation-000001", "primary@example.test"));
+    const foreignTenant = uuid(7_002);
+
+    expect(engine.listBookings(DEMO_TENANT)).toHaveLength(1);
+    expect(engine.listBookings(foreignTenant)).toHaveLength(0);
+
+    // The service belongs to DEMO_TENANT. Changing only the request tenant
+    // must fail before a hold or payment intent is created.
+    await expect(
+      engine.createBooking({
+        ...request(fixture, "golden-isolation-000002", "spoof@example.test"),
+        tenantId: foreignTenant,
+      }),
+    ).rejects.toMatchObject({ code: "SERVICE_NOT_FOUND" });
+    expect(engine.listBookings(foreignTenant)).toHaveLength(0);
+    expect(engine.getBooking(primary.id)?.tenantId).toBe(DEMO_TENANT);
+    expect(payments.listIntents()).toHaveLength(1);
+  });
+
   it("vehicle rental: concurrent attempts produce one authoritative hold and one confirmation", async () => {
     const { fixture, engine, payments } = setup("vehicle-rental");
     const attempts = await Promise.allSettled([
