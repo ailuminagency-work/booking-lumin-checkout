@@ -101,3 +101,11 @@ Vitest/build execution remains environment-blocked by esbuild path access and
 the integration shell script requires Bash. This is not hosted staging proof:
 no Render service, Netlify deployment, live migration, or provider credential
 was used.
+
+The staging configuration candidate `c97e0450c22799cc71a71b2e7258984155f2eaf4`
+declares the two explicit staging gates required by the mock-payment runtime
+in `apps/api/render.staging.yaml`, keeps Render auto-deploy disabled, and leaves
+all external endpoints and secrets as `sync: false`. The validator now checks
+the exact service identity, gate values, uniqueness, allowed environment keys,
+and absence of inline secrets; seven negative configuration fixtures pass.
+Independent review and API typecheck passed. No Render mutation occurred.
