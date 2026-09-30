@@ -76,6 +76,17 @@ side-effect checks. Independent review passed. This remains an unhosted
 staging candidate: no Render service, Netlify deployment, live migration or
 provider credential was used.
 
+The corrected HTTP golden-flow candidate `62c61a6609f505adfe0691dedda250a0b134fe80`
+adds `apps/api/src/phase-a-http-golden.integration.ts`. It exercises the
+complete synthetic loopback HTTP path from profile and availability through
+draft, reservation hold, staging mock payment, and confirmation, with replay,
+tenant/auth denial, amount-tampering rejection, server-derived payment,
+consumed-hold, state-history, and capacity assertions. The correction rejects
+remote `PGHOSTADDR`, `PGSERVICE*`, `PGPASSFILE`, and `PGOPTIONS` overrides and
+requires `PGUSER=postgres` before pool construction. Independent review passed;
+builder typecheck and a fresh 32-migration HTTP run passed. No hosted auth,
+browser, live database, deployment, or provider activation is claimed.
+
 The candidate is integrated locally on `phase-a/staging-operationalization` at
 `938aa73` (six commits ahead of the recorded remote integration head). The
 integration push was attempted after exact-head checks but remains blocked by
