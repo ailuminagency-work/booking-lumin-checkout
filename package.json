@@ -5,6 +5,7 @@
   "description": "Booking Lumin Checkout — multi-tenant booking & checkout platform (clean-room)",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
+    "smoke:phase-a": "node scripts/phase-a-staging-smoke.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present"
