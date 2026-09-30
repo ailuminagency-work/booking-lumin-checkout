@@ -25,11 +25,13 @@ frontend builds, and staging configuration validation. GitHub currently exposes
 no workflow runs or status checks for this branch because no PR/CI integration
 is attached. Render and Netlify mutations remain pending connector/credential
 access; no live database migration or real provider credential was used.
-The full workspace suite also retains two pre-existing `@lumin/flow-ui`
-failures (`modeDocument.adversarial.test.ts` timeout and
-`modeDocument.test.ts` cross-realm `AbortSignal`); the candidate changes no
-`flow-ui` files, so Release Governor holds promotion pending baseline repair and
-CI integration.
+The full workspace suite on the current candidate retains one pre-existing
+`@lumin/flow-ui` failure: `modeDocument.test.ts` rejects the test helper's
+cross-realm `AbortSignal` (`RequestInit: Expected signal ... to be an instance
+of AbortSignal`). The adversarial mode-document suite passed (its deliberately
+bounded close case takes about ten seconds). The candidate changes no
+`flow-ui` files, so Release Governor holds promotion pending baseline repair
+and CI integration.
 Read-only Render inventory for confirmed workspace `My Workspace`
 (`tea-d9pp87ad0e5s73enrog0`) shows only `leadgate-api` and `leadgate-backup`;
 no Booking Lumin staging service exists yet. No Render mutation was performed.
