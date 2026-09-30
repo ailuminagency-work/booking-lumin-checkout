@@ -30,3 +30,6 @@ failures (`modeDocument.adversarial.test.ts` timeout and
 `modeDocument.test.ts` cross-realm `AbortSignal`); the candidate changes no
 `flow-ui` files, so Release Governor holds promotion pending baseline repair and
 CI integration.
+Read-only Render inventory for confirmed workspace `My Workspace`
+(`tea-d9pp87ad0e5s73enrog0`) shows only `leadgate-api` and `leadgate-backup`;
+no Booking Lumin staging service exists yet. No Render mutation was performed.
