@@ -86,3 +86,18 @@ offline self-test, help path, syntax check, exact-head typecheck, API 37 tests,
 templates 31 tests and staging-config validator passed. Independent review
 passed. This remains a read-only local/staging tool; no credentials or hosted
 runtime were used.
+
+The staging-fake payment candidate `f5120464d47ec1916334234f28a25ae8ce6c98db`
+adds a narrowly scoped `POST /api/bookings/mock-payment` completion boundary.
+It is unreachable unless `BOOKING_LUMIN_ENV=staging` and
+`BOOKING_LUMIN_FAKE_PAYMENTS=1` are both explicit. The caller supplies only a
+booking ID; tenant membership, service ownership, amount, currency, persisted
+payment evidence, hold validity, and confirmation are server/database
+authoritative. It supports only simple base-price services and performs no
+provider I/O. Builder typecheck, API 42 tests, and a fresh 32-migration
+disposable PostgreSQL harness passed; an independent security review passed.
+The exact-head workspace typecheck passed, while local Windows nested-worktree
+Vitest/build execution remains environment-blocked by esbuild path access and
+the integration shell script requires Bash. This is not hosted staging proof:
+no Render service, Netlify deployment, live migration, or provider credential
+was used.
