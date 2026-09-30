@@ -16,7 +16,13 @@ INTEGRATION TESTED → SECURITY TESTED → ADVERSARIAL TESTED → RELEASED → P
 | W-008 | WS10 | portal-builder | Business portal | UNIT TESTED | 16 tests; two-tenant isolation asserted; no defects found in review. |
 | W-009 | WS11 | cc-builder | Command center | UNIT TESTED | 21 tests; GMV/revenue separation + no-PII asserted; no defects found. |
 | W-010 | WS12 | reviewers | Adversarial pass + generalization proofs | INTEGRATION TESTED | 2 independent reviewers; 6 defects found (1 HIGH, 4 MED, 2 LOW), all resolved; generalization proof holds. |
-| W-011 | WS1/WS2 | — | Legacy + contamination forensics | READY (BLOCKED: external access) | — |
+| W-011 | WS1/WS2 | - | Legacy + contamination forensics | READY (BLOCKED: external access) | - |
+
+## Phase A staging implementation evidence
+
+| Work ID | Builder | Independent reviewer | Candidate | Status | Evidence |
+|---------|---------|-----------------------|-----------|--------|----------|
+| PH-A1 | `/root/baseline_context` | `/root/phase_a_final_independent_review` | `5afa46613880f1b7b8a3198df4871b2ea63c08cb` | ADVERSARIAL TESTED / PUSHED | Authenticated `POST /api/reservations/hold` is tenant-bound and strict-input; the database `reserve_capacity` authority owns capacity, advisory serialization, idempotent retry, and five-minute TTL. API 18 tests, disposable PostgreSQL concurrency/tenant tests, and independent review passed. |
 
 ## Adversarial findings ledger (WS12)
 

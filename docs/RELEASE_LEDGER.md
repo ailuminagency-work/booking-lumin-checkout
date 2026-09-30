@@ -15,3 +15,13 @@ Release strategy: small coherent batches to `main`; each batch leaves
 `typecheck`, `test`, and `build` green at the root. Deployment to any hosted
 environment happens only after a remote repository and a NEW (non-legacy)
 Supabase project exist, and G5/G6 pass.
+
+## Phase A staging operationalization
+
+`phase-a/staging-operationalization` is the protected implementation line from
+`main`. Candidate `5afa46613880f1b7b8a3198df4871b2ea63c08cb` is pushed and
+locally verified through typecheck, API tests, golden-flow tests, three
+frontend builds, and staging configuration validation. GitHub currently exposes
+no workflow runs or status checks for this branch because no PR/CI integration
+is attached. Render and Netlify mutations remain pending connector/credential
+access; no live database migration or real provider credential was used.
