@@ -1,3 +1,4 @@
+import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
 import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
 import { handleRosterRoute } from "./roster-http";
@@ -14,6 +15,7 @@ export interface FlowHttpOptions{
  availability?:AvailabilityReader;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
+ draft?:DraftWriter;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -74,6 +76,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/bookings/draft"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=DraftInput.parse(await jsonBody(req));
+    if(!options.draft)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=DraftReceipt.safeParse(await options.draft(actor,tenant,body));
+    if(!receipt.success)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
    if(url.pathname==="/api/bookings/confirm"){
     if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
     const body=ConfirmationInput.parse(await jsonBody(req));
