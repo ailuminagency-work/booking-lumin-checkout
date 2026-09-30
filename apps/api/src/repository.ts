@@ -3,6 +3,15 @@ import { RpcResults,type FlowRpc } from "./contracts";
 export type FlowCode="ROSTER_NOT_INITIALIZED"|"ROSTER_TOO_LARGE"|"ROSTER_UNSUPPORTED_TIME"|"INVALID_REQUEST"|"UNAUTHENTICATED"|"FORBIDDEN"|"CONFLICT"|"NOT_AVAILABLE"|"UNSUPPORTED_CONFIG"|"INTERNAL_ERROR"|"RATE_LIMITED";
 export class FlowError extends Error{constructor(readonly code:FlowCode){super(code);}}
 export interface FlowRepository{call(name:FlowRpc,params:readonly unknown[]):Promise<unknown>}
+export interface TenantProfile{
+ id:string;
+ name:string;
+ slug:string;
+ timezone:string;
+ currency:string;
+ status:"active"|"inactive"|"suspended";
+}
+export type TenantProfileReader=(actor:string,tenant:string)=>Promise<TenantProfile|null>;
 const signatures:Record<FlowRpc,string[]>={owner_roster_snapshot:["uuid","uuid"],roster_provision:["uuid","uuid"],roster_worker_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_member_set:["uuid","uuid","bigint","uuid","uuid","boolean"],roster_eligibility_put:["uuid","uuid","bigint","uuid","uuid","boolean","boolean"],roster_shift_put:["uuid","uuid","bigint","uuid","uuid","text","timestamptz","timestamptz","text","boolean","boolean"],flow_owner_configurable_list:["uuid","uuid"],get_configurable_flow_draft:["uuid","uuid","uuid"],save_configurable_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_configurable_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],flow_owner_services:["uuid","uuid"],flow_owner_list:["uuid","uuid"],flow_owner_draft:["uuid","uuid","uuid"],flow_owner_requests:["uuid","uuid"],save_bound_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_bound_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],issue_flow_session:["uuid","text","text"],submit_flow_request:["text","text","text","jsonb","jsonb","timestamptz"]};
 function mapped(error:unknown,name:FlowRpc):FlowError{
  const code=(error as {code?:unknown})?.code;
@@ -42,3 +51,29 @@ export function createFlowRepository(pool:Pool):FlowRepository{return {async cal
   await client.query("commit");return safe;
  }catch(error){await client.query("rollback").catch(()=>{});throw mapped(error,name);}finally{client.release();}
 }};}
+
+/**
+ * Read the authenticated tenant profile through a fixed, parameterized query.
+ * The hosted service uses service_role for its bounded RPC transaction, so the
+ * membership predicate is explicit here rather than relying on client RLS.
+ * No settings, credentials, or platform-admin data are returned.
+ */
+export function createTenantProfileReader(pool:Pool):TenantProfileReader{return async(actor,tenant)=>{
+ const client=await pool.connect();
+ try{
+  await client.query("begin");
+  await client.query("set local role service_role");
+  const result=await client.query<TenantProfile>(
+   `select t.id,t.name,t.slug,t.timezone,t.currency,t.status
+      from public.tenants t
+     where t.id=$1::uuid
+       and exists(select 1 from public.tenant_members m where m.tenant_id=t.id and m.user_id=$2::uuid)`,
+   [tenant,actor],
+  );
+  await client.query("commit");
+  return result.rows[0]??null;
+ }catch(error){
+  await client.query("rollback").catch(()=>{});
+  throw error;
+ }finally{client.release();}
+};}
