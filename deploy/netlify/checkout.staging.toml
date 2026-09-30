@@ -1,0 +1,17 @@
+[build]
+  base = "apps/checkout"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Set these in the Netlify site environment; placeholders intentionally fail
+  # the staging preflight until the authorized Render/Supabase endpoints exist.
+  VITE_RUNTIME_MODE = "supabase"
+  VITE_FLOW_API_URL = "__SET_RENDER_STAGING_API_URL__"
+  VITE_SUPABASE_URL = "__SET_STAGING_SUPABASE_URL__"
+  VITE_SUPABASE_PUBLISHABLE_KEY = "__SET_STAGING_SUPABASE_PUBLISHABLE_KEY__"
+  VITE_TENANT_ID = "__SET_STAGING_TENANT_ID__"
+
+[context.deploy-preview]
+  command = "npm run build"
