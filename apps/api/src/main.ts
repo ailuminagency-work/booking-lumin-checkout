@@ -1,3 +1,4 @@
+import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
 import {createDraftWriter} from './draft';
 import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
@@ -108,6 +109,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,
