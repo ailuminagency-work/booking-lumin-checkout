@@ -75,3 +75,14 @@ tenant and service isolation, interval replay conflict and no-payment/no-hold
 side-effect checks. Independent review passed. This remains an unhosted
 staging candidate: no Render service, Netlify deployment, live migration or
 provider credential was used.
+
+The read-only staging smoke candidate `ae36f68aad1d26acf151d31d4b4bbd970cfe0bb5`
+adds `npm run smoke:phase-a`. It verifies the liveness/readiness probes and,
+when explicitly supplied with a staging token, tenant, service and origin,
+checks authenticated profile and availability responses. It is GET-only,
+rejects mutation flags, redirects, invalid roots and partial credentials, and
+caps time and response bytes without logging secrets or response bodies. The
+offline self-test, help path, syntax check, exact-head typecheck, API 37 tests,
+templates 31 tests and staging-config validator passed. Independent review
+passed. This remains a read-only local/staging tool; no credentials or hosted
+runtime were used.
