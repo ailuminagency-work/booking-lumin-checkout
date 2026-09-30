@@ -157,3 +157,14 @@ and was rejected by GitHub with `422 must be a collaborator`. The tested
 builder branch remains pushed and the corrected implementation is integrated
 locally; this access blocker does not change the implementation or staging
 evidence gates.
+
+The local health-factory candidate `ea8a83d13c79814a91af0deb2f36e94f01e3a133`
+adds `apps/api/src/phase-a-health.integration.ts`. It runs the actual
+`createFlowHttpServer` on IPv4 loopback, asserts the exact local `/health`
+response and hardening headers, verifies route-boundary non-GET rejection, and
+checks `/ready` denial both without credentials and with a valid synthetic owner
+credential, proving the factory does not expose the production readiness
+handler. Ambient libpq routing and credential overrides are rejected before pool
+creation, and cleanup is explicit. Independent review and API typecheck passed;
+focused execution was blocked by Windows Node `uv_os_get_passwd ENOMEM` before
+module load. No hosted or production readiness proof is claimed.
