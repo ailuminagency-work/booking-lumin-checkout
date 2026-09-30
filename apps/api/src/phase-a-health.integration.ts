@@ -27,6 +27,7 @@ requireExplicitLoopback();
 const pool = localPool();
 const server = createFlowHttpServer({
   repository: createFlowRepository(pool),
+  authenticateOwner: async (token) => token === F.ownerToken ? F.ownerA : null,
   ownerOrigins: [F.ownerOrigin],
   customerOrigins: [F.customerOrigin],
 });
@@ -60,21 +61,28 @@ try {
     data: { mode: 'LOCAL_HARNESS', providerConnections: false },
   });
 
-  const nonGetHealth = await request('/health', {
-    method: 'POST',
+  const nonGetHealth = await request(`/health?tenantId=${F.tenantA}`, {
     headers: {
       origin: F.ownerOrigin,
       authorization: `Bearer ${F.ownerToken}`,
       'content-type': 'application/json',
     },
+    method: 'POST',
     body: '{}',
   });
-  assert.equal(nonGetHealth.status, 400);
+  assert.equal(nonGetHealth.status, 404);
 
   const readiness = await request('/ready', { headers: { origin: F.ownerOrigin } });
   assert.equal(readiness.status, 401);
   const unauthorisedReadiness = await request('/ready');
   assert.equal(unauthorisedReadiness.status, 403);
+  const authorisedReadiness = await request(`/ready?tenantId=${F.tenantA}`, {
+    headers: {
+      origin: F.ownerOrigin,
+      authorization: `Bearer ${F.ownerToken}`,
+    },
+  });
+  assert.equal(authorisedReadiness.status, 404);
 
   console.log('PASS local factory health contract: exact health schema, non-GET rejection, /ready denied, loopback binding, and disposable cleanup');
 } finally {
