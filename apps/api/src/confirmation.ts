@@ -2,11 +2,15 @@ import type {Pool} from 'pg';
 import {z} from 'zod';
 import {FlowError} from './repository';
 
-export const ConfirmationInput=z.object({bookingId:z.string().uuid()}).strict();
-export const ConfirmationReceipt=z.object({bookingId:z.string().uuid(),paymentId:z.string().uuid(),state:z.literal('confirmed'),replayed:z.boolean()}).strict();
+const Uuid=z.string().uuid().transform(value=>value.toLowerCase());
+export const ConfirmationInput=z.object({bookingId:Uuid}).strict();
+export const ConfirmationReceipt=z.object({bookingId:Uuid,paymentId:Uuid,state:z.literal('confirmed'),replayed:z.boolean()}).strict();
 export type BookingConfirmation=(actor:string,tenant:string,booking:string)=>Promise<z.infer<typeof ConfirmationReceipt>>;
 /** Only persisted payment evidence can reach the atomic confirmation authority. */
 export function createBookingConfirmation(pool:Pool):BookingConfirmation{return async(actor,tenant,booking)=>{
+ const canonicalBooking=Uuid.safeParse(booking);
+ if(!canonicalBooking.success)throw new FlowError('INVALID_REQUEST');
+ booking=canonicalBooking.data;
  const client=await pool.connect();let broken=false;
  try{
   await client.query('begin');
@@ -17,9 +21,11 @@ export function createBookingConfirmation(pool:Pool):BookingConfirmation{return 
   // Do not lock the booking ahead of the RPC's payment-first lock order.
   const target=await client.query(`select id,payment_id from public.bookings where id=$1::uuid and tenant_id=$2::uuid`,[booking,tenant]);
   if(!target.rows.length)throw new FlowError('NOT_AVAILABLE');
-  const payment=target.rows[0].payment_id;
+  let payment=target.rows[0].payment_id;
   if(payment===null)throw new FlowError('UNSUPPORTED_CONFIG');
-  if(!z.string().uuid().safeParse(payment).success)throw new FlowError('INTERNAL_ERROR');
+  const canonicalPayment=Uuid.safeParse(payment);
+  if(!canonicalPayment.success)throw new FlowError('INTERNAL_ERROR');
+  payment=canonicalPayment.data;
   const result=await client.query('select public.confirm_succeeded_payment($1::uuid) result',[payment]);
   const parsed=ConfirmationReceipt.safeParse(result.rows[0]?.result);
   if(!parsed.success||parsed.data.bookingId!==booking||parsed.data.paymentId!==payment)throw new FlowError('INTERNAL_ERROR');
