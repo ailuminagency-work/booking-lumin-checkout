@@ -12,10 +12,10 @@ import { createReservationWriter } from './reservation';
  * start unless every required secret/config value is present, and never logs or
  * echoes a secret.
  *
- * Scope: FOUNDATION only (R2a). It exposes the pre-existing owner/customer flow
- * routes plus unauthenticated `/health` and `/ready`. It adds NO booking-confirm
- * path and writes no `state='confirmed'` — the reserve→pay→confirm authority is a
- * separate follow-up (R2b).
+ * Scope: authenticated flow, reservation and confirmation routes, plus health
+ * and readiness probes. Confirmation derives persisted payment evidence and
+ * delegates state transitions exclusively to the atomic database authority.
+ * Missing payment linkage or migration remains fail-closed.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
