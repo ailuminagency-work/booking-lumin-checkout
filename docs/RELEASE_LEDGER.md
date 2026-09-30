@@ -25,3 +25,8 @@ frontend builds, and staging configuration validation. GitHub currently exposes
 no workflow runs or status checks for this branch because no PR/CI integration
 is attached. Render and Netlify mutations remain pending connector/credential
 access; no live database migration or real provider credential was used.
+The full workspace suite also retains two pre-existing `@lumin/flow-ui`
+failures (`modeDocument.adversarial.test.ts` timeout and
+`modeDocument.test.ts` cross-realm `AbortSignal`); the candidate changes no
+`flow-ui` files, so Release Governor holds promotion pending baseline repair and
+CI integration.
