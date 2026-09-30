@@ -168,3 +168,10 @@ handler. Ambient libpq routing and credential overrides are rejected before pool
 creation, and cleanup is explicit. Independent review and API typecheck passed;
 focused execution was blocked by Windows Node `uv_os_get_passwd ENOMEM` before
 module load. No hosted or production readiness proof is claimed.
+
+Draft-PR creation for `codex/phase-a-health-runtime` was attempted after the
+independent PASS and was rejected by GitHub with `422 must be a collaborator`.
+The reviewed builder branch remains pushed, while the corrected implementation
+and evidence are preserved locally on the staging integration line. This is an
+access blocker only; no merge, deployment, live migration, provider activation,
+or protected-main write was attempted.
