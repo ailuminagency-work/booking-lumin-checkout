@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@lumin/action-api": "*",
+    "@lumin/core": "*",
     "@lumin/contracts": "*",
     "@lumin/workflow": "*",
     "pg": "^8.13.1"

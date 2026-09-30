@@ -17,7 +17,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
-import { createFlowRepository,createTenantProfileReader } from "./repository";
+import { createAvailabilityReader,createFlowRepository,createTenantProfileReader } from "./repository";
 import { createFlowHttpServer } from "./http";
 import { createSupabaseIdentityVerifier } from "./supabase-auth";
 
@@ -101,6 +101,7 @@ function main(): void {
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
+    availability: createAvailabilityReader(pool),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,
