@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {createRentalMockPaymentWriter} from './rental-mock-payment';
+import {createRentalMockPaymentPreflight} from './rental-mock-payment';
 import type {Pool} from 'pg';
 
 const actor='b2300000-0000-4000-8000-000000000001',tenant='b2300000-0000-4000-8000-000000000002',booking='b2300000-0000-4000-8000-000000000003',service='b2300000-0000-4000-8000-000000000004',resource='b2300000-0000-4000-8000-000000000005';
@@ -13,22 +13,22 @@ afterEach(()=>vi.restoreAllMocks());
 function harness(opts:{member?:boolean;selection?:unknown;service?:unknown;links?:unknown[];reservations?:unknown[];booking?:unknown}={}){
   const query=vi.fn(async(sql:string)=>{
     if(sql.startsWith('select t.id'))return{rows:opts.member===false?[]:[{id:tenant}]};
-    if(sql.startsWith('select id,tenant_id,selection,pricing'))return{rows:opts.booking===null?[]:[opts.booking??{id:'b2300000-0000-4000-8000-000000000003',tenant_id:tenant,selection:opts.selection??rentalSelection,pricing:{},payment_id:null,state:'draft',slot_start:start,slot_end:end}]};
+    if(sql.startsWith('select id,tenant_id,selection,slot_start'))return{rows:opts.booking===null?[]:[opts.booking??{id:'b2300000-0000-4000-8000-000000000003',tenant_id:tenant,selection:opts.selection??rentalSelection,slot_start:start,slot_end:end}]};
     if(sql.startsWith('select s.id'))return{rows:opts.service===null?[]:[opts.service??serviceRow]};
     if(sql.startsWith('select sr.resource_id'))return{rows:opts.links??[linkRow]};
     if(sql.startsWith('select rr.resource_id'))return{rows:opts.reservations??[reservationRow]};
     return{rows:[]};
   });
   const release=vi.fn();
-  const writer=createRentalMockPaymentWriter({connect:async()=>({query,release})} as never as Pool,{BOOKING_LUMIN_FAKE_PAYMENTS:'1',BOOKING_LUMIN_ENV:'staging'});
+  const writer=createRentalMockPaymentPreflight({connect:async()=>({query,release})} as never as Pool,{BOOKING_LUMIN_FAKE_PAYMENTS:'1',BOOKING_LUMIN_ENV:'staging'});
   return{writer,query,release};
 }
 
 describe('staging rental mock payment authority',()=>{
   it('requires explicit staging fake-payment gates',async()=>{
     const connect=vi.fn();
-    expect(()=>createRentalMockPaymentWriter({connect} as never as Pool,{BOOKING_LUMIN_FAKE_PAYMENTS:'1',BOOKING_LUMIN_ENV:'production'})).toThrow();
-    await expect(createRentalMockPaymentWriter({connect} as never as Pool,{})(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});
+    expect(()=>createRentalMockPaymentPreflight({connect} as never as Pool,{BOOKING_LUMIN_FAKE_PAYMENTS:'1',BOOKING_LUMIN_ENV:'production'})).toThrow();
+    await expect(createRentalMockPaymentPreflight({connect} as never as Pool,{})(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});
     expect(connect).not.toHaveBeenCalled();
   });
 
@@ -54,6 +54,16 @@ describe('staging rental mock payment authority',()=>{
       await expect(h.writer(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});
       expect(h.query.mock.calls.some(([sql])=>String(sql).startsWith('insert into public.payments'))).toBe(false);
     }
+  });
+
+  it('rejects reservation quantity mismatches and unsupported required capacity',async()=>{
+    const quantityMismatch=harness({reservations:[{...reservationRow,reservation_quantity:2}]});
+    await expect(quantityMismatch.writer(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'CONFLICT'});
+    const requiredCapacity=harness({links:[{...linkRow,quantity_required:2}]});
+    await expect(requiredCapacity.writer(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});
+    const zeroCapacity=harness({links:[{...linkRow,resource_capacity:0}]});
+    await expect(zeroCapacity.writer(actor,tenant,'b2300000-0000-4000-8000-000000000003')).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});
+    for(const h of [quantityMismatch,requiredCapacity,zeroCapacity])expect(h.query.mock.calls.some(([sql])=>String(sql).startsWith('insert into public.payments'))).toBe(false);
   });
 
   it('validates server-derived total plus deposit, then fails closed before payment while resource authority is unsupported',async()=>{
