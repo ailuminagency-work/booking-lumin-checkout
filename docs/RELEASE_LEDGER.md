@@ -186,6 +186,14 @@ identified in independent review while preserving the existing migration and
 cleanup behavior. API typecheck, smoke self-test, staging-config self-test,
 and whitespace checks passed; Bash syntax and the full disposable runner were
 not executable on this Windows host because Bash/PostgreSQL service tooling is
-unavailable. The integration branch remains local-only pending the existing
-Git transport `SEC_E_NO_CREDENTIALS` error; no hosted deployment, live
-migration, provider activation, or protected-main write was attempted.
+unavailable. The integration branch was previously local-only while the Git
+transport credential error was active; it is now pushed at the exact candidate
+below. No hosted deployment, live migration, provider activation, or
+protected-main write was attempted.
+
+Draft-PR creation for `phase-a/staging-operationalization` was attempted after
+the exact-head checks and push, but GitHub again rejected it with `422 must be a
+collaborator`. The implementation branch is nevertheless pushed at
+`74d9a6ef98424c0c645bc24b04442e607ab488bf`; this PR access issue does not
+block further implementation work and is recorded separately from the code
+and test evidence.
