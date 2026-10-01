@@ -272,3 +272,9 @@ confirmed-booking side effects. Independent review passed after correcting the
 foreign-owner profile status expectation. API typecheck, smoke self-test,
 staging-config self-test, and whitespace checks passed; local PostgreSQL is
 unavailable, so focused runtime remains unverified.
+
+The A17 implementation and registration are pushed at exact head
+`0d6e6d2` on `phase-a/staging-operationalization`. Draft-PR creation remains
+blocked by the unauthenticated GitHub CLI session in this environment and the
+previous repository collaborator restriction; no merge, deployment, live
+migration, provider activation, or protected-main write was attempted.
