@@ -54,10 +54,21 @@ async function createDraft(tenantId:string,selection:Record<string,unknown>,idem
   await client.query('set local statement_timeout=\'5s\'');
   await client.query('set local role service_role');
   // The production RPC persists only serviceId. The harness boundary checks
-  // catalog references before calling it so invalid/foreign IDs are not
-  // misreported as DB-level catalog validation.
+  // question and catalog references before calling it so invalid/foreign IDs
+  // are not misreported as DB-level validation; this is harness-local proof.
   if(tenantId===tenant&&selection.serviceId===service){
    const answers=record(selection.answers);
+   const answerChoiceRefs=Object.entries(answers).flatMap(([questionKey,answer])=>{
+    const choiceIds=record(answer).choiceIds;
+    return Array.isArray(choiceIds)?choiceIds.filter((choiceId):choiceId is string=>typeof choiceId==='string').map(choiceId=>({questionKey,choiceId})):[];
+   });
+   const questionKeys=[...new Set(answerChoiceRefs.map(ref=>ref.questionKey))];
+   const questionRows=await client.query<{question_key:string;choices:unknown}>(
+    'select question_key,choices from public.service_questions where tenant_id=$1::uuid and service_id=$2::uuid and question_key=any($3::text[])',
+    [tenant,service,questionKeys],
+   );
+   const declaredChoices=new Map(questionRows.rows.map(row=>[row.question_key,new Set(Array.isArray(row.choices)?row.choices.map(choice=>record(choice).id).filter((choiceId):choiceId is string=>typeof choiceId==='string'):[])]));
+   if(questionRows.rows.length!==questionKeys.length||answerChoiceRefs.some(ref=>!declaredChoices.get(ref.questionKey)?.has(ref.choiceId)))throw Error('QUESTION_CHOICE_NOT_BOUND');
    const packageAnswer=record(answers.package);
    const packageChoiceIds=Array.isArray(packageAnswer.choiceIds)?packageAnswer.choiceIds.filter((key):key is string=>typeof key==='string'):[];
    const itemQuantities=record(selection.itemQuantities);
@@ -187,10 +198,19 @@ try{
   ...selection,
   itemQuantities:{'foreign-package':1},
   addonIds:['foreign-addon'],
-  answers:{vehicle:{choiceIds:['sedan']},package:{choiceIds:['foreign-package']}},
+  answers:{vehicle:{choiceIds:['sedan']},package:{choiceIds:[packageKey]}},
+ };
+ const invalidAnswerSelection={
+  ...selection,
+  itemQuantities:{},
+  answers:{vehicle:{choiceIds:['truck']},package:{choiceIds:['unknown-package']}},
  };
  assert.equal((await pool.query('select count(*)::int as count from public.service_items where tenant_id=$1::uuid and service_id=$2::uuid and item_key=$3',[tenant,service,'foreign-package'])).rows[0].count,0,'invalid package is absent from the owner catalog');
  assert.equal((await pool.query('select count(*)::int as count from public.service_addons where tenant_id=$1::uuid and service_id=$2::uuid and addon_key=$3',[tenant,service,'foreign-addon'])).rows[0].count,0,'invalid add-on is absent from the owner catalog');
+ await assert.rejects(
+  createDraft(tenant,invalidAnswerSelection,`detail-${run}-invalid-answer`),
+  (error:unknown)=>String((error as {message?:unknown}).message)==='QUESTION_CHOICE_NOT_BOUND',
+ );
  await assert.rejects(
   createDraft(tenant,invalidCatalogSelection,`detail-${run}-invalid-catalog`),
   (error:unknown)=>String((error as {message?:unknown}).message)==='CATALOG_NOT_BOUND',
@@ -227,7 +247,7 @@ try{
  )).rows[0];
  assert.deepEqual(effects,{payments:0,capacity_holds:0,resource_reservations:0},'draft has no payment or reservation side effects');
  assert.equal((await pool.query('select count(*)::int as count from public.bookings where tenant_id=$1::uuid and idempotency_key=$2',[tenant,idempotencyKey])).rows[0].count,1);
- console.log('PASS disposable detailing flow: profile -> configurable service/questions/item/add-on -> availability -> canonical draft; replay, exact selection, empty pricing, no payment, and cross-tenant/service denial verified');
+ console.log('PASS disposable detailing flow: profile -> configurable service/questions/item/add-on -> availability -> canonical draft; replay, exact selection, harness-local question/catalog binding, empty pricing, no payment, and cross-tenant/service denial verified');
 }finally{
  let cleanupError:unknown;
  try{
