@@ -212,3 +212,9 @@ execution hit Windows Node `uv_os_get_passwd ENOMEM` before module load, and no
 PostgreSQL listener is available on `127.0.0.1:5432`; this is not hosted or
 live proof. No deployment, live migration, provider activation, or protected-
 main write occurred.
+
+Draft-PR creation for the updated `phase-a/staging-operationalization` head was
+attempted after push and again rejected by GitHub with `422 must be a
+collaborator`. The exact candidate `407e8c7c93e905b37859687d913b1fde9c959703`
+is pushed; GitHub reported no workflow run for that commit. The PR permission
+issue remains separate from the implementation, review, and local test gates.
