@@ -94,11 +94,17 @@ begin
     lock table public.resources in share mode;
     if b.selection->>'serviceId' <> sid::text
        or jsonb_typeof(b.selection->'itemQuantities') is distinct from 'object'
-       or jsonb_object_length(b.selection->'itemQuantities') <> 0
+       or case when jsonb_typeof(b.selection->'itemQuantities') = 'object'
+          then (select count(*) from jsonb_object_keys(b.selection->'itemQuantities'))
+          else -1 end <> 0
        or jsonb_typeof(b.selection->'addonIds') is distinct from 'array'
-       or jsonb_array_length(b.selection->'addonIds') <> 0
+       or case when jsonb_typeof(b.selection->'addonIds') = 'array'
+          then jsonb_array_length(b.selection->'addonIds')
+          else -1 end <> 0
        or jsonb_typeof(b.selection->'answers') is distinct from 'object'
-       or jsonb_object_length(b.selection->'answers') <> 0
+       or case when jsonb_typeof(b.selection->'answers') = 'object'
+          then (select count(*) from jsonb_object_keys(b.selection->'answers'))
+          else -1 end <> 0
        or jsonb_typeof(b.selection->'rentalPeriods') is distinct from 'number' then
       raise exception 'CONFIRMATION_MISMATCH' using errcode = '22023';
     end if;
@@ -205,7 +211,8 @@ begin
                or rr.slot_start is distinct from b.slot_start
                or rr.slot_end is distinct from b.slot_end
                or (b.state = 'confirmed' and rr.status is distinct from 'consumed')
-               or (b.state <> 'confirmed' and (rr.status is distinct from 'held' or rr.expires_at <= clock_timestamp()))
+               or (b.state <> 'confirmed' and (rr.status is distinct from 'held'
+                 or not isfinite(rr.expires_at) or rr.expires_at <= clock_timestamp()))
                or rr.quantity is distinct from sr.quantity_required
                or r.active is not true or r.capacity < sr.quantity_required)
        )
@@ -255,6 +262,7 @@ begin
     end if;
   else
     -- Existing capacity-hold path, retained exactly from 0032.
+    perform pg_advisory_xact_lock(hashtextextended('lumin:service-capacity:' || b.tenant_id::text || ':' || sid::text, 0));
     select * into h from public.capacity_holds where booking_id = b.id for update;
     if not found or h.tenant_id <> b.tenant_id or h.service_id <> sid
        or h.slot_start <> b.slot_start or h.slot_end <> b.slot_end or h.group_id is not null then
