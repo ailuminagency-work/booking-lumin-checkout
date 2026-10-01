@@ -21,7 +21,7 @@ export type RentalMockPaymentWriter=(actor:string,tenant:string,booking:string)=
 
 type ServiceRow={id:string;tenant_id:string;archetype:string;name:string;description:string;currency:string;base_price:number|string;duration_minutes:number|string;tax_rate_bp:number|string;rental:unknown;active?:boolean};
 type LinkRow={resource_id:string;quantity_required:number|string;resource_tenant_id:string;resource_active:boolean;resource_capacity:number|string};
-type ReservationRow={resource_id:string;tenant_id:string;status:string;expires_at:string;slot_start:string;slot_end:string};
+type ReservationRow={resource_id:string;tenant_id:string;status:string;expires_at:string;unexpired:boolean;slot_start:string;slot_end:string};
 
 function fakeEnabled(env:Record<string,string|undefined>):boolean{
   if(env.BOOKING_LUMIN_FAKE_PAYMENTS!=='1')return false;
@@ -61,29 +61,18 @@ export function createRentalMockPaymentWriter(pool:Pool,env:Record<string,string
       const s=serviceResult.rows[0] as ServiceRow;
       const links=(await c.query(`select sr.resource_id,sr.quantity_required,r.tenant_id resource_tenant_id,r.active resource_active,r.capacity resource_capacity from public.service_resources sr join public.resources r on r.id=sr.resource_id and r.tenant_id=sr.tenant_id where sr.tenant_id=$1::uuid and sr.service_id=$2::uuid order by sr.resource_id`,[tenant,s.id])).rows as LinkRow[];
       if(links.length===0||links.some(x=>x.quantity_required!==1&&Number(x.quantity_required)!==1||x.resource_tenant_id.toLowerCase()!==tenant.toLowerCase()||x.resource_active!==true||Number(x.resource_capacity)<1))throw new FlowError('UNSUPPORTED_CONFIG');
-      const reservations=(await c.query(`select resource_id,tenant_id,status,expires_at,slot_start,slot_end from public.resource_reservations where booking_id=$1::uuid for update`,[booking])).rows as ReservationRow[];
+      const reservations=(await c.query(`select resource_id,tenant_id,status,expires_at,(expires_at>clock_timestamp()) as unexpired,slot_start,slot_end from public.resource_reservations where booking_id=$1::uuid for update`,[booking])).rows as ReservationRow[];
       const required=new Set(links.map(x=>x.resource_id.toLowerCase()));
-      if(reservations.length!==required.size||reservations.some(x=>x.tenant_id.toLowerCase()!==tenant.toLowerCase()||x.status!=='held'||new Date(x.expires_at).getTime()<=Date.now()||new Date(x.slot_start).getTime()!==new Date(b.slot_start).getTime()||new Date(x.slot_end).getTime()!==new Date(b.slot_end).getTime()||!required.has(x.resource_id.toLowerCase())))throw new FlowError('CONFLICT');
+      if(reservations.length!==required.size||reservations.some(x=>x.tenant_id.toLowerCase()!==tenant.toLowerCase()||x.status!=='held'||x.unexpired!==true||new Date(x.slot_start).getTime()!==new Date(b.slot_start).getTime()||new Date(x.slot_end).getTime()!==new Date(b.slot_end).getTime()||!required.has(x.resource_id.toLowerCase())))throw new FlowError('CONFLICT');
       const service=Service.parse({id:s.id,tenantId:s.tenant_id,archetype:s.archetype,name:s.name,description:s.description,currency:s.currency,basePrice:Number(s.base_price),durationMinutes:Number(s.duration_minutes),taxRateBp:Number(s.tax_rate_bp),rental:s.rental,active:true,items:[],addons:[],questions:[]});
       const pricing=createPricingEngine().price(service,selection.data);const total=pricing.total.amount+pricing.deposit.amount;
       if(!Number.isSafeInteger(total)||total<=0)throw new FlowError('UNSUPPORTED_CONFIG');
-      const payments=await c.query('select id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency from public.payments where booking_id=$1::uuid order by id for update',[booking]);
-      let paymentId:string;
-      if(payments.rows.length){
-        if(payments.rows.length!==1)throw new FlowError('CONFLICT');
-        const p=payments.rows[0] as {id:string;tenant_id:string;booking_id:string;provider:string;provider_intent_id:string;state:string;amount:number|string;currency:string};
-        if(p.provider!=='staging_mock'||p.provider_intent_id!==`staging_mock:${booking}`||p.tenant_id.toLowerCase()!==tenant.toLowerCase()||p.booking_id.toLowerCase()!==booking.toLowerCase()||p.id!==b.payment_id||p.state!=='succeeded'||Number(p.amount)!==total||p.currency!==s.currency||JSON.stringify(b.pricing)!==JSON.stringify(pricing))throw new FlowError('CONFLICT');
-        paymentId=Uuid.parse(p.id);
-      }else{
-        if(b.state!=='draft'||b.payment_id!==null||JSON.stringify(b.pricing)!=='{}')throw new FlowError('CONFLICT');
-        const inserted=await c.query(`insert into public.payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2::uuid,'staging_mock',$3,'succeeded',$4::bigint,$5) returning id`,[tenant,booking,`staging_mock:${booking}`,total,s.currency]);
-        paymentId=Uuid.parse(inserted.rows[0]?.id);
-        await c.query('update public.bookings set pricing=$1::jsonb,payment_id=$2::uuid where id=$3::uuid',[JSON.stringify(pricing),paymentId,booking]);
-      }
-      const confirmed=await c.query('select public.confirm_succeeded_payment($1::uuid) result',[paymentId]);
-      const receipt=RentalMockPaymentReceipt.omit({provider:true,simulated:true}).safeParse(confirmed.rows[0]?.result);
-      if(!receipt.success||receipt.data.bookingId!==booking||receipt.data.paymentId!==paymentId)throw new FlowError('INTERNAL_ERROR');
-      await c.query('commit');return{...receipt.data,provider:'staging_mock',simulated:true};
+      // The current atomic confirmation migration rejects resource-linked
+      // services. Do not insert a succeeded payment until that authority is
+      // widened in a separately reviewed migration; this candidate remains
+      // an explicit, transaction-safe staging boundary in the meantime.
+      void pricing;
+      throw new FlowError('UNSUPPORTED_CONFIG');
     }catch(error){
       try{await c.query('rollback');}catch{broken=true;}
       if(error instanceof FlowError)throw error;
