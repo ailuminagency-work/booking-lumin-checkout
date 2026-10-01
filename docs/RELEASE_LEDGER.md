@@ -345,3 +345,8 @@ A24 rental confirmation authority:
 - Integrated commits: 2898112, f9d3ef7
 - Exact candidate checks: full API unit suite 56/56; API typecheck; Phase A smoke self-test; staging frontend/API validator; git diff --check; SQL static guard confirming supported JSON helpers, simple advisory lock, and finite-expiry predicate all passed.
 - Runtime contract: migration is prepared and pushed but not applied to any live database. Disposable PostgreSQL execution is blocked because no loopback PostgreSQL listener is active. Rental confirmation is now server-authoritative and atomic when the migration is applied; no provider activation or hosted deployment occurred.
+
+A24 push verification:
+- Authoritative implementation branch: phase-a/staging-operationalization
+- Pushed evidence head: 44e59d2 (exact remote head verified after the blocker record below)
+- Draft PR remains blocked: gh is unauthenticated in this environment and prior authenticated collaborator validation returned GitHub 422; no PR, merge, deployment, live migration, provider activation, or protected-main write was attempted.
