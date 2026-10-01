@@ -290,3 +290,9 @@ Independent review returned a high omitted-selection bypass; the builder fixed
 it and re-review passed. Focused draft tests passed 9/9, the full API unit suite
 passed 46/46, API typecheck passed, and smoke/config/whitespace checks passed.
 No hosted/live/provider action occurred.
+
+The A18 implementation and evidence are pushed at exact head
+`42cbbe9` on `phase-a/staging-operationalization`. Draft-PR creation remains
+blocked by the unauthenticated GitHub CLI session in this environment and the
+previous repository collaborator restriction; no merge or release action was
+taken.
