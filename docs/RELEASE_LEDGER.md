@@ -197,3 +197,18 @@ collaborator`. The implementation branch is nevertheless pushed at
 `74d9a6ef98424c0c645bc24b04442e607ab488bf`; this PR access issue does not
 block further implementation work and is recorded separately from the code
 and test evidence.
+
+The rental/resource concurrency candidate `e877327` adds
+`apps/api/src/phase-a-rental-concurrency.integration.ts` and is integrated on
+the staging line with the runner registration. It uses the authoritative
+`public.reserve_resource` and `public.release_resource_holds` RPCs against a
+disposable loopback database, proves one grant versus one capacity rejection
+for concurrent requests on a capacity-1 vehicle, checks tenant/resource
+isolation with a foreign booking, replay identity, release, and absence of
+payment or confirmed-booking side effects. Independent review returned a
+cross-tenant fixture defect; the builder corrected it and the re-review passed.
+API typecheck, smoke/config self-tests, and whitespace checks passed. Direct
+execution hit Windows Node `uv_os_get_passwd ENOMEM` before module load, and no
+PostgreSQL listener is available on `127.0.0.1:5432`; this is not hosted or
+live proof. No deployment, live migration, provider activation, or protected-
+main write occurred.
