@@ -12,6 +12,8 @@
 #   - roster-http.integration.ts (roster provision/edit/snapshot over HTTP)
 #   - phase-a-golden.integration.ts (first complete housekeeping adapter flow:
 #     profile, availability, draft, hold, fake payment and atomic confirmation)
+#   - phase-a-health.integration.ts (factory-bound local health contract and
+#     route-boundary checks; hosted readiness remains a separate gate)
 # The golden flow checks sequential replay and tenant isolation, not concurrent
 # contention, browser behavior, hosted identity or real payment providers.
 #
@@ -55,7 +57,7 @@ export PGDATABASE="${DB}" LOCAL_HARNESS=1 FLOW_TEST_DISPOSABLE=1
 TSX="${ROOT}/node_modules/.bin/tsx"
 
 status=0
-for harness in src/pg-http.integration.ts src/roster-http.integration.ts src/phase-a-golden.integration.ts; do
+for harness in src/pg-http.integration.ts src/roster-http.integration.ts src/phase-a-golden.integration.ts src/phase-a-health.integration.ts; do
   echo "== running ${harness} =="
   if ! "${TSX}" "${harness}"; then
     echo "FAIL: ${harness}"
