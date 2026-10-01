@@ -13,7 +13,10 @@ export type MockPaymentWriter=(actor:string,tenant:string,booking:string)=>Promi
  * the tenant-scoped service row. Configurable/cart/rental selections stay
  * fail-closed until their catalog, pricing, and (for rentals) resource-hold
  * authority are available at this boundary. In particular, this seam must
- * never fall back to a client supplied total.
+ * never fall back to a client supplied total. A rental implementation must
+ * also prove a tenant-owned, unexpired resource reservation and atomically
+ * reconcile its server-derived rental charge/deposit before it can widen this
+ * provider; this boundary deliberately performs neither operation yet.
  */
 const SimpleMockPaymentSelection=z.object({serviceId:z.string().uuid()}).strict();
 export function mockPaymentsEnabled(env:Record<string,string|undefined>):boolean{
