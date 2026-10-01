@@ -242,3 +242,15 @@ authenticated attempts on this repository were rejected with `422 must be a
 collaborator`. The branch push, local checks, and independent review remain
 valid; no merge, deployment, live migration, provider activation, or protected
 main write was attempted.
+
+The A16 detailing HTTP candidate `f62ceda` adds
+`apps/api/src/phase-a-detailing-http.integration.ts` and registers it in the
+disposable integration runner. It exercises fresh per-run owner/staff/foreign-
+owner HTTP profile and availability checks, owner/staff draft authorization,
+foreign-owner and cross-tenant/service denial, replay, strict route input
+rejection, and separately scoped service-role canonical Selection v1
+persistence with zero payment/capacity/resource side effects. Independent
+review passed after correcting shared-fixture identity cleanup and clarifying
+that the direct canonical helper bypasses HTTP caller authentication. API
+typecheck, smoke self-test, staging-config self-test, and whitespace checks
+passed; direct execution remains blocked by unavailable loopback PostgreSQL.
