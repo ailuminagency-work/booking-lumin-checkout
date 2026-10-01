@@ -33,16 +33,40 @@ const service=randomUUID();
 const foreignService=randomUUID();
 const packageItem=randomUUID();
 const addon=randomUUID();
+const vehicleQuestion=randomUUID();
+const packageQuestion=randomUUID();
 const run=randomUUID();
 const packageKey='full-detail';
 const addonKey='pet-hair';
 
+function record(value:unknown):Record<string,unknown>{
+ return value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
+}
+
+// This is a service_role database fixture for pre-payment persistence. The
+// helper intentionally has no caller-authentication input and therefore does
+// not prove an auth boundary or actor-spoof protection; reader membership and
+// tenant/service mismatch checks below are separate evidence only.
 async function createDraft(tenantId:string,selection:Record<string,unknown>,idempotencyKey:string){
  const client=await pool.connect();
  try{
   await client.query('begin');
   await client.query('set local statement_timeout=\'5s\'');
   await client.query('set local role service_role');
+  // The production RPC persists only serviceId. The harness boundary checks
+  // catalog references before calling it so invalid/foreign IDs are not
+  // misreported as DB-level catalog validation.
+  if(tenantId===tenant&&selection.serviceId===service){
+   const answers=record(selection.answers);
+   const packageAnswer=record(answers.package);
+   const packageChoiceIds=Array.isArray(packageAnswer.choiceIds)?packageAnswer.choiceIds.filter((key):key is string=>typeof key==='string'):[];
+   const itemQuantities=record(selection.itemQuantities);
+   const itemKeys=[...new Set([...Object.keys(itemQuantities),...packageChoiceIds])];
+   const addonKeys=Array.isArray(selection.addonIds)?selection.addonIds.filter((key):key is string=>typeof key==='string'):[];
+   const catalogItems=await client.query('select item_key from public.service_items where tenant_id=$1::uuid and service_id=$2::uuid and item_key=any($3::text[])',[tenant,service,itemKeys]);
+   const catalogAddons=await client.query('select addon_key from public.service_addons where tenant_id=$1::uuid and service_id=$2::uuid and addon_key=any($3::text[])',[tenant,service,addonKeys]);
+   if(catalogItems.rows.length!==itemKeys.length||catalogAddons.rows.length!==addonKeys.length)throw Error('CATALOG_NOT_BOUND');
+  }
   const result=await client.query(
    'select * from public.create_booking_draft($1::uuid,$2::text,$3::jsonb,$4::timestamptz,$5::timestamptz,$6::jsonb,$7::jsonb,$8::text)',
    [tenantId,idempotencyKey,JSON.stringify(selection),slotStart,slotEnd,JSON.stringify({name:'Synthetic Detailing Customer',email:`detail-${run}@example.test`,phone:'2065550100'}),null,'Disposable local detailing-flow fixture'],
@@ -65,6 +89,7 @@ const from=next.toISOString();
 const to=new Date(next.getTime()+86400000-1).toISOString();
 
 try{
+ assert.equal(process.env.PGUSER,'postgres','service-role database fixture; caller authentication is outside this harness');
  await pool.query('insert into auth.users(id,email) values($1,$2)',[actor,`detail-owner-${run}@example.test`]);
  await pool.query(
   `insert into public.tenants(id,name,slug,timezone,currency)
@@ -74,7 +99,7 @@ try{
  await pool.query('insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,\'BUSINESS_OWNER\')',[tenant,actor]);
  await pool.query(
   `insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes,tax_rate_bp)
-   values($1,$2,'Car detailing','cart','USD',0,60,0),($3,$4,'Foreign detailing','cart','USD',0,60,0)`,
+   values($1,$2,'Car detailing','configurable','USD',0,60,0),($3,$4,'Foreign detailing','configurable','USD',0,60,0)`,
   [service,tenant,foreignService,foreignTenant],
  );
  await pool.query(
@@ -86,6 +111,18 @@ try{
   `insert into public.service_addons(id,tenant_id,service_id,addon_key,name,price)
    values($1,$2,$3,$4,'Pet hair removal',2500)`,
   [addon,tenant,service,addonKey],
+ );
+ await pool.query(
+  `insert into public.service_questions(id,tenant_id,service_id,question_key,prompt,kind,required,choices,sort_order)
+   values
+    ($1,$2,$3,'vehicle','Vehicle type','single_choice',true,$4::jsonb,0),
+    ($5,$2,$3,'package','Package','single_choice',true,$6::jsonb,1)`,
+  [
+   vehicleQuestion,tenant,service,
+   JSON.stringify([{id:'sedan',label:'Sedan',priceDelta:0,priceMultiplierBp:10000}]),
+   packageQuestion,
+   JSON.stringify([{id:packageKey,label:'Full detail',priceDelta:18000,priceMultiplierBp:10000}]),
+  ],
  );
  await pool.query(
   `insert into public.scheduling_policies(tenant_id,service_id,lead_time_minutes,horizon_days,slot_interval_minutes)
@@ -126,15 +163,38 @@ try{
   [tenant,service],
  )).rows;
  assert.deepEqual(addonRows,[{addon_key:addonKey,tenant_id:tenant,service_id:service}],'add-on belongs to the tenant service');
+ const questionRows=(await pool.query(
+  `select question_key,choices
+     from public.service_questions
+    where tenant_id=$1::uuid and service_id=$2::uuid
+    order by sort_order`,
+  [tenant,service],
+ )).rows;
+ assert.deepEqual(questionRows,[
+  {question_key:'vehicle',choices:[{id:'sedan',label:'Sedan',priceDelta:0,priceMultiplierBp:10000}]},
+  {question_key:'package',choices:[{id:packageKey,label:'Full detail',priceDelta:18000,priceMultiplierBp:10000}]},
+ ],'vehicle and package answers belong to the configurable detailing service');
 
  // Canonical Selection v1 shape. The draft RPC persists this input exactly;
  // pricing and payment remain outside this pre-payment harness.
  const selection={
   serviceId:service,
-  vehicleType:'sedan',
-  packageKey,
+  itemQuantities:{},
   addonIds:[addonKey],
+  answers:{vehicle:{choiceIds:['sedan']},package:{choiceIds:[packageKey]}},
  };
+ const invalidCatalogSelection={
+  ...selection,
+  itemQuantities:{'foreign-package':1},
+  addonIds:['foreign-addon'],
+  answers:{vehicle:{choiceIds:['sedan']},package:{choiceIds:['foreign-package']}},
+ };
+ assert.equal((await pool.query('select count(*)::int as count from public.service_items where tenant_id=$1::uuid and service_id=$2::uuid and item_key=$3',[tenant,service,'foreign-package'])).rows[0].count,0,'invalid package is absent from the owner catalog');
+ assert.equal((await pool.query('select count(*)::int as count from public.service_addons where tenant_id=$1::uuid and service_id=$2::uuid and addon_key=$3',[tenant,service,'foreign-addon'])).rows[0].count,0,'invalid add-on is absent from the owner catalog');
+ await assert.rejects(
+  createDraft(tenant,invalidCatalogSelection,`detail-${run}-invalid-catalog`),
+  (error:unknown)=>String((error as {message?:unknown}).message)==='CATALOG_NOT_BOUND',
+ );
  const idempotencyKey=`detail-${run}-booking`;
  await assert.rejects(
   createDraft(tenant,{...selection,serviceId:foreignService},`detail-${run}-foreign-service`),
@@ -158,11 +218,26 @@ try{
  assert.deepEqual(persisted.selection,selection,'canonical detailing selection is persisted exactly');
  assert.deepEqual(persisted.pricing,{});
  assert.equal(persisted.payment_id,null);
- assert.equal((await pool.query('select count(*)::int as count from public.payments where booking_id=$1::uuid',[created.booking_id])).rows[0].count,0);
+ const effects=(await pool.query(
+  `select
+     (select count(*)::int from public.payments where booking_id=$1::uuid) as payments,
+     (select count(*)::int from public.capacity_holds where booking_id=$1::uuid) as capacity_holds,
+     (select count(*)::int from public.resource_reservations where booking_id=$1::uuid) as resource_reservations`,
+  [created.booking_id],
+ )).rows[0];
+ assert.deepEqual(effects,{payments:0,capacity_holds:0,resource_reservations:0},'draft has no payment or reservation side effects');
  assert.equal((await pool.query('select count(*)::int as count from public.bookings where tenant_id=$1::uuid and idempotency_key=$2',[tenant,idempotencyKey])).rows[0].count,1);
- console.log('PASS disposable detailing flow: profile -> cart service/item/add-on -> availability -> canonical draft; replay, exact selection, empty pricing, no payment, and cross-tenant/service denial verified');
+ console.log('PASS disposable detailing flow: profile -> configurable service/questions/item/add-on -> availability -> canonical draft; replay, exact selection, empty pricing, no payment, and cross-tenant/service denial verified');
 }finally{
- await pool.query('delete from public.tenants where id in ($1::uuid,$2::uuid)',[tenant,foreignTenant]).catch(()=>{});
- await pool.query('delete from auth.users where id=$1::uuid',[actor]).catch(()=>{});
- await pool.end();
+ let cleanupError:unknown;
+ try{
+  await pool.query('delete from public.tenants where id in ($1::uuid,$2::uuid)',[tenant,foreignTenant]);
+  await pool.query('delete from auth.users where id=$1::uuid',[actor]);
+  const remainingTenants=(await pool.query('select count(*)::int as count from public.tenants where id in ($1::uuid,$2::uuid)',[tenant,foreignTenant])).rows[0].count;
+  const remainingUsers=(await pool.query('select count(*)::int as count from auth.users where id=$1::uuid',[actor])).rows[0].count;
+  assert.equal(remainingTenants,0,'disposable tenants were cleaned up');
+  assert.equal(remainingUsers,0,'disposable auth user was cleaned up');
+ }catch(error){cleanupError=error;}
+ try{await pool.end();}catch(error){cleanupError??=error;}
+ if(cleanupError)throw cleanupError;
 }
