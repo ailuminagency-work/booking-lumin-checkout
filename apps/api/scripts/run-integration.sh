@@ -54,6 +54,10 @@ for m in "${ROOT}"/supabase/migrations/0*.sql; do
 done
 
 export PGDATABASE="${DB}" LOCAL_HARNESS=1 FLOW_TEST_DISPOSABLE=1
+# Keep every harness on the explicit disposable loopback contract.  These
+# libpq/service variables can silently override the checked host or inject
+# credentials/options from a caller's environment.
+unset DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS
 TSX="${ROOT}/node_modules/.bin/tsx"
 
 status=0
