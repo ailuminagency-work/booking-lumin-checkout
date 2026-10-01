@@ -47,6 +47,7 @@ const foreignTenant = randomUUID();
 const resource = randomUUID();
 const bookingA = randomUUID();
 const bookingB = randomUUID();
+const foreignBooking = randomUUID();
 const run = randomUUID();
 const slotStart = new Date(Date.now() + 86_400_000);
 slotStart.setUTCMinutes(0, 0, 0);
@@ -110,8 +111,9 @@ try {
         (id,tenant_id,reference,state,selection,pricing,slot_start,slot_end,idempotency_key)
        values
         ($1,$3,'RNT-A','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$7),
-        ($2,$3,'RNT-B','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$8)`,
-      [bookingA, bookingB, tenant, resource, slotStart.toISOString(), slotEnd.toISOString(), `rental-${run}-a`, `rental-${run}-b`],
+        ($2,$3,'RNT-B','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$8),
+        ($4,$9,'RNT-F','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$10)`,
+      [bookingA, bookingB, tenant, foreignBooking, slotStart.toISOString(), slotEnd.toISOString(), `rental-${run}-a`, `rental-${run}-b`, foreignTenant, `rental-${run}-foreign`],
     );
   });
 
@@ -140,7 +142,7 @@ try {
   assert.equal(held.rows[0]?.n, 1);
 
   // A foreign tenant cannot use this tenant's resource, even with a valid booking id.
-  const foreign = await reserve(foreignTenant, resource, bookingA);
+  const foreign = await reserve(foreignTenant, resource, foreignBooking);
   assert.deepEqual(foreign, {
     result: 'NO_CAPACITY',
     reservation_id: null,
@@ -162,14 +164,14 @@ try {
   );
   assert.equal(persisted.rows[0]?.n, 1);
   const payments = await pool.query<{ n: number }>(
-    'select count(*)::int as n from public.payments where booking_id in ($1,$2)',
-    [bookingA, bookingB],
+    'select count(*)::int as n from public.payments where booking_id in ($1,$2,$3)',
+    [bookingA, bookingB, foreignBooking],
   );
   assert.equal(payments.rows[0]?.n, 0);
   const confirmed = await pool.query<{ n: number }>(
     `select count(*)::int as n from public.bookings
-      where id in ($1,$2) and state='confirmed'`,
-    [bookingA, bookingB],
+      where id in ($1,$2,$3) and state='confirmed'`,
+    [bookingA, bookingB, foreignBooking],
   );
   assert.equal(confirmed.rows[0]?.n, 0);
 
