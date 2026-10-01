@@ -43,11 +43,16 @@ export function createMockPaymentWriter(pool:Pool,env:Record<string,string|undef
    const payments=await c.query('select * from public.payments where booking_id=$1::uuid order by id for update',[booking]);
    const result=await c.query('select * from public.bookings where id=$1::uuid and tenant_id=$2::uuid for update',[booking,tenant]);
    if(result.rows.length!==1)throw new FlowError('NOT_AVAILABLE');
-   const b=result.rows[0];const selection=SimpleMockPaymentSelection.safeParse(b.selection);
+   const b=result.rows[0];const selection=Selection.safeParse(b.selection);
    if(!selection.success)throw new FlowError('UNSUPPORTED_CONFIG');
+   // Parse the shared contract before the service lookup so a canonical
+   // rental selection reaches the same tenant/service boundary. The mock
+   // provider still accepts only the exact simple shape below.
+   const simpleSelection=SimpleMockPaymentSelection.safeParse(selection.data);
    const service=await c.query(`select s.* from public.services s where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active and s.archetype='simple' and s.tax_rate_bp=0 and s.rental is null and not exists(select 1 from public.service_items where service_id=s.id) and not exists(select 1 from public.service_addons where service_id=s.id) and not exists(select 1 from public.service_questions where service_id=s.id) and not exists(select 1 from public.service_resources where service_id=s.id)`,[selection.data.serviceId,tenant]);
    if(service.rows.length!==1)throw new FlowError('UNSUPPORTED_CONFIG');
    const s=service.rows[0];
+   if(!simpleSelection.success)throw new FlowError('UNSUPPORTED_CONFIG');
    // Keep the explicit runtime guard alongside the SQL predicate: mocked or
    // substituted adapters must not widen this staging-only authority.
    if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
