@@ -308,3 +308,12 @@ The A20 implementation and evidence are pushed at exact head c62d65e on phase-a/
 The A21 mock-payment candidate ad02de6 narrows staging fake-payment authority to simple services with server-reconstructed pricing and adds an explicit runtime archetype guard. Configurable/cart/rental selections and substituted non-simple rows fail closed before payment insertion or confirmation. Independent review returned a test-quality gap; explicit configurable/cart/rental service-row tests were added and re-review passed. Focused mock tests passed 7/7, the full API unit suite passed 48/48, API typecheck passed, and smoke/config/whitespace checks passed. No provider, live database, migration, hosted deployment, or protected-main action occurred.
 
 The A21 implementation and evidence are pushed at exact head 8a0ca3e on phase-a/staging-operationalization. Draft-PR creation remains blocked by the unauthenticated GitHub CLI session in this environment and the previously observed repository collaborator restriction; no merge or release action was taken.
+
+A22 rental mock-payment fail-closed correction:
+- Builder: /root/phase_a_rental_mock_payment_builder
+- Independent reviewer: /root/phase_a_detailing_review (PASS after correction)
+- Source commits: 0166096, f0567e6, 32d7867
+- Integrated commits: 8088888, 7664fe5, d1664ec
+- Exact candidate checks: focused mock tests 8/8; full API unit suite 49/49; API typecheck; phase-A smoke self-test; staging frontend/API validator; git diff --check all passed.
+- Scope: canonical rental Selection v1 now reaches the tenant/service lookup, then remains rejected by the original persisted-selection shape check and runtime archetype guard. No payment insert, confirmation RPC, resource reservation query, or commit survives. Simple-only fake payment remains unchanged.
+- Runtime status: no hosted runtime, provider credentials, live migration, or live database action.
