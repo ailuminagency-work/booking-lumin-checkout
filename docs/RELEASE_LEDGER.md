@@ -260,3 +260,15 @@ The A16 implementation and registration are pushed at exact head
 `phase-a/staging-operationalization`. Draft-PR creation remains blocked by
 the unauthenticated GitHub CLI session in this environment (and the prior
 repository collaborator restriction); no merge or release action was taken.
+
+The A17 rental HTTP candidate `4f83b8d` adds
+`apps/api/src/phase-a-rental-http.integration.ts` and registers it in the
+disposable integration runner. It covers fresh-identity HTTP health/profile/
+availability/draft authorization and replay, then a separately scoped
+service-role resource race because the current HTTP API has no resource route.
+The harness proves one `GRANTED` versus one `NO_CAPACITY` on capacity one,
+foreign-resource denial, replay, release, and no payment/capacity-hold/
+confirmed-booking side effects. Independent review passed after correcting the
+foreign-owner profile status expectation. API typecheck, smoke self-test,
+staging-config self-test, and whitespace checks passed; local PostgreSQL is
+unavailable, so focused runtime remains unverified.
