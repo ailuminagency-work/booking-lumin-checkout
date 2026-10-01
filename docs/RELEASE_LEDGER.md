@@ -298,3 +298,5 @@ previous repository collaborator restriction; no merge or release action was
 taken.
 
 The A19 detailing HTTP Selection candidate 582d44d updates apps/api/src/phase-a-detailing-http.integration.ts to exercise canonical Selection v1 through the authenticated owner/staff draft boundary, prove exact persistence and replay, reject invalid question/catalog selections before any booking row, and assert no payment/capacity/resource side effects. Independent review returned a high fixture mismatch; the builder corrected the optional package item minimum and re-review passed. Focused draft tests passed 9/9, the full API unit suite passed 46/46, API typecheck passed, and smoke/config/whitespace checks passed. Local PostgreSQL remains unavailable; no hosted/live/provider action occurred.
+
+The A19 implementation and evidence are pushed at exact head 4f976d9 on phase-a/staging-operationalization. Draft-PR creation remains blocked by the unauthenticated GitHub CLI session in this environment and the previously observed repository collaborator restriction; no merge or release action was taken.
