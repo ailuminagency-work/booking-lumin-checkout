@@ -44,7 +44,11 @@ export function createMockPaymentWriter(pool:Pool,env:Record<string,string|undef
    if(!selection.success)throw new FlowError('UNSUPPORTED_CONFIG');
    const service=await c.query(`select s.* from public.services s where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active and s.archetype='simple' and s.tax_rate_bp=0 and s.rental is null and not exists(select 1 from public.service_items where service_id=s.id) and not exists(select 1 from public.service_addons where service_id=s.id) and not exists(select 1 from public.service_questions where service_id=s.id) and not exists(select 1 from public.service_resources where service_id=s.id)`,[selection.data.serviceId,tenant]);
    if(service.rows.length!==1)throw new FlowError('UNSUPPORTED_CONFIG');
-   const s=service.rows[0];const amount=Number(s.base_price);
+   const s=service.rows[0];
+   // Keep the explicit runtime guard alongside the SQL predicate: mocked or
+   // substituted adapters must not widen this staging-only authority.
+   if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
+   const amount=Number(s.base_price);
    if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
    const pricing=createPricingEngine().price(Service.parse({id:s.id,tenantId:s.tenant_id,name:s.name,archetype:s.archetype,currency:s.currency,basePrice:amount,durationMinutes:s.duration_minutes}),Selection.parse({serviceId:s.id}));
    let paymentId:string;
