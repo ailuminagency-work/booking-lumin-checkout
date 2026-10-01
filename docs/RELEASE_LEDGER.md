@@ -332,3 +332,8 @@ A23 rental preflight fail-closed candidate:
 - Exact candidate checks: focused rental preflight tests 7/7; full API unit suite 56/56; API typecheck; Phase A smoke self-test; staging frontend/API validator; git diff --check all passed.
 - Scope: validates tenant/service/resource/hold authority, persisted reservation quantity, resource capacity, DB-clock expiry, and exact slot equality, then intentionally fails closed before payment or confirmation because the current atomic confirmation migration does not support resource-linked rentals or deposit-aware pricing. Simple mock-payment behavior remains unchanged.
 - Runtime status: no hosted runtime, provider credentials, live migration, or live database action.
+
+A23 push verification:
+- Authoritative implementation branch: phase-a/staging-operationalization
+- Pushed evidence head: 9ec78eb (the exact remote head is verified after the blocker record below)
+- Draft PR remains blocked: gh is unauthenticated in this environment and prior authenticated collaborator validation returned GitHub 422; no PR, merge, deployment, live migration, provider activation, or protected-main write was attempted.
