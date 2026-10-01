@@ -254,3 +254,9 @@ review passed after correcting shared-fixture identity cleanup and clarifying
 that the direct canonical helper bypasses HTTP caller authentication. API
 typecheck, smoke self-test, staging-config self-test, and whitespace checks
 passed; direct execution remains blocked by unavailable loopback PostgreSQL.
+
+The A16 implementation and registration are pushed at exact head
+`0bdbd97d62bd8bb19a95f262983b0c0df1c9a2d3` on
+`phase-a/staging-operationalization`. Draft-PR creation remains blocked by
+the unauthenticated GitHub CLI session in this environment (and the prior
+repository collaborator restriction); no merge or release action was taken.
