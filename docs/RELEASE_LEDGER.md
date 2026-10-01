@@ -278,3 +278,15 @@ The A17 implementation and registration are pushed at exact head
 blocked by the unauthenticated GitHub CLI session in this environment and the
 previous repository collaborator restriction; no merge, deployment, live
 migration, provider activation, or protected-main write was attempted.
+
+The A18 configurable-selection candidate `1813099` extends
+`apps/api/src/draft.ts` and `apps/api/src/draft.test.ts` with a strict,
+tenant-scoped Selection v1 boundary. The service catalog is reconstructed from
+server rows and validated through the pricing engine; simple-service omission
+remains compatible, while omitted configurable/cart/rental selections fail
+closed and rental periods are required. Client pricing/payment/state fields are
+never accepted, and the authoritative draft RPC receives only validated input.
+Independent review returned a high omitted-selection bypass; the builder fixed
+it and re-review passed. Focused draft tests passed 9/9, the full API unit suite
+passed 46/46, API typecheck passed, and smoke/config/whitespace checks passed.
+No hosted/live/provider action occurred.
