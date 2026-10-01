@@ -175,3 +175,17 @@ The reviewed builder branch remains pushed, while the corrected implementation
 and evidence are preserved locally on the staging integration line. This is an
 access blocker only; no merge, deployment, live migration, provider activation,
 or protected-main write was attempted.
+
+The Phase A runner follow-up is integrated locally at `a72cf0d` (preceded by
+`059fc03`). It registers the accepted local health-factory harness alongside
+the HTTP, roster, and housekeeping harnesses. Before any `psql` database setup,
+the runner clears ambient `DATABASE_URL`, `PGHOSTADDR`, `PGSERVICE`,
+`PGSERVICEFILE`, `PGPASSFILE`, and `PGOPTIONS`, then explicitly exports the
+disposable loopback identity. This closes the environment-inheritance gap
+identified in independent review while preserving the existing migration and
+cleanup behavior. API typecheck, smoke self-test, staging-config self-test,
+and whitespace checks passed; Bash syntax and the full disposable runner were
+not executable on this Windows host because Bash/PostgreSQL service tooling is
+unavailable. The integration branch remains local-only pending the existing
+Git transport `SEC_E_NO_CREDENTIALS` error; no hosted deployment, live
+migration, provider activation, or protected-main write was attempted.
