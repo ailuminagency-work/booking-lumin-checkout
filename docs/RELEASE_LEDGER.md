@@ -317,3 +317,9 @@ A22 rental mock-payment fail-closed correction:
 - Exact candidate checks: focused mock tests 8/8; full API unit suite 49/49; API typecheck; phase-A smoke self-test; staging frontend/API validator; git diff --check all passed.
 - Scope: canonical rental Selection v1 now reaches the tenant/service lookup, then remains rejected by the original persisted-selection shape check and runtime archetype guard. No payment insert, confirmation RPC, resource reservation query, or commit survives. Simple-only fake payment remains unchanged.
 - Runtime status: no hosted runtime, provider credentials, live migration, or live database action.
+
+A22 push verification:
+- Authoritative implementation branch: phase-a/staging-operationalization
+- Pushed exact head: 3107c6e (3107c6e9c98b22e130f13e7359882ad5a3a7cb52)
+- Remote verification and working-tree cleanliness are recorded separately below.
+- Draft PR remains blocked: gh is unauthenticated in this environment and prior authenticated collaborator validation returned GitHub 422; no PR, merge, protected-main write, deployment, live migration, or provider activation was attempted.
