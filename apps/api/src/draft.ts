@@ -37,8 +37,10 @@ export function createDraftWriter(pool:Pool):DraftWriter{return async(actor,tena
   await c.query('begin');await c.query("set local statement_timeout='5s'");await c.query('set local role service_role');
   const member=await c.query(`select t.id from public.tenants t join public.tenant_members m on m.tenant_id=t.id where t.id=$1::uuid and m.user_id=$2::uuid and t.status='active' and m.role in ('BUSINESS_OWNER','BUSINESS_STAFF') for share of t,m`,[tenant,actor]);
   if(member.rows.length!==1)throw new FlowError('FORBIDDEN');
-  const service=await c.query('select id from public.services where id=$1::uuid and tenant_id=$2::uuid and active for share',[body.serviceId,tenant]);
+  const service=await c.query('select id,archetype from public.services where id=$1::uuid and tenant_id=$2::uuid and active for share',[body.serviceId,tenant]);
   if(service.rows.length!==1)throw new FlowError('NOT_AVAILABLE');
+  const archetype=(service.rows[0] as {archetype?:unknown}).archetype;
+  if(!body.selection&&archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
   const selection=body.selection??Selection.parse({serviceId:body.serviceId});
   if(body.selection)await validateConfiguredSelection(c,tenant,body,selection);
   const rpcSelection=body.selection?selection:{serviceId:body.serviceId};
