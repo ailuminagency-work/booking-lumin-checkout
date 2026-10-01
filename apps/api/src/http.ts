@@ -1,4 +1,5 @@
 import {MockPaymentInput,MockPaymentReceipt,type MockPaymentWriter} from './mock-payment';
+import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWriter} from './rental-mock-payment';
 import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
 import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
@@ -18,6 +19,7 @@ export interface FlowHttpOptions{
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
  mockPayment?:MockPaymentWriter;
+ rentalMockPayment?:RentalMockPaymentWriter;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -83,6 +85,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const body=MockPaymentInput.parse(await jsonBody(req));
     if(!options.mockPayment)throw new FlowError("UNSUPPORTED_CONFIG");
     const receipt=MockPaymentReceipt.safeParse(await options.mockPayment(actor,tenant,body.bookingId));
+    if(!receipt.success||receipt.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
+   if(url.pathname==="/api/bookings/rental-mock-payment"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=RentalMockPaymentInput.parse(await jsonBody(req));
+    if(!options.rentalMockPayment)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=RentalMockPaymentReceipt.safeParse(await options.rentalMockPayment(actor,tenant,body.bookingId));
     if(!receipt.success||receipt.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
    }
