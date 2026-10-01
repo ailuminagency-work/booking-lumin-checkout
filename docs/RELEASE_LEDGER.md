@@ -323,3 +323,12 @@ A22 push verification:
 - Pushed exact head: 3107c6e (3107c6e9c98b22e130f13e7359882ad5a3a7cb52)
 - Remote verification and working-tree cleanliness are recorded separately below.
 - Draft PR remains blocked: gh is unauthenticated in this environment and prior authenticated collaborator validation returned GitHub 422; no PR, merge, protected-main write, deployment, live migration, or provider activation was attempted.
+
+A23 rental preflight fail-closed candidate:
+- Builder: /root/phase_a_rental_payment_authority_builder
+- Independent reviewer: /root/phase_a_detailing_review (PASS after high/medium correction cycles)
+- Source commits: 6d795f1, 196f0d1, 5ac3961, fc6055a
+- Integrated commits: 8e31fb3, 626319c, fe9de9c, e52d2ea
+- Exact candidate checks: focused rental preflight tests 7/7; full API unit suite 56/56; API typecheck; Phase A smoke self-test; staging frontend/API validator; git diff --check all passed.
+- Scope: validates tenant/service/resource/hold authority, persisted reservation quantity, resource capacity, DB-clock expiry, and exact slot equality, then intentionally fails closed before payment or confirmation because the current atomic confirmation migration does not support resource-linked rentals or deposit-aware pricing. Simple mock-payment behavior remains unchanged.
+- Runtime status: no hosted runtime, provider credentials, live migration, or live database action.
