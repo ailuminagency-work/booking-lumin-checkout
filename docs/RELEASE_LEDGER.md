@@ -218,3 +218,18 @@ attempted after push and again rejected by GitHub with `422 must be a
 collaborator`. The exact candidate `407e8c7c93e905b37859687d913b1fde9c959703`
 is pushed; GitHub reported no workflow run for that commit. The PR permission
 issue remains separate from the implementation, review, and local test gates.
+
+The detailing-flow candidate `6b3aaca` adds
+`apps/api/src/phase-a-detailing-flow.integration.ts` and registers it in the
+disposable integration runner. The reviewed harness seeds a configurable
+detailing service with vehicle/package questions, a package item, and an
+add-on; it verifies tenant/profile and availability isolation, canonical
+Selection v1 persistence, harness-local question/catalog binding with
+separate invalid-answer and invalid-catalog cases, idempotent draft replay,
+exact empty pricing/payment state, zero payment/capacity/resource side effects,
+and fail-loud cleanup. Its explicit service-role scope does not claim caller
+authentication or production RPC catalog authority. Independent review passed
+after one correction cycle. API typecheck, smoke self-test, staging-config
+self-test, and whitespace checks passed. Direct execution remains blocked by
+Windows Node `uv_os_get_passwd ENOMEM` before module load and no PostgreSQL
+listener on `127.0.0.1:5432`; no hosted/live/provider action occurred.
