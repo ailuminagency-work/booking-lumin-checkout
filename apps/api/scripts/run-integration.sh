@@ -39,6 +39,10 @@ if [[ -n "${PGHOSTADDR:-}" && "${PGHOSTADDR}" != 127.0.0.1 ]]; then
   echo "PGHOSTADDR must be 127.0.0.1 when supplied" >&2
   exit 1
 fi
+# Keep database creation, migrations, and every harness on the explicit
+# disposable loopback contract. These variables can silently override the
+# checked host or inject credentials/options from a caller's environment.
+unset DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS
 export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 DB="lumin_r2a_$$_$(date +%s)"
@@ -54,10 +58,6 @@ for m in "${ROOT}"/supabase/migrations/0*.sql; do
 done
 
 export PGDATABASE="${DB}" LOCAL_HARNESS=1 FLOW_TEST_DISPOSABLE=1
-# Keep every harness on the explicit disposable loopback contract.  These
-# libpq/service variables can silently override the checked host or inject
-# credentials/options from a caller's environment.
-unset DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS
 TSX="${ROOT}/node_modules/.bin/tsx"
 
 status=0
