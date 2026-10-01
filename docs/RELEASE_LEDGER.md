@@ -233,3 +233,12 @@ after one correction cycle. API typecheck, smoke self-test, staging-config
 self-test, and whitespace checks passed. Direct execution remains blocked by
 Windows Node `uv_os_get_passwd ENOMEM` before module load and no PostgreSQL
 listener on `127.0.0.1:5432`; no hosted/live/provider action occurred.
+
+The exact detailing candidate was pushed to
+`phase-a/staging-operationalization` at `2cb8a0c65f8d8cd018c401d48750d9a840f6d753`.
+Draft-PR creation was attempted with GitHub CLI, but this environment has no
+authenticated GitHub CLI session (`gh auth login` is required); previous
+authenticated attempts on this repository were rejected with `422 must be a
+collaborator`. The branch push, local checks, and independent review remain
+valid; no merge, deployment, live migration, provider activation, or protected
+main write was attempted.
