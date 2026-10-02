@@ -6,7 +6,7 @@
  * staging or production build must opt into a connected runtime explicitly.
  */
 export type RuntimeEnvironment = "demo" | "staging" | "production";
-export type RuntimeMode = "demo" | "supabase";
+export type RuntimeMode = "demo" | "supabase" | "mock";
 
 export interface PublicRuntimeConfig {
   environment: RuntimeEnvironment;
@@ -19,7 +19,7 @@ export interface PublicRuntimeConfig {
 }
 
 const ENVIRONMENTS = new Set<RuntimeEnvironment>(["demo", "staging", "production"]);
-const MODES = new Set<RuntimeMode>(["demo", "supabase"]);
+const MODES = new Set<RuntimeMode>(["demo", "supabase", "mock"]);
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -49,6 +49,7 @@ export function readPublicRuntimeConfig(env: Record<string, unknown>): PublicRun
   if (!MODES.has(rawMode as RuntimeMode)) throw new Error("VITE_RUNTIME_MODE is invalid");
   const mode = rawMode as RuntimeMode;
   if (environment !== "demo" && mode === "demo") throw new Error("Connected mode is required outside demo");
+  if (environment === "production" && mode === "mock") throw new Error("Mock mode is not allowed in production");
 
   const apiOrigin = origin(env.VITE_API_ORIGIN, "VITE_API_ORIGIN");
   const flowApiOrigin = origin(env.VITE_FLOW_API_URL, "VITE_FLOW_API_URL") ?? apiOrigin;

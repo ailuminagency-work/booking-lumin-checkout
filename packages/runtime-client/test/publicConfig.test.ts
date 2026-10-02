@@ -20,6 +20,20 @@ describe("public runtime configuration", () => {
     );
   });
 
+  it("allows staging mock mode for aggregate-only surfaces", () => {
+    expect(readPublicRuntimeConfig({
+      VITE_RUNTIME_ENV: "staging",
+      VITE_RUNTIME_MODE: "mock",
+    })).toMatchObject({ environment: "staging", mode: "mock" });
+  });
+
+  it("rejects mock mode in production", () => {
+    expect(() => readPublicRuntimeConfig({
+      VITE_RUNTIME_ENV: "production",
+      VITE_RUNTIME_MODE: "mock",
+    })).toThrow("Mock mode is not allowed in production");
+  });
+
   it("normalizes staging origins and falls back to the API origin for flows", () => {
     expect(
       readPublicRuntimeConfig({
