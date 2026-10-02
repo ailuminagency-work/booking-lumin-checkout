@@ -350,3 +350,18 @@ A24 push verification:
 - Authoritative implementation branch: phase-a/staging-operationalization
 - Pushed evidence head: 44e59d2 (exact remote head verified after the blocker record below)
 - Draft PR remains blocked: gh is unauthenticated in this environment and prior authenticated collaborator validation returned GitHub 422; no PR, merge, deployment, live migration, provider activation, or protected-main write was attempted.
+
+A25 rental mock-payment runtime and HTTP boundary:
+- Builder: /root/phase_a_rental_payment_runtime_correction (source `a254b45`, corrected writer tests `4e1cb53`)
+- HTTP fixture correction builder: /root/phase_a_rental_payment_http_correction (source `f9edea7`)
+- Independent reviewer: /root/phase_a_rental_payment_http_review (PASS)
+- Integrated candidate: `0ace15e` on `phase-a/staging-operationalization`
+- Exact candidate checks: focused writer+HTTP tests 6/6; full API unit suite 62/62; API typecheck; workspace build (checkout, command-center, portal); Phase A smoke self-test; staging frontend/API validator; git diff --check all passed.
+- Scope: staging-only rental mock-payment route accepts only bookingId; server code derives pricing/payment state, rechecks tenant/resource/hold authority, calls the atomic confirmation function, and supports consumed replay. The HTTP test correction preserves strict malformed-input rejection and explicitly verifies foreign-tenant context is passed to the authoritative writer, which returns 404 after its own tenant checks.
+- Runtime status: no hosted runtime, provider credentials, live migration, or live database action. Disposable PostgreSQL runner remains unavailable on this Windows host (no Bash and no loopback PostgreSQL listener).
+
+A25 push status before Release Governor:
+- Authoritative implementation branch: phase-a/staging-operationalization
+- Candidate is locally integrated at `0ace15e`; it has not yet been pushed because the next exact-candidate push gate is still pending.
+- Builder branch remains pushed at `4e1cb53` before the HTTP fixture correction; after correction, source branch remote head is `f9edea7`.
+- Draft PR remains blocked: `gh auth status` reports no logged-in GitHub host; prior authenticated collaborator validation returned GitHub 422. No PR, merge, protected-main write, deployment, live migration, or provider activation was attempted.
