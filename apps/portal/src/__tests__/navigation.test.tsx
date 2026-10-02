@@ -6,10 +6,31 @@ import { App, PortalApplication } from "../App";
 const runtime = vi.hoisted(() => ({
   signIn: vi.fn(), memberships: vi.fn(), drafts: vi.fn(), services: vi.fn(), setServiceActive: vi.fn(), signOut: vi.fn(),
 }));
-vi.mock("@lumin/runtime-client", () => ({ createRuntimeClient: (config: { url: string }) => {
-  if (!config.url) throw new Error("Invalid config");
-  return runtime;
-} }));
+vi.mock("@lumin/runtime-client", () => ({
+  readPublicRuntimeConfig: (env: Record<string, unknown>) => ({
+    environment: typeof env.VITE_RUNTIME_ENV === "string" && env.VITE_RUNTIME_ENV.trim()
+      ? env.VITE_RUNTIME_ENV.trim()
+      : "demo",
+    mode: typeof env.VITE_RUNTIME_MODE === "string" && env.VITE_RUNTIME_MODE.trim()
+      ? env.VITE_RUNTIME_MODE.trim()
+      : "demo",
+    apiOrigin: typeof env.VITE_API_ORIGIN === "string" && env.VITE_API_ORIGIN.trim()
+      ? env.VITE_API_ORIGIN.trim()
+      : undefined,
+    flowApiOrigin: typeof env.VITE_FLOW_API_URL === "string" && env.VITE_FLOW_API_URL.trim()
+      ? env.VITE_FLOW_API_URL.trim()
+      : undefined,
+    supabaseUrl: typeof env.VITE_SUPABASE_URL === "string" ? env.VITE_SUPABASE_URL.trim() : "",
+    supabasePublishableKey: typeof env.VITE_SUPABASE_PUBLISHABLE_KEY === "string"
+      ? env.VITE_SUPABASE_PUBLISHABLE_KEY.trim()
+      : "",
+    tenantId: typeof env.VITE_TENANT_ID === "string" ? env.VITE_TENANT_ID.trim() : "",
+  }),
+  createRuntimeClient: (config: { url: string }) => {
+    if (!config.url) throw new Error("Invalid config");
+    return runtime;
+  },
+}));
 
 const labels = ["Dashboard", "Bookings", "Calendar", "Workers", "Customers", "Services", "Pricing", "Invoices", "Embed Builder", "Media", "Integrations", "Settings"];
 const tenant = "11111111-1111-4111-8111-111111111111";
