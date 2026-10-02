@@ -24,8 +24,9 @@ describe('rental mock-payment HTTP contract',()=>{
  it('rejects client financial or provider fields and foreign tenant context',async()=>{
   const h=await setup();
   expect((await h.request({bookingId:booking,amount:1})).status).toBe(400);
-  expect((await h.request({bookingId:booking},`tenantId=b2300000-0000-4000-8000-000000000099`)).status).toBe(404);
   expect(h.rentalMockPayment).not.toHaveBeenCalled();
+  expect((await h.request({bookingId:booking},`tenantId=b2300000-0000-4000-8000-000000000099`)).status).toBe(404);
+  expect(h.rentalMockPayment).toHaveBeenCalledWith(actor,'b2300000-0000-4000-8000-000000000099',booking);
  });
  it('maps a writer fail-closed result without widening the route',async()=>{
   const h=await setup(async()=>{throw new FlowError('UNSUPPORTED_CONFIG');});
