@@ -94,17 +94,17 @@ begin
     lock table public.resources in share mode;
     if b.selection->>'serviceId' <> sid::text
        or jsonb_typeof(b.selection->'itemQuantities') is distinct from 'object'
-       or case when jsonb_typeof(b.selection->'itemQuantities') = 'object'
-          then (select count(*) from jsonb_object_keys(b.selection->'itemQuantities'))
-          else -1 end <> 0
+       or (case when jsonb_typeof(b.selection->'itemQuantities') = 'object'
+           then (select count(*) from jsonb_object_keys(b.selection->'itemQuantities'))
+           else -1 end) <> 0
        or jsonb_typeof(b.selection->'addonIds') is distinct from 'array'
-       or case when jsonb_typeof(b.selection->'addonIds') = 'array'
-          then jsonb_array_length(b.selection->'addonIds')
-          else -1 end <> 0
+       or (case when jsonb_typeof(b.selection->'addonIds') = 'array'
+           then jsonb_array_length(b.selection->'addonIds')
+           else -1 end) <> 0
        or jsonb_typeof(b.selection->'answers') is distinct from 'object'
-       or case when jsonb_typeof(b.selection->'answers') = 'object'
-          then (select count(*) from jsonb_object_keys(b.selection->'answers'))
-          else -1 end <> 0
+       or (case when jsonb_typeof(b.selection->'answers') = 'object'
+           then (select count(*) from jsonb_object_keys(b.selection->'answers'))
+           else -1 end) <> 0
        or jsonb_typeof(b.selection->'rentalPeriods') is distinct from 'number' then
       raise exception 'CONFIRMATION_MISMATCH' using errcode = '22023';
     end if;
