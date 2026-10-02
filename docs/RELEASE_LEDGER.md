@@ -404,6 +404,12 @@ A28 local migration replay runner:
 - Exact candidate checks: offline migration self-test; workspace typecheck; full API suite 63/63; workspace build; Phase A smoke self-test; staging frontend/API validator; hosted golden self-test; `git diff --check` all passed. The first review found and the correction removed one duplicate root script entry.
 - Runtime status: no local PostgreSQL listener is available, so no migration application is claimed. Hosted staging remains blocked by expired Render access.
 
+Phase A hosted service creation (PH-A29):
+- Render service `booking-lumin-api-staging` was created separately in My Workspace (`srv-db0142btqb8s73e4e1rg`) from the pushed `phase-a/staging-operationalization` branch at `191687e59915f626efcb41fe416227b088bc43d9`.
+- Configuration is isolated from LeadGate: repository `ailuminagency-work/booking-lumin-checkout`, root directory `apps/api`, build `npm ci --prefix ../.. && npm run build`, start `npm run start`, `/health` check, Oregon region, free plan, and auto-deploy disabled. Only non-secret staging gates were set (`BOOKING_LUMIN_ENV=staging`, `BOOKING_LUMIN_FAKE_PAYMENTS=1`, `NODE_ENV=staging`, `PORT=8080`).
+- Render built the candidate successfully, then the first deploy exited with status 1 because `DATABASE_URL` is missing. This is expected until an isolated staging Postgres/Supabase endpoint is provisioned and authorized. No database credential was entered, no migration ran, and no provider or production resource was touched.
+- Service URL: `https://booking-lumin-api-staging.onrender.com`. Hosted `/health` is not certified because the service is not running without the staging database contract.
+
 A28 push verification:
 - `git ls-remote` confirms `phase-a/staging-operationalization` at `b0573b9a894a28acf06fb4b23d9e14c449734b34`.
 - GitHub CLI remains unauthenticated; no draft PR or merge was created, and `main` remains untouched.
