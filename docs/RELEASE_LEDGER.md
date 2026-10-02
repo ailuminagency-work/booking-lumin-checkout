@@ -383,3 +383,15 @@ A26 host-runtime acceptance candidate:
 A26 push verification:
 - `phase-a/staging-operationalization` is locally at `9d0010f1021cbd8acd2d9fc7d1abcb4653929649`; its local `origin/phase-a/staging-operationalization` tracking ref resolves to the same SHA after the builder push.
 - Draft PR creation remains blocked by unauthenticated GitHub CLI access; no merge, protected-main write, hosted deployment, live migration, or provider activation occurred.
+
+A27 hosted golden-flow harness:
+- Builder/implementation: `/root` after a bounded hosted-flow builder cell was interrupted before modifying the integration line.
+- Independent reviewer: `/root/phase_a_hosted_golden_flow_review` (PASS)
+- Integrated and pushed candidate: `5c853821b4398535a55e940452a0244048dc17e5` on `phase-a/staging-operationalization`
+- Scope: adds `scripts/phase-a-staging-golden.mjs` and `golden:phase-a`. The harness performs no work unless `BOOKING_LUMIN_GOLDEN_FLOW=1` and all explicit staging inputs are valid. It then exercises the existing owner HTTP contract through profile, availability, draft/replay, hold/replay, staging mock payment/replay, and confirmation replay, with strict schemas, bounded JSON/timeout handling, redirect rejection, and secret-safe output.
+- Exact candidate checks: offline golden-flow self-test; API typecheck; full API suite 63/63; workspace build; Phase A smoke self-test; staging frontend/API validator; `git diff --check` all passed.
+- Runtime status: hosted execution is intentionally unverified pending isolated staging API/database/token/origin access. No deployment, live database write, migration, or real provider credential was used.
+
+A27 push verification:
+- `git ls-remote` confirms `phase-a/staging-operationalization` at `5c853821b4398535a55e940452a0244048dc17e5`.
+- Draft PR creation remains blocked by unauthenticated GitHub CLI access; the branch is pushed and main remains untouched.
