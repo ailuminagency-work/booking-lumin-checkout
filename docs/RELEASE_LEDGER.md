@@ -365,3 +365,9 @@ A25 push status before Release Governor:
 - Candidate is locally integrated at `0ace15e`; it has not yet been pushed because the next exact-candidate push gate is still pending.
 - Builder branch remains pushed at `4e1cb53` before the HTTP fixture correction; after correction, source branch remote head is `f9edea7`.
 - Draft PR remains blocked: `gh auth status` reports no logged-in GitHub host; prior authenticated collaborator validation returned GitHub 422. No PR, merge, protected-main write, deployment, live migration, or provider activation was attempted.
+
+Current runtime verification after A25:
+- GitHub remote `phase-a/staging-operationalization` resolves to `d601e788b04fc1cb544bd962d1f308e482c14e28`; builder branch `codex/phase-a-rental-confirmation-authority` resolves to `f9edea79170a4af18bc1b38cdffdce2d6a87764e`.
+- The existing Netlify site `gregarious-longma-6158a8` is linked to `ailuminagency-work/booking-lumin-checkout`, allows `main` and `codex/reviewed-preview`, and its ready production-context deploy is `c5663c59e134e71beb511f509b3287ab0046bdff` from `main`. It does not publish `phase-a/staging-operationalization`, so A25 is not live there.
+- Render read-only inventory is blocked by an expired local Render token (`render services list` requested `render login`); no Render mutation was attempted. A Booking Lumin staging API health check is therefore not claimed.
+- `gh auth status` reports no logged-in GitHub host; no draft PR, merge, protected-main write, live migration, or provider activation occurred.
