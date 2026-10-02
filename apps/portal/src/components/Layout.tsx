@@ -1,1 +1,85 @@
-aW1wb3J0IHsgdXNlU3RhdGUsIHR5cGUgUmVhY3ROb2RlIH0gZnJvbSAicmVhY3QiOwppbXBvcnQgeyBOYXZMaW5rIH0gZnJvbSAicmVhY3Qtcm91dGVyLWRvbSI7CmltcG9ydCB7IGdldFRlbmFudCB9IGZyb20gIi4uL2RhdGEvYXBpIjsKaW1wb3J0IHsgdXNlUG9ydGFsIH0gZnJvbSAiLi9Qb3J0YWxQcm92aWRlciI7CgpleHBvcnQgY29uc3QgTkFWX0lURU1TID0gWwogIHsgdG86ICIvIiwgbGFiZWw6ICJIb21lIiwgZ2x5cGg6ICJIIiwgZW5kOiB0cnVlIH0sCiAgeyB0bzogIi9ib29raW5ncyIsIGxhYmVsOiAiQm9va2luZ3MiLCBnbHlwaDogIkIiIH0sCiAgeyB0bzogIi9lbWJlZCIsIGxhYmVsOiAiQm9va2luZyBGb3JtIiwgZ2x5cGg6ICJGIiB9LAogIHsgdG86ICIvc2VydmljZXMiLCBsYWJlbDogIlNlcnZpY2VzICYgUHJpY2luZyIsIGdseXBoOiAiJCIgfSwKICB7IHRvOiAiL3NldHRpbmdzIiwgbGFiZWw6ICJTZXR0aW5ncyIsIGdseXBoOiAiUyIgfSwKXSBhcyBjb25zdDsKCi8qKiBQcmVzZW50YXRpb24gb25seTogY29ubmVjdGVkIG1vZGUgbmV2ZXIgcmVhZHMgdGhlIGRlbW8gdGVuYW50IHN0b3JlLiAqLwpleHBvcnQgZnVuY3Rpb24gUG9ydGFsU2hlbGwoeyBjaGlsZHJlbiwgdGVuYW50TmFtZSwgcm9sZUxhYmVsLCBtb2RlIH06IHsKICBjaGlsZHJlbjogUmVhY3ROb2RlOyB0ZW5hbnROYW1lOiBzdHJpbmc7IHJvbGVMYWJlbD86IHN0cmluZzsgbW9kZTogImRlbW8iIHwgImNvbm5lY3RlZCI7Cn0pIHsKICBjb25zdCBbbmF2T3Blbiwgc2V0TmF2T3Blbl0gPSB1c2VTdGF0ZShmYWxzZSk7CgogIHJldHVybiAoCiAgICA8ZGl2IGNsYXNzTmFtZT0ic2hlbGwiPgogICAgICA8YSBjbGFzc05hbWU9InNraXAtbGluayIgaHJlZj0iI21haW4tY29udGVudCI+CiAgICAgICAgU2tpcCB0byBjb250ZW50CiAgICAgIDwvYT4KICAgICAgPGhlYWRlciBjbGFzc05hbWU9InRvcGJhciI+CiAgICAgICAgPGJ1dHRvbgogICAgICAgICAgdHlwZT0iYnV0dG9uIgogICAgICAgICAgY2xhc3NOYW1lPSJuYXYtdG9nZ2xlIgogICAgICAgICAgYXJpYS1leHBhbmRlZD17bmF2T3Blbn0KICAgICAgICAgIGFyaWEtY29udHJvbHM9InBvcnRhbC1uYXYiCiAgICAgICAgICBvbkNsaWNrPXsoKSA9PiBzZXROYXZPcGVuKCh2KSA9PiAhdil9CiAgICAgICAgPgogICAgICAgICAgPHNwYW4gYXJpYS1oaWRkZW49InRydWUiPuKYsDwvc3Bhbj4gTWVudQogICAgICAgIDwvYnV0dG9uPgogICAgICAgIDxzcGFuIGNsYXNzTmFtZT0idG9wYmFyLWJyYW5kIj5Cb29raW5nIEx1bWluPC9zcGFuPgogICAgICAgIDxzcGFuIGNsYXNzTmFtZT0idG9wYmFyLXRlbmFudCI+e3RlbmFudE5hbWV9PC9zcGFuPgogICAgICA8L2hlYWRlcj4KICAgICAgPGRpdiBjbGFzc05hbWU9InNoZWxsLWJvZHkiPgogICAgICAgIDxuYXYgaWQ9InBvcnRhbC1uYXYiIGNsYXNzTmFtZT17YHNpZGViYXIgJHtuYXZPcGVuID8gIm9wZW4iIDogIiJ9YH0gYXJpYS1sYWJlbD0iUG9ydGFsIHNlY3Rpb25zIj4KICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPSJzaWRlYmFyLWJyYW5kIiBhcmlhLWhpZGRlbj0idHJ1ZSI+CiAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT0ic2lkZWJhci1sb2dvIj5CTDwvc3Bhbj4KICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPSJzaWRlYmFyLWJyYW5kLXRleHQiPgogICAgICAgICAgICAgIEJvb2tpbmcgTHVtaW4KICAgICAgICAgICAgICA8c21hbGw+QnVzaW5lc3MgUG9ydGFsPC9zbWFsbD4KICAgICAgICAgICAgPC9zcGFuPgogICAgICAgICAgPC9kaXY+CiAgICAgICAgICA8dWw+CiAgICAgICAgICAgIHtOQVZfSVRFTVMubWFwKChpdGVtKSA9PiAoCiAgICAgICAgICAgICAgPGxpIGtleT17aXRlbS50b30+CiAgICAgICAgICAgICAgICA8TmF2TGluawogICAgICAgICAgICAgICAgICB0bz17aXRlbS50b30KICAgICAgICAgICAgICAgICAgZW5kPXsiZW5kIiBpbiBpdGVtID8gaXRlbS5lbmQgOiBmYWxzZX0KICAgICAgICAgICAgICAgICAgY2xhc3NOYW1lPXsoeyBpc0FjdGl2ZSB9KSA9PiAoaXNBY3RpdmUgPyAibmF2LWxpbmsgYWN0aXZlIiA6ICJuYXYtbGluayIpfQogICAgICAgICAgICAgICAgICBvbkNsaWNrPXsoKSA9PiBzZXROYXZPcGVuKGZhbHNlKX0KICAgICAgICAgICAgICAgID4KICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPSJuYXYtZ2x5cGgiIGFyaWEtaGlkZGVuPSJ0cnVlIj4KICAgICAgICAgICAgICAgICAgICB7aXRlbS5nbHlwaH0KICAgICAgICAgICAgICAgICAgPC9zcGFuPgogICAgICAgICAgICAgICAgICB7aXRlbS5sYWJlbH0KICAgICAgICAgICAgICAgIDwvTmF2TGluaz4KICAgICAgICAgICAgICA8L2xpPgogICAgICAgICAgICApKX0KICAgICAgICAgIDwvdWw+CiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT0ic2lkZWJhci1mb290ZXIiPgogICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9InJvbGUtYmFkZ2UiPntyb2xlTGFiZWwgPz8gIlNpZ25lZCBvdXQifTwvc3Bhbj4KICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPSJzaWRlYmFyLXRlbmFudCI+e3RlbmFudE5hbWV9PC9zcGFuPgogICAgICAgICAgPC9kaXY+CiAgICAgICAgPC9uYXY+CiAgICAgICAgPG1haW4gaWQ9Im1haW4tY29udGVudCIgY2xhc3NOYW1lPSJjb250ZW50Ij4KICAgICAgICAgIDxwIGNsYXNzTmFtZT0ibm90ZS1iYW5uZXIiIHJvbGU9Im5vdGUiPnttb2RlID09PSAiZGVtbyIgPyAiRGVtbyB3b3Jrc3BhY2Ug4oCUIHNhbXBsZSBkYXRhIHN0YXlzIGluIHRoaXMgYXBwIGFuZCBpcyBub3Qgc3luY2hyb25pemVkLiIgOiAiQ29ubmVjdGVkIHdvcmtzcGFjZSDigJQgYXZhaWxhYmxlIHJlY29yZHMgY29tZSBmcm9tIHRoZSBidXNpbmVzcyBkYXRhYmFzZS4gUGF5bWVudHMgYW5kIGV4dGVybmFsIHByb3ZpZGVycyByZW1haW4gaW5hY3RpdmUuIn08L3A+CiAgICAgICAgICB7Y2hpbGRyZW59CiAgICAgICAgPC9tYWluPgogICAgICA8L2Rpdj4KICAgIDwvZGl2PgogICk7Cn0KCgpleHBvcnQgZnVuY3Rpb24gTGF5b3V0KHtjaGlsZHJlbn06IHtjaGlsZHJlbjogUmVhY3ROb2RlfSkgewogIGNvbnN0IHtjdHgsIHN0b3JlfSA9IHVzZVBvcnRhbCgpOwogIGNvbnN0IHRlbmFudCA9IGdldFRlbmFudChjdHgsIHN0b3JlKTsKICByZXR1cm4gPFBvcnRhbFNoZWxsIHRlbmFudE5hbWU9e3RlbmFudC5uYW1lfSByb2xlTGFiZWw9e2N0eC5yb2xlID09PSAiQlVTSU5FU1NfT1dORVIiID8gIk93bmVyIiA6ICJTdGFmZiJ9IG1vZGU9ImRlbW8iPntjaGlsZHJlbn08L1BvcnRhbFNoZWxsPjsKfQoNCg0K
+import { useState, type ReactNode } from "react";
+import { NavLink } from "react-router-dom";
+import { getTenant } from "../data/api";
+import { usePortal } from "./PortalProvider";
+
+export const NAV_ITEMS = [
+  { to: "/", label: "Home", glyph: "H", end: true },
+  { to: "/bookings", label: "Bookings", glyph: "B" },
+  { to: "/embed", label: "Booking Form", glyph: "F" },
+  { to: "/services", label: "Services & Pricing", glyph: "$" },
+  { to: "/settings", label: "Settings", glyph: "S" },
+] as const;
+
+/** Presentation only: connected mode never reads the demo tenant store. */
+export function PortalShell({ children, tenantName, roleLabel, mode }: {
+  children: ReactNode; tenantName: string; roleLabel?: string; mode: "demo" | "connected";
+}) {
+  const [navOpen, setNavOpen] = useState(false);
+
+  return (
+    <div className="shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <header className="topbar">
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-expanded={navOpen}
+          aria-controls="portal-nav"
+          onClick={() => setNavOpen((v) => !v)}
+        >
+          <span aria-hidden="true">☰</span> Menu
+        </button>
+        <span className="topbar-brand">Booking Lumin</span>
+        <span className="topbar-tenant">{tenantName}</span>
+      </header>
+      <div className="shell-body">
+        <nav id="portal-nav" className={`sidebar ${navOpen ? "open" : ""}`} aria-label="Portal sections">
+          <div className="sidebar-brand" aria-hidden="true">
+            <span className="sidebar-logo">BL</span>
+            <span className="sidebar-brand-text">
+              Booking Lumin
+              <small>Business Portal</small>
+            </span>
+          </div>
+          <ul>
+            {NAV_ITEMS.map((item) => (
+              <li key={item.to}>
+                <NavLink
+                  to={item.to}
+                  end={"end" in item ? item.end : false}
+                  className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+                  onClick={() => setNavOpen(false)}
+                >
+                  <span className="nav-glyph" aria-hidden="true">
+                    {item.glyph}
+                  </span>
+                  {item.label}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+          <div className="sidebar-footer">
+            <span className="role-badge">{roleLabel ?? "Signed out"}</span>
+            <span className="sidebar-tenant">{tenantName}</span>
+          </div>
+        </nav>
+        <main id="main-content" className="content">
+          <p className="note-banner" role="note">{mode === "demo" ? "Demo workspace — sample data stays in this app and is not synchronized." : "Connected workspace — available records come from the business database. Payments and external providers remain inactive."}</p>
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+
+export function Layout({children}: {children: ReactNode}) {
+  const {ctx, store} = usePortal();
+  const tenant = getTenant(ctx, store);
+  return <PortalShell tenantName={tenant.name} roleLabel={ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"} mode="demo">{children}</PortalShell>;
+}
+
+
