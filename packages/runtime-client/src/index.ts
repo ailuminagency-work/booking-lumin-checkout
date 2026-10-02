@@ -66,4 +66,6 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
 }
 export type RuntimeClient=ReturnType<typeof createRuntimeClient>;
 
+export { readPublicRuntimeConfig, type PublicRuntimeConfig, type RuntimeEnvironment, type RuntimeMode } from "./publicConfig";
+
 
