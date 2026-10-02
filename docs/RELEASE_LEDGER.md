@@ -413,3 +413,11 @@ Phase A hosted service creation (PH-A29):
 A28 push verification:
 - `git ls-remote` confirms `phase-a/staging-operationalization` at `b0573b9a894a28acf06fb4b23d9e14c449734b34`.
 - GitHub CLI remains unauthenticated; no draft PR or merge was created, and `main` remains untouched.
+
+## Phase A implementation batch: locked owner navigation and staging runtime contract
+
+- Pushed 5435a311da449ac6a451c39ecbd3a7af507cfcee on phase-a/staging-operationalization.
+- Changed packages/runtime-client/src/publicConfig.ts and its tests so staging-only aggregate surfaces can use VITE_RUNTIME_MODE=mock; production mock mode fails closed.
+- The same implementation line already contains the five-area portal navigation. GitHub CI 37079577432 is green for typecheck, tests, build, contamination, migration replay, RLS attacks, and domain security.
+- Netlify previews for checkout, portal, and command center were loaded and checked without console errors.
+- Isolated Supabase staging branch creation remains pending explicit confirmation of the displayed recurring branch cost ($0.01344/hour); no live migration or provider activation occurred.
