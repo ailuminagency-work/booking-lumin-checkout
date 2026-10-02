@@ -395,3 +395,15 @@ A27 hosted golden-flow harness:
 A27 push verification:
 - `git ls-remote` confirms `phase-a/staging-operationalization` at `5c853821b4398535a55e940452a0244048dc17e5`.
 - Draft PR creation remains blocked by unauthenticated GitHub CLI access; the branch is pushed and main remains untouched.
+
+A28 local migration replay runner:
+- Builder/implementation: `/root` after a bounded migration-runner builder cell was interrupted before modifying the integration line.
+- Independent reviewer: `/root/phase_a_windows_migration_runner_review` (PASS after duplicate-script correction)
+- Integrated and pushed candidate: `b0573b9a894a28acf06fb4b23d9e14c449734b34` on `phase-a/staging-operationalization`
+- Scope: adds a Windows-safe Node runner for the local harness plus sorted `0*.sql` migrations. It is explicit-opt-in, loopback-only, requires `PGDATABASE=lumin_phase_a_*`, rejects remote/service/password/options overrides and `DATABASE_URL`, and invokes `psql` with `-X` and `ON_ERROR_STOP=1`. It never creates or targets a hosted/live database.
+- Exact candidate checks: offline migration self-test; workspace typecheck; full API suite 63/63; workspace build; Phase A smoke self-test; staging frontend/API validator; hosted golden self-test; `git diff --check` all passed. The first review found and the correction removed one duplicate root script entry.
+- Runtime status: no local PostgreSQL listener is available, so no migration application is claimed. Hosted staging remains blocked by expired Render access.
+
+A28 push verification:
+- `git ls-remote` confirms `phase-a/staging-operationalization` at `b0573b9a894a28acf06fb4b23d9e14c449734b34`.
+- GitHub CLI remains unauthenticated; no draft PR or merge was created, and `main` remains untouched.
