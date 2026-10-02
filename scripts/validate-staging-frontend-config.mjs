@@ -7,6 +7,7 @@ const configs = [
 ];
 
 const placeholders = /__SET_|__PLATFORM_CONTEXT_ONLY__/;
+const stagingApiOrigin = 'https://booking-lumin-api-staging.onrender.com';
 for (const path of configs) {
   const source = readFileSync(path, "utf8");
   if (!source.includes('NODE_VERSION = "20"')) throw new Error(`${path}: missing Node version`);
@@ -17,8 +18,10 @@ for (const path of configs) {
     if (!source.includes('VITE_RUNTIME_MODE = "mock"')) throw new Error(`${path}: command center requires explicit mock mode until platform context exists`);
     if (source.includes("VITE_TENANT_ID")) throw new Error(`${path}: must not invent a tenant id`);
   } else {
-    if (!source.includes('VITE_API_ORIGIN = "__SET_RENDER_STAGING_API_URL__"')) throw new Error(`${path}: missing API origin placeholder`);
-    if (!placeholders.test(source)) throw new Error(`${path}: staging values must remain explicit placeholders until provisioned`);
+    if (!source.includes(`VITE_API_ORIGIN = "${stagingApiOrigin}"`)) throw new Error(`${path}: missing isolated Render staging API origin`);
+    if (!source.includes(`VITE_FLOW_API_URL = "${stagingApiOrigin}"`)) throw new Error(`${path}: missing isolated Render flow API origin`);
+    if (source.includes('__SET_RENDER_STAGING_API_URL__')) throw new Error(`${path}: Render staging API placeholder remains after provisioning`);
+    if (!placeholders.test(source)) throw new Error(`${path}: unresolved Supabase or tenant staging values must remain explicit placeholders`);
   }
 }
 console.log(`validated ${configs.length} frontend staging contracts`);

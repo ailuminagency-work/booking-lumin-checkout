@@ -4,12 +4,13 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # Set these in the Netlify site environment; placeholders intentionally fail
-  # the staging preflight until the authorized Render/Supabase endpoints exist.
+  # The API endpoint is the isolated Booking Lumin Render staging service.
+  # Supabase and tenant values remain explicit site-level placeholders until
+  # their staging ownership and values are provisioned.
   VITE_RUNTIME_ENV = "staging"
   VITE_RUNTIME_MODE = "supabase"
-  VITE_API_ORIGIN = "__SET_RENDER_STAGING_API_URL__"
-  VITE_FLOW_API_URL = "__SET_RENDER_STAGING_API_URL__"
+  VITE_API_ORIGIN = "https://booking-lumin-api-staging.onrender.com"
+  VITE_FLOW_API_URL = "https://booking-lumin-api-staging.onrender.com"
   VITE_SUPABASE_URL = "__SET_STAGING_SUPABASE_URL__"
   VITE_SUPABASE_PUBLISHABLE_KEY = "__SET_STAGING_SUPABASE_PUBLISHABLE_KEY__"
   VITE_TENANT_ID = "__SET_STAGING_TENANT_ID__"
