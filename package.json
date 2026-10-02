@@ -6,6 +6,7 @@
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "smoke:phase-a": "node scripts/phase-a-staging-smoke.mjs",
+    "golden:phase-a": "node scripts/phase-a-staging-golden.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present"
