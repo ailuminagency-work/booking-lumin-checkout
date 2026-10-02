@@ -371,3 +371,15 @@ Current runtime verification after A25:
 - The existing Netlify site `gregarious-longma-6158a8` is linked to `ailuminagency-work/booking-lumin-checkout`, allows `main` and `codex/reviewed-preview`, and its ready production-context deploy is `c5663c59e134e71beb511f509b3287ab0046bdff` from `main`. It does not publish `phase-a/staging-operationalization`, so A25 is not live there.
 - Render read-only inventory is blocked by an expired local Render token (`render services list` requested `render login`); no Render mutation was attempted. A Booking Lumin staging API health check is therefore not claimed.
 - `gh auth status` reports no logged-in GitHub host; no draft PR, merge, protected-main write, live migration, or provider activation occurred.
+
+A26 host-runtime acceptance candidate:
+- Builder: `/root/phase_a_host_runtime_health_builder`
+- Independent reviewer: `/root/phase_a_host_runtime_health_review` (PASS)
+- Integrated and pushed candidate: `9d0010f1021cbd8acd2d9fc7d1abcb4653929649` on `phase-a/staging-operationalization`
+- Scope: real `apps/api/src/main.ts` host process is started with synthetic configuration and exercised over a bounded loopback port. `/health` is asserted as exact 200 `{status:"ok"}` with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; `/ready` is asserted as fail-closed 503 `{status:"unready"}` against unavailable loopback PostgreSQL. Process closure is bounded and platform-aware, and captured output must not contain the synthetic database password.
+- Exact candidate checks: focused host-runtime test 1/1; full API unit suite 63/63; API typecheck; workspace build for API, checkout, command-center, and portal; Phase A smoke self-test; staging frontend/API validator; `git diff --check` all passed.
+- Runtime status: this proves local host-runtime behavior only. No hosted Render staging deployment or health check is claimed because Render access remains blocked by an expired local token. No live migration, provider credential, or production runtime was touched.
+
+A26 push verification:
+- `phase-a/staging-operationalization` is locally at `9d0010f1021cbd8acd2d9fc7d1abcb4653929649`; its local `origin/phase-a/staging-operationalization` tracking ref resolves to the same SHA after the builder push.
+- Draft PR creation remains blocked by unauthenticated GitHub CLI access; no merge, protected-main write, hosted deployment, live migration, or provider activation occurred.
