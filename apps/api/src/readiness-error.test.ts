@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {test} from 'vitest';
 import assert from 'node:assert/strict';
 import {readinessFailure} from './readiness-error';
 test('readiness logs only fixed categories, never error messages or arbitrary codes',()=>{
