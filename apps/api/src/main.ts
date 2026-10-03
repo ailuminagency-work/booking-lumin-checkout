@@ -4,7 +4,7 @@ import {createDraftWriter} from './draft';
 import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
 /**
- * @lumin/api — production entrypoint for the hostable Booking Lumin API service.
+ * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
  * Composes the framework-neutral flow HTTP BFF (`createFlowHttpServer`) over a
  * real PostgreSQL pool and REAL Supabase-JWT identity verification
@@ -60,7 +60,7 @@ function main(): void {
   const projectUrl = required("SUPABASE_URL");
   // The identity verifier validates bearer tokens against Supabase's
   // /auth/v1/user endpoint using the project's anon/publishable key as the
-  // `apikey`. That key is the required auth credential — there is no local
+  // `apikey`. That key is the required auth credential â€” there is no local
   // HS256/JWKS secret in this verifier. See supabase-auth.ts.
   const publicKey = required("SUPABASE_ANON_KEY");
   const ownerOrigins = originList("OWNER_ORIGINS");
@@ -69,7 +69,7 @@ function main(): void {
 
   // ---- Real Supabase-JWT identity verification ----------------------------
   // Constructing the verifier validates projectUrl/publicKey shape and throws
-  // INVALID_AUTH_CONFIGURATION on a bad config — surface that as a fatal start
+  // INVALID_AUTH_CONFIGURATION on a bad config â€” surface that as a fatal start
   // error without leaking the key.
   let verifyIdentity: (bearer: string) => Promise<{ userId: string; sessionId: string; expiresAt: string }>;
   try {
@@ -158,8 +158,9 @@ function main(): void {
   server.keepAliveTimeout = 5000;
 
   server.listen(listenPort, "0.0.0.0", () => {
-    // No secrets in logs.
-    console.log(`@lumin/api listening on 0.0.0.0:${listenPort} (PRODUCTION; real Supabase-JWT auth)`);
+    // Keep deployment logs truthful without printing secrets or arbitrary env text.
+    const environment = process.env.BOOKING_LUMIN_ENV === "staging" ? "STAGING" : process.env.BOOKING_LUMIN_ENV === "demo" ? "DEMO" : "PRODUCTION";
+    console.log("@lumin/api listening on 0.0.0.0:" + listenPort + " (" + environment + "; real Supabase-JWT auth)");
   });
 
   // ---- Graceful shutdown ---------------------------------------------------

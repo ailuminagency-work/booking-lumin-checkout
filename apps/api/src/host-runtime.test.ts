@@ -41,6 +41,7 @@ async function startHostRuntime(): Promise<{ child: HostChild; base: string; out
       PATH: process.env.PATH ?? '',
       SystemRoot: process.env.SystemRoot ?? '',
       ComSpec: process.env.ComSpec ?? '',
+      BOOKING_LUMIN_ENV: 'staging',
       DATABASE_URL: unavailableDatabase,
       SUPABASE_URL: 'https://aaaaaaaaaaaaaaaaaaaa.supabase.co',
       SUPABASE_ANON_KEY: 'sb_publishable_a26_synthetic_host_runtime_key',
@@ -104,6 +105,7 @@ describe('production host runtime', () => {
       expect(code).toBe(0);
       expect(signal).toBeNull();
     }
+    expect(runtime.output()).toContain('(STAGING; real Supabase-JWT auth)');
     expect(runtime.output()).not.toContain(secretSentinel);
   }, 20000);
 });
