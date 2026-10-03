@@ -19,6 +19,9 @@ services:
         value: "1"
       - key: NODE_ENV
         value: staging
+      # Public Supabase root CA; preserve certificate and hostname verification.
+      - key: NODE_EXTRA_CA_CERTS
+        value: /opt/render/project/src/apps/api/certs/supabase-root.crt
       - key: PORT
         value: "8080"
       - key: DATABASE_URL
