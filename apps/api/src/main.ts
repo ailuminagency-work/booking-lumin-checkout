@@ -1,6 +1,7 @@
 import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
 import {createRentalMockPaymentWriter} from './rental-mock-payment';
 import {createDraftWriter} from './draft';
+import {readinessFailure} from './readiness-error';
 import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
 /**
@@ -145,7 +146,10 @@ function main(): void {
       void pool
         .query("select 1")
         .then(() => send(res, 200, { status: "ready" }))
-        .catch(() => send(res, 503, { status: "unready" }));
+        .catch((error: unknown) => {
+          console.warn(JSON.stringify({event: 'readiness_failed', category: readinessFailure(error)}));
+          send(res, 503, { status: "unready" });
+        });
       return;
     }
     // Everything else is served by the authenticated flow BFF. The flow server
