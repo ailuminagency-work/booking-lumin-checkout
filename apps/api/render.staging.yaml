@@ -1,0 +1,36 @@
+# Render blueprint for the isolated Phase A staging API.
+#
+# This declares the staging service shape only. Secret values remain unset until
+# an authorized staging Supabase project and Render workspace are selected.
+services:
+  - type: web
+    name: booking-lumin-api-staging
+    runtime: node
+    plan: starter
+    rootDir: apps/api
+    buildCommand: npm ci --prefix ../.. && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: BOOKING_LUMIN_ENV
+        value: staging
+      - key: BOOKING_LUMIN_FAKE_PAYMENTS
+        value: "1"
+      - key: NODE_ENV
+        value: staging
+      # Public Supabase root CA; preserve certificate and hostname verification.
+      - key: NODE_EXTRA_CA_CERTS
+        value: /opt/render/project/src/apps/api/certs/supabase-root.crt
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: OWNER_ORIGINS
+        sync: false
+      - key: CUSTOMER_ORIGINS
+        sync: false

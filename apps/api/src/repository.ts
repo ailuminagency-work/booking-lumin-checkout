@@ -1,8 +1,20 @@
 import type { Pool } from "pg";
 import { RpcResults,type FlowRpc } from "./contracts";
+import { createAvailabilityEngine } from "@lumin/core";
+import type { AvailabilityOverride,AvailabilityRule,CapacityHold,SchedulingPolicy,Slot } from "@lumin/contracts";
 export type FlowCode="ROSTER_NOT_INITIALIZED"|"ROSTER_TOO_LARGE"|"ROSTER_UNSUPPORTED_TIME"|"INVALID_REQUEST"|"UNAUTHENTICATED"|"FORBIDDEN"|"CONFLICT"|"NOT_AVAILABLE"|"UNSUPPORTED_CONFIG"|"INTERNAL_ERROR"|"RATE_LIMITED";
 export class FlowError extends Error{constructor(readonly code:FlowCode){super(code);}}
 export interface FlowRepository{call(name:FlowRpc,params:readonly unknown[]):Promise<unknown>}
+export interface TenantProfile{
+ id:string;
+ name:string;
+ slug:string;
+ timezone:string;
+ currency:string;
+ status:"active"|"inactive"|"suspended";
+}
+export type TenantProfileReader=(actor:string,tenant:string)=>Promise<TenantProfile|null>;
+export type AvailabilityReader=(actor:string,tenant:string,service:string,from:string,to:string)=>Promise<{serviceId:string;durationMinutes:number;slots:Slot[]}|null>;
 const signatures:Record<FlowRpc,string[]>={owner_roster_snapshot:["uuid","uuid"],roster_provision:["uuid","uuid"],roster_worker_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_member_set:["uuid","uuid","bigint","uuid","uuid","boolean"],roster_eligibility_put:["uuid","uuid","bigint","uuid","uuid","boolean","boolean"],roster_shift_put:["uuid","uuid","bigint","uuid","uuid","text","timestamptz","timestamptz","text","boolean","boolean"],flow_owner_configurable_list:["uuid","uuid"],get_configurable_flow_draft:["uuid","uuid","uuid"],save_configurable_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_configurable_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],flow_owner_services:["uuid","uuid"],flow_owner_list:["uuid","uuid"],flow_owner_draft:["uuid","uuid","uuid"],flow_owner_requests:["uuid","uuid"],save_bound_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_bound_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],issue_flow_session:["uuid","text","text"],submit_flow_request:["text","text","text","jsonb","jsonb","timestamptz"]};
 function mapped(error:unknown,name:FlowRpc):FlowError{
  const code=(error as {code?:unknown})?.code;
@@ -42,3 +54,55 @@ export function createFlowRepository(pool:Pool):FlowRepository{return {async cal
   await client.query("commit");return safe;
  }catch(error){await client.query("rollback").catch(()=>{});throw mapped(error,name);}finally{client.release();}
 }};}
+
+/**
+ * Read the authenticated tenant profile through a fixed, parameterized query.
+ * The hosted service uses service_role for its bounded RPC transaction, so the
+ * membership predicate is explicit here rather than relying on client RLS.
+ * No settings, credentials, or platform-admin data are returned.
+ */
+export function createTenantProfileReader(pool:Pool):TenantProfileReader{return async(actor,tenant)=>{
+ const client=await pool.connect();
+ try{
+  await client.query("begin");
+  await client.query("set local role service_role");
+  const result=await client.query<TenantProfile>(
+   `select t.id,t.name,t.slug,t.timezone,t.currency,t.status
+      from public.tenants t
+     where t.id=$1::uuid
+       and exists(select 1 from public.tenant_members m where m.tenant_id=t.id and m.user_id=$2::uuid)`,
+   [tenant,actor],
+  );
+  await client.query("commit");
+  return result.rows[0]??null;
+ }catch(error){
+  await client.query("rollback").catch(()=>{});
+  throw error;
+ }finally{client.release();}
+};}
+
+/** Read only the tenant-owned scheduling inputs needed to compute slots.
+ * The pure engine remains the availability authority; SQL only supplies its
+ * tenant-bound inputs and existing capacity consumers. */
+export function createAvailabilityReader(pool:Pool,clock:()=>string=()=>new Date().toISOString()):AvailabilityReader{return async(actor,tenant,service,from,to)=>{
+ const client=await pool.connect();
+ try{
+  await client.query("begin");await client.query("set local role service_role");
+  const membership=await client.query<{timezone:string;duration_minutes:number}>(
+   `select t.timezone,s.duration_minutes
+      from public.tenants t join public.services s on s.tenant_id=t.id
+     where t.id=$1::uuid and s.id=$2::uuid and s.active
+       and exists(select 1 from public.tenant_members m where m.tenant_id=t.id and m.user_id=$3::uuid)`,
+   [tenant,service,actor],
+  );
+  const base=membership.rows[0];if(!base){await client.query("commit");return null;}
+  const rules=(await client.query<AvailabilityRule>(`select id,tenant_id as "tenantId",service_id as "serviceId",weekday,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_rules where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null)`,[tenant,service])).rows;
+  const overrides=(await client.query<AvailabilityOverride>(`select id,tenant_id as "tenantId",service_id as "serviceId",date::text,kind,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_overrides where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) and date between ($3::timestamptz at time zone $4)::date and ($5::timestamptz at time zone $4)::date`,[tenant,service,from,base.timezone,to])).rows;
+  const policyRow=(await client.query<SchedulingPolicy>(`select lead_time_minutes as "leadTimeMinutes",horizon_days as "horizonDays",slot_interval_minutes as "slotIntervalMinutes" from public.scheduling_policies where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) order by service_id nulls last limit 1`,[tenant,service])).rows[0]??{leadTimeMinutes:0,horizonDays:60,slotIntervalMinutes:30};
+  const consumers=(await client.query<CapacityHold & {booking_id:string}>(`select slot_start as start,slot_end as end,booking_id from public.capacity_holds where tenant_id=$1::uuid and service_id=$4::uuid and status='active' and expires_at>now() and slot_start < $2::timestamptz and slot_end > $3::timestamptz union all select b.slot_start as start,b.slot_end as end,b.id as booking_id from public.bookings b where b.tenant_id=$1::uuid and (b.selection ->> 'serviceId')::uuid=$4::uuid and b.state in ('pending_payment','confirmed','completed') and b.slot_start < $2::timestamptz and b.slot_end > $3::timestamptz and not exists (select 1 from public.capacity_holds h2 where h2.booking_id=b.id and h2.status='active' and h2.expires_at>now())`,[tenant,to,from,service])).rows;
+  const holds=[...new Map(consumers.map(consumer=>[`${consumer.booking_id}:${new Date(consumer.start).toISOString()}:${new Date(consumer.end).toISOString()}`,{start:consumer.start,end:consumer.end}])).values()];
+  const policy={leadTimeMinutes:Number(policyRow.leadTimeMinutes),horizonDays:Number(policyRow.horizonDays),slotIntervalMinutes:Number(policyRow.slotIntervalMinutes)};
+  const slots=createAvailabilityEngine().getSlots({tenantTimezone:base.timezone,serviceId:service,durationMinutes:Number(base.duration_minutes),policy,rules,overrides,existing:holds,now:clock(),from,to});
+  await client.query("commit");return {serviceId:service,durationMinutes:Number(base.duration_minutes),slots};
+ }catch(error){await client.query("rollback").catch(()=>{});throw error;}finally{client.release();}
+};}

@@ -1,5 +1,11 @@
+import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
+import {createRentalMockPaymentWriter} from './rental-mock-payment';
+import {createDraftWriter} from './draft';
+import {readinessFailure} from './readiness-error';
+import { createBookingConfirmation } from './confirmation';
+import { createReservationWriter } from './reservation';
 /**
- * @lumin/api — production entrypoint for the hostable Booking Lumin API service.
+ * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
  * Composes the framework-neutral flow HTTP BFF (`createFlowHttpServer`) over a
  * real PostgreSQL pool and REAL Supabase-JWT identity verification
@@ -10,14 +16,14 @@
  * start unless every required secret/config value is present, and never logs or
  * echoes a secret.
  *
- * Scope: FOUNDATION only (R2a). It exposes the pre-existing owner/customer flow
- * routes plus unauthenticated `/health` and `/ready`. It adds NO booking-confirm
- * path and writes no `state='confirmed'` — the reserve→pay→confirm authority is a
- * separate follow-up (R2b).
+ * Scope: authenticated flow, reservation and confirmation routes, plus health
+ * and readiness probes. Confirmation derives persisted payment evidence and
+ * delegates state transitions exclusively to the atomic database authority.
+ * Missing payment linkage or migration remains fail-closed.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
-import { createFlowRepository } from "./repository";
+import { createAvailabilityReader,createFlowRepository,createTenantProfileReader } from "./repository";
 import { createFlowHttpServer } from "./http";
 import { createSupabaseIdentityVerifier } from "./supabase-auth";
 
@@ -55,7 +61,7 @@ function main(): void {
   const projectUrl = required("SUPABASE_URL");
   // The identity verifier validates bearer tokens against Supabase's
   // /auth/v1/user endpoint using the project's anon/publishable key as the
-  // `apikey`. That key is the required auth credential — there is no local
+  // `apikey`. That key is the required auth credential â€” there is no local
   // HS256/JWKS secret in this verifier. See supabase-auth.ts.
   const publicKey = required("SUPABASE_ANON_KEY");
   const ownerOrigins = originList("OWNER_ORIGINS");
@@ -64,7 +70,7 @@ function main(): void {
 
   // ---- Real Supabase-JWT identity verification ----------------------------
   // Constructing the verifier validates projectUrl/publicKey shape and throws
-  // INVALID_AUTH_CONFIGURATION on a bad config — surface that as a fatal start
+  // INVALID_AUTH_CONFIGURATION on a bad config â€” surface that as a fatal start
   // error without leaking the key.
   let verifyIdentity: (bearer: string) => Promise<{ userId: string; sessionId: string; expiresAt: string }>;
   try {
@@ -100,6 +106,13 @@ function main(): void {
 
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
+    tenantProfile: createTenantProfileReader(pool),
+    availability: createAvailabilityReader(pool),
+    reservation: createReservationWriter(pool),
+    confirmation: createBookingConfirmation(pool),
+    draft: createDraftWriter(pool),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,
     customerOrigins,
@@ -133,7 +146,10 @@ function main(): void {
       void pool
         .query("select 1")
         .then(() => send(res, 200, { status: "ready" }))
-        .catch(() => send(res, 503, { status: "unready" }));
+        .catch((error: unknown) => {
+          console.warn(JSON.stringify({event: 'readiness_failed', category: readinessFailure(error)}));
+          send(res, 503, { status: "unready" });
+        });
       return;
     }
     // Everything else is served by the authenticated flow BFF. The flow server
@@ -146,8 +162,9 @@ function main(): void {
   server.keepAliveTimeout = 5000;
 
   server.listen(listenPort, "0.0.0.0", () => {
-    // No secrets in logs.
-    console.log(`@lumin/api listening on 0.0.0.0:${listenPort} (PRODUCTION; real Supabase-JWT auth)`);
+    // Keep deployment logs truthful without printing secrets or arbitrary env text.
+    const environment = process.env.BOOKING_LUMIN_ENV === "staging" ? "STAGING" : process.env.BOOKING_LUMIN_ENV === "demo" ? "DEMO" : "PRODUCTION";
+    console.log("@lumin/api listening on 0.0.0.0:" + listenPort + " (" + environment + "; real Supabase-JWT auth)");
   });
 
   // ---- Graceful shutdown ---------------------------------------------------

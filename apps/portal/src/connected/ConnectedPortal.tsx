@@ -3,7 +3,7 @@ import {createRuntimeClient,type RuntimeConfig,type Membership,type DraftRow,typ
 import { PortalShell } from "../components/Layout";
 import { PortalRoutes } from "../components/PortalRoutes";
 export function ConnectedPortal({config}:{config:RuntimeConfig}){
- const client=useMemo(()=>{try{return createRuntimeClient(config)}catch{return null}},[config.url,config.publishableKey,config.tenantId]);
+ const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId]);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
  const [drafts,setDrafts]=useState<DraftRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0);
  async function load(id:string){if(!client)return;const current=++generation.current;setBusy(true);setError('');setDrafts([]);setServices([]);try{const [d,s]=await Promise.all([client.drafts(id),client.services(id,true)]);if(current===generation.current){setDrafts(d);setServices(s)}}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to refresh.')}finally{if(current===generation.current)setBusy(false)}}
@@ -24,6 +24,7 @@ export function ConnectedPortal({config}:{config:RuntimeConfig}){
   <p>Only the connected simple-service catalog is available here. Editing and resource inventory are not available yet.</p>
  </section>;
  return <PortalShell mode="connected" tenantName={tenant ? `Business ${tenant}` : "Business Portal"} roleLabel={signedIn ? (role === "BUSINESS_OWNER" ? "Owner" : role === "BUSINESS_STAFF" ? "Staff" : "Member") : "Signed out"}>
+  {import.meta.env.VITE_RUNTIME_ENV === "staging" && <p className="note-banner" role="note">STAGING / TEST — connected workspace. Use test data only.</p>}
   {!client ? <section><h1>Business Portal</h1><p role="alert">Connected mode configuration is missing or invalid.</p></section> : !signedIn ?
    <section><h1>Sign in to your business</h1><form onSubmit={login}>
     <fieldset disabled={busy} className="form-stack"><label>Email<input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required /></label>

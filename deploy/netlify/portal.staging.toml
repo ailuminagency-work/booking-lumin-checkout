@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build --workspace @lumin/portal"
+  publish = "apps/portal/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  VITE_RUNTIME_ENV = "staging"
+  VITE_RUNTIME_MODE = "supabase"
+  VITE_API_ORIGIN = "https://booking-lumin-api-staging.onrender.com"
+  VITE_FLOW_API_URL = "https://booking-lumin-api-staging.onrender.com"
+  # Public Supabase URL/key are supplied by the staging site's environment.
+  # Owner tenant selection comes from authenticated memberships, never a build-time tenant.
+
+[context.deploy-preview]
+  command = "npm run build --workspace @lumin/portal"

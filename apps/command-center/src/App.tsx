@@ -6,6 +6,7 @@ import Businesses from "./pages/Businesses";
 import Economics from "./pages/Economics";
 import Health from "./pages/Health";
 import Overview from "./pages/Overview";
+import { readPublicRuntimeConfig } from "@lumin/runtime-client";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -48,11 +49,12 @@ const NAV_ITEMS = [
 ];
 
 export default function App() {
-  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
+  const runtime = readPublicRuntimeConfig(import.meta.env);
+  if (runtime.mode === "supabase") {
     return <ErrorBoundary><ConnectedCommandCenter config={{
-      url: import.meta.env.VITE_SUPABASE_URL ?? "",
-      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
-      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+      url: runtime.supabaseUrl,
+      publishableKey: runtime.supabasePublishableKey,
+      tenantId: runtime.tenantId,
     }} /></ErrorBoundary>;
   }
   return (

@@ -1,13 +1,25 @@
+import {MockPaymentInput,MockPaymentReceipt,type MockPaymentWriter} from './mock-payment';
+import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWriter} from './rental-mock-payment';
+import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
+import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
+import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
-import { FlowError,type FlowCode,type FlowRepository } from "./repository";
+import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ tenantProfile?:TenantProfileReader;
+ availability?:AvailabilityReader;
+ reservation?:ReservationWriter;
+ confirmation?:BookingConfirmation;
+ draft?:DraftWriter;
+ mockPayment?:MockPaymentWriter;
+ rentalMockPayment?:RentalMockPaymentWriter;
  /** Fresh verified user identity only. SQL rechecks current tenant membership. */
  authenticateOwner?:(credential:string)=>Promise<string|null>;
  ownerOrigins:readonly string[];
@@ -65,8 +77,64 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     }throw new FlowError("NOT_AVAILABLE");
    }
    const actor=await owner();
-   if([...url.searchParams.keys()].some(k=>k!=="tenantId")||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
+   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
+   if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==="/api/bookings/mock-payment"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=MockPaymentInput.parse(await jsonBody(req));
+    if(!options.mockPayment)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=MockPaymentReceipt.safeParse(await options.mockPayment(actor,tenant,body.bookingId));
+    if(!receipt.success||receipt.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
+   if(url.pathname==="/api/bookings/rental-mock-payment"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=RentalMockPaymentInput.parse(await jsonBody(req));
+    if(!options.rentalMockPayment)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=RentalMockPaymentReceipt.safeParse(await options.rentalMockPayment(actor,tenant,body.bookingId));
+    if(!receipt.success||receipt.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
+   if(url.pathname==="/api/bookings/draft"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=DraftInput.parse(await jsonBody(req));
+    if(!options.draft)throw new FlowError("UNSUPPORTED_CONFIG");
+    const receipt=DraftReceipt.safeParse(await options.draft(actor,tenant,body));
+    if(!receipt.success)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
+   }
+   if(url.pathname==="/api/bookings/confirm"){
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=ConfirmationInput.parse(await jsonBody(req));
+    if(!options.confirmation)throw new FlowError("UNSUPPORTED_CONFIG");
+    const result=ConfirmationReceipt.safeParse(await options.confirmation(actor,tenant,body.bookingId));
+    if(!result.success||result.data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...result.data}});return;
+   }
+   if(url.pathname==="/api/reservations/hold"){
+    if(req.method!=="POST"||!options.reservation)throw new FlowError("NOT_AVAILABLE");
+    const body=HoldInput.parse(await jsonBody(req));
+    const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
+    if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   if(url.pathname==="/api/profile"){
+    if(req.method!=="GET"||!options.tenantProfile)throw new FlowError("NOT_AVAILABLE");
+    const profile=await options.tenantProfile(actor,tenant);
+    if(!profile)throw new FlowError("NOT_AVAILABLE");
+    send(res,200,{ok:true,data:{schemaVersion:1,profile}});return;
+   }
+   if(url.pathname==="/api/availability"){
+    if(req.method!=="GET"||!options.availability)throw new FlowError("NOT_AVAILABLE");
+    const service=Uuid.parse(url.searchParams.get("serviceId"));
+    const from=z.string().datetime({offset:true}).parse(url.searchParams.get("from"));
+    const to=z.string().datetime({offset:true}).parse(url.searchParams.get("to"));
+    if(new Date(from).getTime()>=new Date(to).getTime())throw new FlowError("INVALID_REQUEST");
+    const data=await options.availability(actor,tenant,service,new Date(from).toISOString(),new Date(to).toISOString());
+    if(!data)throw new FlowError("NOT_AVAILABLE");
+    send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
    }

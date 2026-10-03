@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build", "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "scripts": { "dev": "vite", "build": "vite build", "build:staging": "vite build --mode staging", "typecheck": "tsc --noEmit", "test": "vitest run" },
   "dependencies": {
     "@lumin/runtime-client": "*",
     "@lumin/flow-ui": "*",

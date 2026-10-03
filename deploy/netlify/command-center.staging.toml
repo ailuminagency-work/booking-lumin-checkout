@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build --workspace @lumin/command-center"
+  publish = "apps/command-center/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  VITE_RUNTIME_ENV = "staging"
+  # Command Center remains mock-mode until an explicit platform-admin runtime
+  # context exists; a tenant UUID must never be invented here.
+  VITE_RUNTIME_MODE = "mock"
+
+[context.deploy-preview]
+  command = "npm run build"

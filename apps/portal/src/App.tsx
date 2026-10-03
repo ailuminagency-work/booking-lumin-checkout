@@ -8,6 +8,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PortalProvider } from "./components/PortalProvider";
 import { LegacyRedirects, PortalRoutes } from "./components/PortalRoutes";
+import { readPublicRuntimeConfig } from "@lumin/runtime-client";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -43,11 +44,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 
 /** Shared route context; mode determines data access, never a fallback to demo. */
 export function PortalApplication() {
-  return <><LegacyRedirects />{import.meta.env.VITE_MODE_OWNER_LOCAL_HARNESS === "true" ? <ModeOwnerPortal ownerApiUrl={import.meta.env.VITE_MODE_OWNER_API_URL ?? ""} draftApiUrl={import.meta.env.VITE_MODE_OWNER_DRAFT_API_URL ?? ""} /> : import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true" ? <FlowPortal apiUrl={import.meta.env.VITE_FLOW_API_URL ?? ""} /> : import.meta.env.VITE_RUNTIME_MODE === "supabase" ?
+  const runtime = readPublicRuntimeConfig(import.meta.env);
+  return <><LegacyRedirects />{import.meta.env.VITE_MODE_OWNER_LOCAL_HARNESS === "true" ? <ModeOwnerPortal ownerApiUrl={import.meta.env.VITE_MODE_OWNER_API_URL ?? ""} draftApiUrl={import.meta.env.VITE_MODE_OWNER_DRAFT_API_URL ?? ""} /> : import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true" ? <FlowPortal apiUrl={runtime.flowApiOrigin ?? ""} /> : runtime.mode === "supabase" ?
     <ConnectedPortal config={{
-      url: import.meta.env.VITE_SUPABASE_URL ?? "",
-      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
-      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
+      url: runtime.supabaseUrl,
+      publishableKey: runtime.supabasePublishableKey,
+      tenantId: runtime.tenantId,
     }} /> : <PortalProvider><Layout><PortalRoutes mode="demo" /></Layout></PortalProvider>}</>;
 }
 
