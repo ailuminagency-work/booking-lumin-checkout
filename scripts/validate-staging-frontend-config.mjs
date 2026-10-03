@@ -8,6 +8,7 @@ const configs = [
 
 const placeholders = /__SET_|__PLATFORM_CONTEXT_ONLY__/;
 const stagingApiOrigin = 'https://booking-lumin-api-staging.onrender.com';
+if (readFileSync("deploy/netlify/portal/netlify.toml", "utf8").replace(/\r\n/g, "\n") !== readFileSync("deploy/netlify/portal.staging.toml", "utf8").replace(/\r\n/g, "\n")) throw new Error("Netlify-selected Portal config must match the staging contract");
 for (const path of configs) {
   const source = readFileSync(path, "utf8");
   if (!source.includes('NODE_VERSION = "20"')) throw new Error(`${path}: missing Node version`);
@@ -21,7 +22,10 @@ for (const path of configs) {
     if (!source.includes(`VITE_API_ORIGIN = "${stagingApiOrigin}"`)) throw new Error(`${path}: missing isolated Render staging API origin`);
     if (!source.includes(`VITE_FLOW_API_URL = "${stagingApiOrigin}"`)) throw new Error(`${path}: missing isolated Render flow API origin`);
     if (source.includes('__SET_RENDER_STAGING_API_URL__')) throw new Error(`${path}: Render staging API placeholder remains after provisioning`);
-    if (!placeholders.test(source)) throw new Error(`${path}: unresolved Supabase or tenant staging values must remain explicit placeholders`);
+    if (path.includes("portal")) {
+      if (placeholders.test(source) || source.includes("VITE_TENANT_ID")) throw new Error(`${path}: owner configuration must use site environment and authenticated memberships`);
+      if (readFileSync("apps/portal/public/_redirects", "utf8").trim() !== "/* /index.html 200") throw new Error("Portal requires non-forced SPA fallback");
+    } else if (!placeholders.test(source)) throw new Error(`${path}: unresolved Supabase or tenant staging values must remain explicit placeholders`);
   }
 }
 console.log(`validated ${configs.length} frontend staging contracts`);

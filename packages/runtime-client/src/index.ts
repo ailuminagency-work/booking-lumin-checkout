@@ -1,5 +1,5 @@
 /** Browser-only public Supabase interface. No provider credentials or service role. */
-export interface RuntimeConfig { url: string; publishableKey: string; tenantId: string }
+export interface RuntimeConfig { url: string; publishableKey: string; tenantId: string; allowMembershipDiscovery?: boolean }
 export interface ServiceRow { id:string; tenant_id:string; name:string; currency:string; duration_minutes:number; base_price:number; active:boolean }
 export interface Membership { tenant_id:string; role:string }
 export interface DraftRow { id:string; reference:string; state:string; slot_start:string; created_at:string }
@@ -13,7 +13,7 @@ function publicKey(key:string) {
 export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch=fetch) {
  let base:URL;
  try{base=new URL(config.url)}catch{return fail('Connected mode configuration is missing or invalid.')}
- if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash||base.pathname!=='/'||!publicKey(config.publishableKey)||!uuid(config.tenantId))return fail('Connected mode configuration is missing or invalid.');
+ if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash||base.pathname!=='/'||!publicKey(config.publishableKey)||(!uuid(config.tenantId)&&!(config.allowMembershipDiscovery===true&&config.tenantId==='')))return fail('Connected mode configuration is missing or invalid.');
  let token:string|undefined;let generation=0;let userId:string|undefined;
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
   if(authenticated&&!token)return fail('Please sign in again.');
@@ -45,6 +45,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    return result.map(r=>{if(r.tenant_id!==tenantId||!uuid(r.id)||typeof r.name!=='string'||typeof r.currency!=='string'||!Number.isSafeInteger(r.duration_minutes)||Number(r.duration_minutes)<5||!Number.isSafeInteger(r.base_price)||Number(r.base_price)<0||typeof r.active!=='boolean')return fail('Catalog data is invalid.');return r as unknown as ServiceRow});
   },
   async saveDraft(input:DraftInput):Promise<{booking_id:string;reference:string}>{
+   if(!uuid(config.tenantId))return fail('A valid business is required before submitting a booking.');
    if(!uuid(input.serviceId)||input.idempotencyKey.length<16||!Number.isFinite(Date.parse(input.slotStart))||Date.parse(input.slotEnd)<=Date.parse(input.slotStart)||!Number.isFinite(Date.parse(input.slotEnd)))return fail('Check the requested service and date.');
    const result=rows(await request('/rest/v1/rpc/create_booking_draft','POST',{p_tenant_id:config.tenantId,p_idempotency_key:input.idempotencyKey,p_selection:{serviceId:input.serviceId,archetype:'simple'},p_slot_start:input.slotStart,p_slot_end:input.slotEnd,p_customer:input.customer}))[0];
    if(!result||!uuid(result.booking_id)||typeof result.reference!=='string')return fail('The saved response could not be verified. Retry this same request.');

@@ -5,6 +5,25 @@ const config:RuntimeConfig={url:'https://example.supabase.co',publishableKey:'sb
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
 function transport(responses:Response[]){return vi.fn<typeof fetch>(async()=>responses.shift()??json({private:'do not display'},500))}
 describe('public runtime transport boundary',()=>{
+ it('discovers authenticated memberships without a configured tenant but cannot submit an unbound booking',async()=>{
+  const f=transport([json({access_token:'synthetic'}),json({id:U}),json([{tenant_id:T,role:'BUSINESS_OWNER'}])]);
+  const owner=createRuntimeClient({...config,tenantId:'',allowMembershipDiscovery:true},f);
+  await expect(owner.memberships()).rejects.toThrow('sign in');
+  expect(f).not.toHaveBeenCalled();
+  await owner.signIn('synthetic@example.test','fixture');
+  expect(await owner.memberships()).toEqual([{tenant_id:T,role:'BUSINESS_OWNER'}]);
+  const calls=f.mock.calls.length;
+  await expect(owner.services()).rejects.toThrow();
+  await expect(owner.drafts('')).rejects.toThrow();
+  await expect(owner.saveDraft({serviceId:S,idempotencyKey:'synthetic-stable-key',slotStart:'2030-01-01T12:00:00Z',slotEnd:'2030-01-01T13:00:00Z',customer:{name:'Synthetic',email:'synthetic@example.test'}})).rejects.toThrow('valid business');
+  expect(f).toHaveBeenCalledTimes(calls);
+ });
+ it('keeps customer checkout and malformed owner tenant construction strict',()=>{
+  const f=transport([]);
+  expect(()=>createRuntimeClient({...config,tenantId:''},f)).toThrow('configuration');
+  expect(()=>createRuntimeClient({...config,tenantId:'spoof',allowMembershipDiscovery:true},f)).toThrow('configuration');
+  expect(f).not.toHaveBeenCalled();
+ });
  it('rejects server secret, service-role JWT, unsafe origins and non-UUID config before network access',()=>{
   const f=transport([]);for(const patch of [{publishableKey:'sb_secret_SYNTHETIC'},{publishableKey:`x.${btoa(JSON.stringify({role:'service_role'}))}.x`},{url:'http://example.supabase.co'},{url:'https://user:password@example.supabase.co'},{url:'https://example.supabase.co?secret=fixture'},{tenantId:'email@example.test'}])expect(()=>createRuntimeClient({...config,...patch},f)).toThrow('configuration');expect(f).not.toHaveBeenCalled();
  });
