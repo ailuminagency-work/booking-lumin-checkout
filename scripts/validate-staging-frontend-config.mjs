@@ -51,7 +51,9 @@ export function validateApiStaging(source) {
   for(const key of ["DATABASE_URL","SUPABASE_URL","SUPABASE_ANON_KEY","OWNER_ORIGINS","CUSTOMER_ORIGINS"]){
     const entry=entries.get(key);if(entry?.kind!=="sync"||entry.value!=="false")fail();
   }
-  const allowed=new Set(["NODE_ENV","PORT","BOOKING_LUMIN_ENV","BOOKING_LUMIN_FAKE_PAYMENTS","DATABASE_URL","SUPABASE_URL","SUPABASE_ANON_KEY","OWNER_ORIGINS","CUSTOMER_ORIGINS"]);
+  const ca=entries.get("NODE_EXTRA_CA_CERTS");
+  if(ca?.kind!=="value"||ca.value!=="/opt/render/project/src/apps/api/certs/supabase-root.crt")fail();
+  const allowed=new Set(["NODE_EXTRA_CA_CERTS","NODE_ENV","PORT","BOOKING_LUMIN_ENV","BOOKING_LUMIN_FAKE_PAYMENTS","DATABASE_URL","SUPABASE_URL","SUPABASE_ANON_KEY","OWNER_ORIGINS","CUSTOMER_ORIGINS"]);
   if([...entries.keys()].some(key=>!allowed.has(key)))fail();
 }
 const apiSource=readFileSync("apps/api/render.staging.yaml","utf8");
@@ -66,10 +68,11 @@ if(process.argv.includes("--self-test")){
     apiSource.replace("    autoDeploy: false","    autoDeploy: true"),
     apiSource.replace("    name: booking-lumin-api-staging","    name: booking-lumin-api-production"),
     apiSource.replace("      - key: DATABASE_URL\n        sync: false","      - key: DATABASE_URL\n        value: redacted-test-secret"),
+    apiSource.replace("/opt/render/project/src/apps/api/certs/supabase-root.crt","/etc/unknown-ca.crt"),
   ];
   // Normalize fixture newlines so the secret-value attack also runs on Windows.
   mutations[6]=apiSource.replace(/\r\n/g,"\n").replace("      - key: DATABASE_URL\n        sync: false","      - key: DATABASE_URL\n        value: redacted-test-secret");
   for(const source of mutations)assert.throws(()=>validateApiStaging(source),/^Error: API staging blueprint: invalid staging gate or secret configuration$/);
-  console.log("validated 7 negative API staging configuration fixtures");
+  console.log("validated 8 negative API staging configuration fixtures");
 }
 console.log("validated API staging gates and unset external configuration");
