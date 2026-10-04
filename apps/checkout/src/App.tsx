@@ -1,5 +1,6 @@
 import { HostedFlow } from "./flows/HostedFlow";
-import type { CSSProperties } from "react";
+import { useCallback, useState, type CSSProperties } from "react";
+import { HostedDetailingFlow } from "./flows/HostedDetailingFlow";
 import { ConnectedCheckout } from "./connected/ConnectedCheckout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { STEP_LABELS, visibleStepsFor, WizardControls } from "./components/WizardControls";
@@ -77,11 +78,17 @@ function Shell() {
   );
 }
 
+export function HostedInstallationFlow(props:{installationId:string;apiUrl:string;localHarness?:boolean}) {
+  const [detailing,setDetailing]=useState(false);
+  const unsupported=useCallback(()=>setDetailing(true),[]);
+  return detailing ? <HostedDetailingFlow {...props}/> : <HostedFlow {...props} onUnsupportedConfig={unsupported}/>;
+}
+
 export default function App() {
   const runtime = readPublicRuntimeConfig(import.meta.env);
   const relativePath = location.pathname.startsWith("/checkout/flow/") ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
   const hostedMatch = /^flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
-  if (hostedMatch) return <ErrorBoundary><HostedFlow installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
+  if (hostedMatch) return <ErrorBoundary><HostedInstallationFlow key={hostedMatch[1]!+runtime.flowApiOrigin} installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
   if (runtime.mode === "supabase") {
     return <ErrorBoundary><ConnectedCheckout config={{
       url: runtime.supabaseUrl,

@@ -1078,3 +1078,5 @@ export type RuntimeClient=ReturnType<typeof createRuntimeClient>;
 export { readPublicRuntimeConfig, type PublicRuntimeConfig, type RuntimeEnvironment, type RuntimeMode } from "./publicConfig";
 
 
+
+export * from './detailing-customer';
