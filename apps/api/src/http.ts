@@ -11,7 +11,7 @@ import { createServer,type IncomingMessage,type ServerResponse } from "node:http
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
-import { Uuid,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { Uuid,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -22,6 +22,8 @@ export interface FlowHttpOptions{
  customerHold?:CustomerHoldWriter;
  customerConfirmation?:CustomerConfirmation;
  customerMockPayment?:CustomerMockPayment;
+ /** Explicit staging test-publication gate; owner identity remains required. */
+ paidSimplePublication?:boolean;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -172,6 +174,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
+   }
+   const paid=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/publish$/);
+   if(paid){
+    if(!options.paidSimplePublication)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(paid[1]);const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");
+    const body=PublishPaidSimple.parse(raw);if(body.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError("FORBIDDEN");
+    const data=RpcResults.publish_paid_simple_flow.parse(await call("publish_paid_simple_flow",[actor,tenant,flow,body.serviceId,body.name,randomUUID(),randomUUID(),body.allowedOrigins]));
+    send(res,200,{ok:true,data:{...data,hostedPath:`/checkout/flow/${data.installationId}`}});return;
    }
    const lists:Record<string,FlowRpc>={"/api/configurable-flows":"flow_owner_configurable_list","/api/services":"flow_owner_services","/api/flows":"flow_owner_list","/api/requests":"flow_owner_requests"};
    if(req.method==="GET"&&Object.hasOwn(lists,url.pathname)){send(res,200,{ok:true,data:await call(lists[url.pathname]!,[actor,tenant])});return;}

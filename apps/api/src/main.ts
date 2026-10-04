@@ -117,7 +117,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,

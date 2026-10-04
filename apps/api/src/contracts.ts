@@ -1,7 +1,7 @@
 import { RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -12,6 +12,8 @@ export const ServiceRender=z.object({id:Uuid,name:z.string().min(1).max(200),dur
 export const Origin=z.string().max(2048).refine(s=>{try{const u=new URL(s);return u.protocol==="https:"&&u.origin===s;}catch{return false;}});
 export const SaveDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),config:BoundConfig}).strict();
 export const PublishDraft=z.object({expectedRevision:Version.refine(n=>n>0),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
+export {PaidSimpleRender};
+export const PublishPaidSimple=z.object({serviceId:Uuid,name:z.string().trim().min(1).max(200),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 const Render=z.object({versionId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
@@ -32,6 +34,7 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ publish_paid_simple_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3)}).strict(),
  owner_roster_snapshot:z.unknown().transform((v,ctx)=>{try{return parseRosterSnapshot(v);}catch{ctx.addIssue({code:"custom",message:"Invalid roster snapshot"});return z.NEVER;}}),
  roster_provision:RosterVersion,roster_worker_put:RosterVersion,roster_crew_put:RosterVersion,roster_crew_member_set:RosterVersion,roster_eligibility_put:RosterVersion,roster_shift_put:RosterVersion,
  flow_owner_services:z.object({services:z.array(ServiceRender).max(100)}).strict(),
@@ -44,7 +47,7 @@ export const RpcResults={
  flow_owner_requests:z.object({requests:z.array(z.object({id:Uuid,reference:z.string().min(1).max(100),state:z.literal("draft"),slotStart:z.string(),createdAt:z.string()}).strict()).max(100)}).strict(),
  save_bound_flow_draft:z.object({flowId:Uuid,revision:Version}).strict(),
  publish_bound_flow:z.object({versionId:Uuid,installationId:Uuid}).strict(),
- issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender])}).strict(),
+ issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender])}).strict(),
  submit_flow_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
 };
 export type FlowRpc=keyof typeof RpcResults;
