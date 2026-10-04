@@ -1,3 +1,5 @@
+import {PaidInstallHealth} from '@lumin/contracts';
+import type {PaidInstallHealthReader} from './paid-install-health';
 import {CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
 import type {OfferSchedulingCreator} from './owner-scheduling';
 import {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
@@ -45,6 +47,7 @@ export interface FlowHttpOptions{
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
+ paidInstallHealth?:PaidInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
@@ -260,6 +263,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const flow=Uuid.parse(rollback[1]).toLowerCase(),body=PaidRollbackInput.parse(await jsonBody(req));
     const parsed=PaidRollbackReceipt.safeParse(await options.paidRollback(actor,tenant,flow,body));
     if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const installHealth=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/health$/);
+   if(installHealth){
+    if(!options.paidSimplePublication||!options.paidInstallHealth)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(installHealth[1]),parsed=PaidInstallHealth.safeParse(await options.paidInstallHealth(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
    const versionHistory=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/versions$/);

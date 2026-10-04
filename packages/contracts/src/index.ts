@@ -51,3 +51,5 @@ export * from "./business-profile";
 export * from "./owner-catalog";
 
 export * from "./owner-scheduling";
+
+export * from './paid-install-health';
