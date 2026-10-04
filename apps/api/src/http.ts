@@ -1,3 +1,4 @@
+import {ConditionalCustomerFieldInstallHealth,type ConditionalCustomerFieldInstallHealthReader} from './conditional-customer-field-install-health';
 import {ConditionalCustomerFieldPublicationReceipt,type ConditionalCustomerFieldPublicationReader} from './conditional-customer-field-publication-reader';
 import type {BusinessProfileInitializer} from './existing-business-profile';
 import {InitializeBusinessProfile} from '@lumin/contracts';
@@ -65,6 +66,7 @@ export interface FlowHttpOptions{
  paidCustomerFieldVersionHistory?:CustomerFieldVersionHistoryReader;
  paidInstallHealth?:PaidInstallHealthReader;
  customerFieldInstallHealth?:CustomerFieldInstallHealthReader;
+ conditionalCustomerFieldInstallHealth?:ConditionalCustomerFieldInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
  paidCustomerFieldRollback?:CustomerFieldRollback;
  paidCustomerFieldRollbackReceipt?:CustomerFieldRollbackReceiptReader;
@@ -322,6 +324,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const flow=Uuid.parse(rollback[1]).toLowerCase(),body=PaidRollbackInput.parse(await jsonBody(req));
     const parsed=PaidRollbackReceipt.safeParse(await options.paidRollback(actor,tenant,flow,body));
     if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const conditionalFieldHealth=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/health$/);
+   if(conditionalFieldHealth){
+    if(!options.paidSimplePublication||!options.conditionalCustomerFieldInstallHealth)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(conditionalFieldHealth[1]),parsed=ConditionalCustomerFieldInstallHealth.safeParse(await options.conditionalCustomerFieldInstallHealth(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
    const customerFieldHealth=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/health$/);
