@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import {ConnectedBookingLinkQr} from './ConnectedBookingLinkQr';
 import {CustomerFieldInstallHealth,TenantId} from '@lumin/contracts';
 import type {PaidCustomerFieldPublicationReceipt,RuntimeClient} from '@lumin/runtime-client';
 
@@ -50,6 +51,7 @@ function InstallEvidence({client,tenantId,expected}:Props){
   <label>Staging launcher / modal code<textarea readOnly rows={4} value={script('launcher')} style={fieldStyle}/></label>
   <p>Select and copy the code for the selected immutable installation. These controlled snippets run only on the canonical Booking Lumin staging Checkout and Portal origins. Merchant website domains are not enabled. Payments stay simulated.</p>
   <p>The launcher opens after a click and keeps the same form when closed and reopened. The direct hosted link remains available if a browser cannot open a modal. Copying code does not certify browser loading or a complete embedded booking.</p>
+  <ConnectedBookingLinkQr tenantId={tenantId} expected={expected} checkoutOrigin={checkout}/>
   <h3>Install evidence</h3>
   <p>This read-only check does not load a customer form, publish, retry an uncertain writer or change installation settings. A missing result does not unlock an uncertain save, publication or rollback.</p>
   <button type="button" disabled={view.phase==='checking'} onClick={()=>void check()}>{view.phase==='checking'?'Checking install evidence...':'Check install evidence'}</button>
