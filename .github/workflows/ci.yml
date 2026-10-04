@@ -95,7 +95,8 @@ jobs:
             housekeeping_simple_offer_tests \
             housekeeping_offer_scheduling_tests \
             paid_install_health_tests \
-            customer_field_draft_tests; do
+            customer_field_draft_tests \
+            paid_customer_field_publication_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -273,3 +274,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/customer-field-draft.integration.ts
+      - name: Immutable customer fields and authoritative payment expiry rollback
+        env:
+          CUSTOMER_FIELD_PUBLICATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_v5_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_v5_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-publication.integration.ts
