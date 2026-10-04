@@ -30,3 +30,5 @@ export * from './paidPublication';
 export * from './paidOptionPublication';
 export * from './paidCustomerFieldPublication';
 export * from './paidConditionalCustomerFieldPublication';
+
+export * from "./detailingPublication";
