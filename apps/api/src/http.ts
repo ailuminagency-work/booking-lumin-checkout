@@ -1,3 +1,6 @@
+import {CreateDetailingOffer,DetailingOfferReceipt,buildDetailingService} from '@lumin/contracts';
+import {isDeepStrictEqual} from 'node:util';
+import type {DetailingOfferCreator,DetailingOfferReader} from './detailing-catalog';
 import {ConditionalCustomerFieldVersionHistory,type ConditionalCustomerFieldVersionHistoryReader} from './conditional-customer-field-version-history';
 import {ConditionalCustomerFieldRollbackInput,ConditionalCustomerFieldRollbackReceipt,type ConditionalCustomerFieldRollback} from './conditional-customer-field-rollback';
 import {ConditionalCustomerFieldRollbackReadReceipt,type ConditionalCustomerFieldRollbackReceiptReader} from './conditional-customer-field-rollback-receipt';
@@ -42,6 +45,8 @@ import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDr
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
+ detailingOfferCreate?:DetailingOfferCreator;
+ detailingOfferRead?:DetailingOfferReader;
  releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
  schedulingAuthoring?:boolean;
@@ -231,6 +236,12 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const service=Uuid.parse(scheduling[1]).toLowerCase(),body=CreateOfferScheduling.parse(await jsonBody(req)),result=OfferSchedulingReceipt.safeParse(await options.offerSchedulingCreate(actor,tenant,service,body));
     if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.serviceId!==service||!schedulingReceiptMatches(result.data,body))throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const detailing=url.pathname.match(/^\/api\/catalog\/detailing-offers(?:\/([^/]+))?$/);
+   if(detailing){
+    if(!options.catalogAuthoring)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(detailing[1]){if(req.method!=="GET"||!options.detailingOfferRead)throw new FlowError("NOT_AVAILABLE");const service=Uuid.parse(detailing[1]).toLowerCase(),receipt=DetailingOfferReceipt.safeParse(await options.detailingOfferRead(actor,tenant,service));if(!receipt.success||receipt.data.tenantId!==tenant.toLowerCase()||receipt.data.service.id!==service)throw new FlowError("INTERNAL_ERROR");send(res,200,{ok:true,data:receipt.data});return;}
+    if(req.method!=="POST"||!options.detailingOfferCreate)throw new FlowError("NOT_AVAILABLE");const body=CreateDetailingOffer.parse(await jsonBody(req)),receipt=DetailingOfferReceipt.safeParse(await options.detailingOfferCreate(actor,tenant,body));if(!receipt.success||receipt.data.tenantId!==tenant.toLowerCase()||!isDeepStrictEqual(receipt.data.service,buildDetailingService(receipt.data.service.id,tenant.toLowerCase(),body)))throw new FlowError("INTERNAL_ERROR");send(res,200,{ok:true,data:receipt.data});return;
    }
    if(url.pathname==="/api/catalog/simple-offers"){
     if(!options.catalogAuthoring||!options.simpleOfferCreate)throw new FlowError("UNSUPPORTED_CONFIG");

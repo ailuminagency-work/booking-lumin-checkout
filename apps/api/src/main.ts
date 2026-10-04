@@ -1,3 +1,4 @@
+import {createDetailingOfferCreator,createDetailingOfferReader} from './detailing-catalog';
 import {createConditionalCustomerFieldVersionHistoryReader} from './conditional-customer-field-version-history';
 import {createConditionalCustomerFieldRollback} from './conditional-customer-field-rollback';
 import {createConditionalCustomerFieldRollbackReceiptReader} from './conditional-customer-field-rollback-receipt';
@@ -133,7 +134,7 @@ function main(): void {
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
-    ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool)}:{}),
+    ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
     ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
