@@ -17,7 +17,18 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  }
  const tenant=(id:string)=>'?tenantId='+encodeURIComponent(z.string().uuid().parse(id));
  const uuid=(id:string)=>z.string().uuid().parse(id);
+ async function availability(token:string,from:string,to:string){
+  const instant=z.string().datetime({offset:true});
+  const start=Date.parse(from),end=Date.parse(to);
+  if(!/^[A-Za-z0-9_-]{43}$/.test(token)||!instant.safeParse(from).success||!instant.safeParse(to).success||!Number.isFinite(end-start)||end<=start||end-start>7*86400000)throw new FlowError('INVALID_REQUEST');
+  const schema=z.object({schemaVersion:z.literal(1),serviceId:z.string().uuid(),durationMinutes:z.number().int().min(5).max(1440),slots:z.array(z.object({start:instant,end:instant,remainingCapacity:z.number().int().positive()}).strict()).max(10080)}).strict().superRefine((value,ctx)=>{
+   const seen=new Set<string>();
+   for(const slot of value.slots){const a=Date.parse(slot.start),b=Date.parse(slot.end);if(!Number.isFinite(a)||!Number.isFinite(b)||a<start||a>=end||b>end||b-a!==value.durationMinutes*60000||seen.has(new Date(a).toISOString()))ctx.addIssue({code:'custom',message:'Invalid availability'});else seen.add(new Date(a).toISOString());}
+  });
+  return call('/api/flow-sessions/availability?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),schema,token);
+ }
  return {invalidate(){generation++;},
+ availability,
  services:(token:string,id:string)=>call('/api/services'+tenant(id),z.object({services:z.array(ServiceRender).max(100)}).strict(),token),
  flows:(token:string,id:string)=>call('/api/flows'+tenant(id),FlowList,token),
  draft:(token:string,id:string,flow:string)=>call('/api/flows/'+uuid(flow)+'/draft'+tenant(id),Draft,token),

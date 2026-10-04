@@ -31,3 +31,19 @@ it('ordering shares exact required service question set and rejects weakened pol
  expect(()=>orderedQuestions(service,{...config,steps:config.steps.slice(1)})).toThrow();
  expect(()=>orderedQuestions(service,{...config,steps:config.steps.map(s=>({...s,required:false}))})).toThrow();
 });
+it('loads session availability with bearer only, validates bounded ranges and slot contracts',async()=>{
+ const token='t'.repeat(43),from='2030-01-01T00:00:00Z',to='2030-01-02T00:00:00Z';
+ const data={schemaVersion:1,serviceId:id,durationMinutes:30,slots:[{start:'2030-01-01T10:00:00Z',end:'2030-01-01T10:30:00Z',remainingCapacity:1}]};
+ const fetcher=vi.fn(async()=>new Response(JSON.stringify({ok:true,data})));const client=createFlowClient('https://api.example',false,fetcher);
+ expect(await client.availability(token,from,to)).toEqual(data);
+ const [url,options]=fetcher.mock.calls[0] as unknown as [string,RequestInit];expect(url).toContain('/api/flow-sessions/availability?from=');expect(url).not.toMatch(/tenantId|serviceId|tttt/);expect(options.method).toBe('GET');expect(options.headers).toMatchObject({Authorization:'Bearer '+token});
+ for(const range of [[to,from],[from,'2030-01-09T00:00:00Z'],['invalid',to]])await expect(client.availability(token,range[0]!,range[1]!)).rejects.toMatchObject({code:'INVALID_REQUEST'});
+ expect(fetcher).toHaveBeenCalledTimes(1);
+ for(const change of [{serviceId:'bad'},{durationMinutes:0},{slots:[{...data.slots[0],end:'2030-01-01T10:15:00Z'}]},{slots:[{...data.slots[0],start:'invalid'}]},{slots:[{...data.slots[0],remainingCapacity:0}]},{slots:[data.slots[0],data.slots[0]]},{slots:[{...data.slots[0],start:'2029-12-31T10:00:00Z',end:'2029-12-31T10:30:00Z'}]},{secret:'private'}]){
+  const bad=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{...data,...change}})));await expect(bad.availability(token,from,to)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+ }
+});
+it('invalidates availability responses after JSON resolves',async()=>{
+ let resolve!:(value:unknown)=>void;const body=new Promise(r=>resolve=r);const client=createFlowClient('https://api.example',false,async()=>({ok:true,json:()=>body} as Response));
+ const request=client.availability('t'.repeat(43),'2030-01-01T00:00:00Z','2030-01-02T00:00:00Z');client.invalidate();resolve({ok:true,data:{schemaVersion:1,serviceId:id,durationMinutes:30,slots:[]}});await expect(request).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+});
