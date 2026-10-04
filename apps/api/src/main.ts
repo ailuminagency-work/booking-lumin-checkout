@@ -15,6 +15,7 @@ import {createPaidInstallHealthReader} from './paid-install-health';
 import {createCustomerFieldPublicationReader} from './customer-field-publication-reader';
 import {schedulingAuthoringEnabled,createOfferSchedulingCreator} from './owner-scheduling';
 import {createDetailingSchedulingCreator} from './detailing-scheduling';
+import {detailingPublicationEnabled,createDetailingPublicationApi} from './detailing-publication';
 import {catalogAuthoringEnabled,createSimpleOfferCreator} from './owner-catalog';
 import {businessOnboardingEnabled,createBusinessApi} from './business';
 import {createPaidPublicationRollback} from './paid-publication-rollback';
@@ -137,6 +138,7 @@ function main(): void {
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
     ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool),detailingSchedulingCreate:createDetailingSchedulingCreator(pool)}:{}),
+    ...(detailingPublicationEnabled(process.env)?{detailingPublication:true,detailingPublicationApi:createDetailingPublicationApi(pool,customerOrigins)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),

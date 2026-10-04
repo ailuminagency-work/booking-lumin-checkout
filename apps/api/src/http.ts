@@ -1,3 +1,5 @@
+import {SaveDetailingDraft,DetailingDraft,PublishDetailingDraft,DetailingPublicationReceipt,DetailingQuoteInput} from '@lumin/contracts';
+import {DetailingSessionResult,DetailingQuoteReceipt,type DetailingPublicationApi} from './detailing-publication';
 import {CreateDetailingOffer,DetailingOfferReceipt,buildDetailingService} from '@lumin/contracts';
 import {isDeepStrictEqual} from 'node:util';
 import type {DetailingOfferCreator,DetailingOfferReader} from './detailing-catalog';
@@ -51,6 +53,8 @@ export interface FlowHttpOptions{
  detailingOfferRead?:DetailingOfferReader;
  releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
+ detailingPublication?:boolean;
+ detailingPublicationApi?:DetailingPublicationApi;
  schedulingAuthoring?:boolean;
  offerSchedulingCreate?:OfferSchedulingCreator;
  detailingSchedulingCreate?:DetailingSchedulingCreator;
@@ -126,7 +130,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const url=new URL(req.url??"/","http://127.0.0.1");
    if(serveReleaseMetadata(req,res,url.pathname,releaseMetadata))return;
    if(url.pathname==="/health"&&req.method==="GET"){send(res,200,{ok:true,data:{mode:"LOCAL_HARNESS",providerConnections:false}});return;}
-   const customer=url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
+   const customer=url.pathname.startsWith("/api/detailing-installations/")||url.pathname.startsWith("/api/detailing-flow-sessions/")||url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
    const origin=originHeader(req,customer?customerOrigins:ownerOrigins);
    res.setHeader("Access-Control-Allow-Origin",origin);res.setHeader("Vary","Origin");
    if(req.method==="OPTIONS"){
@@ -138,6 +142,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname.startsWith('/api/detailing-')){
+     if(!options.detailingPublication||!options.detailingPublicationApi)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST'||[...url.searchParams].length)throw new FlowError('INVALID_REQUEST');
+     const installation=url.pathname.match(/^\/api\/detailing-installations\/([^/]+)\/sessions$/);
+     if(installation){const id=Uuid.parse(installation[1]).toLowerCase();z.object({}).strict().parse(await jsonBody(req));const sessionToken=randomBytes(32).toString('base64url'),data=DetailingSessionResult.parse(await options.detailingPublicationApi.session(id,tokenHash(sessionToken),origin));send(res,200,{ok:true,data:{...data,sessionToken}});return;}
+     if(url.pathname==='/api/detailing-flow-sessions/quote'){const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');const body=DetailingQuoteInput.parse(await jsonBody(req)),data=DetailingQuoteReceipt.parse(await options.detailingPublicationApi.quote(tokenHash(token),origin,body));if(data.selection.packageId!==body.packageId||data.selection.vehicleId!==body.vehicleId||data.selection.locationId!==body.locationId||data.selection.addonIds.length!==body.addonIds.length||data.selection.addonIds.some(id=>!body.addonIds.includes(id)))throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data});return;}
+     throw new FlowError('NOT_AVAILABLE');
+    }
     if(url.pathname==="/api/flow-sessions/availability"){
      if(req.method!=="GET"||!options.customerAvailability)throw new FlowError("NOT_AVAILABLE");
      if([...url.searchParams.keys()].some(k=>k!=="from"&&k!=="to")||url.searchParams.getAll("from").length!==1||url.searchParams.getAll("to").length!==1)throw new FlowError("INVALID_REQUEST");
@@ -231,6 +243,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
     if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   const detailingFlow=url.pathname.match(/^\/api\/detailing-flows\/([^/]+)\/(draft|publish-draft|publication)$/);
+   if(detailingFlow){
+    if(!options.detailingPublication||!options.detailingPublicationApi)throw new FlowError('UNSUPPORTED_CONFIG');
+    const flow=Uuid.parse(detailingFlow[1]).toLowerCase(),kind=detailingFlow[2],api=options.detailingPublicationApi;
+    if(kind==='draft'){if(req.method==='GET'){const data=DetailingDraft.parse(await api.read(actor,tenant,flow));if(data.flowId!==flow)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data});return;}if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');const body=SaveDetailingDraft.parse(await jsonBody(req)),data=DetailingDraft.parse(await api.save(actor,tenant,flow,body));if(data.flowId!==flow||data.revision!==body.expectedRevision+1||data.serviceId!==body.serviceId||data.name!==body.name||!isDeepStrictEqual(data.presentation,body.presentation))throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data});return;}
+    let data;if(kind==='publication'){if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');data=DetailingPublicationReceipt.parse(await api.recover(actor,tenant,flow));}else{if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');const body=PublishDetailingDraft.parse(await jsonBody(req));if(body.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError('FORBIDDEN');data=DetailingPublicationReceipt.parse(await api.publish(actor,tenant,flow,body));if(data.draftRevision!==body.expectedDraftRevision)throw new FlowError('INTERNAL_ERROR');}if(data.flowId!==flow)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data});return;
    }
    const detailingSchedule=url.pathname.match(/^\/api\/catalog\/detailing-offers\/([^/]+)\/scheduling$/);
    if(detailingSchedule){
