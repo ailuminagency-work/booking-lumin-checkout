@@ -161,6 +161,30 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const statuses:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
   return Object.hasOwn(messages,value.code)&&response.status===statuses[value.code]?new PaidSimpleDraftError('rejected',messages[value.code]!):undefined;
  };
+ async function listPaidSimpleDrafts(tenantId:string):Promise<readonly PaidSimpleOwnerDraft[]>{
+  if(!token||!userId)throw new PaidSimpleDraftError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PaidSimpleDraftError('not_sent','The Booking Lumin draft service is not configured.');
+  if(!uuid(tenantId))throw new PaidSimpleDraftError('not_sent','Choose a valid business before checking saved drafts.');
+  const current=generation,credential=token;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-simple-drafts?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}
+  catch{throw new PaidSimpleDraftError('not_sent','Saved drafts could not be checked. This does not verify an uncertain save or publication.');}
+  if(current!==generation)throw new PaidSimpleDraftError('not_sent','The session changed. Sign in again before checking saved drafts.');
+  if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PaidSimpleDraftError('not_sent','Please sign in again to check saved drafts.');}
+   if(response.status===403&&value.code==='FORBIDDEN')throw new PaidSimpleDraftError('not_sent','Only an authorized owner of this active business can check saved drafts.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PaidSimpleDraftError('not_sent','This workspace or a saved service does not support staging paid drafts.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PaidSimpleDraftError('not_sent','The saved draft list could not be verified. An unavailable list does not permit repeating an uncertain save or publication.');
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['drafts'])||!Array.isArray(data.drafts)||data.drafts.length>50)throw new PaidSimpleDraftError('not_sent','The saved draft list could not be validated.');
+  const result:PaidSimpleOwnerDraft[]=[];let previous='';
+  for(const entry of data.drafts){
+   if(!exact(entry,['flowId','name','revision','serviceId','presentation'])||!uuid(entry.flowId)||entry.flowId!==entry.flowId.toLowerCase()||entry.flowId<=previous||!draftRevision(entry.revision)||!uuid(entry.serviceId)||typeof entry.name!=='string'||!entry.name.trim()||entry.name!==entry.name.trim()||entry.name.length>200||!presentation(entry.presentation))throw new PaidSimpleDraftError('not_sent','The saved draft list could not be validated.');
+   previous=entry.flowId;result.push(Object.freeze({...entry,presentation:Object.freeze({...entry.presentation})}) as unknown as PaidSimpleOwnerDraft);
+  }
+  // Discovery grants no save, publish or retry authority; selection needs a fresh draft read.
+  return Object.freeze(result);
+ }
  async function loadPaidSimpleDraft(tenantId:string,flowId:string):Promise<PaidSimpleOwnerDraft>{
   draftAuthority(tenantId,flowId);
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
@@ -231,7 +255,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  return {
   signIn,signOut,
-  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,loadPaidSimpleDraft,savePaidSimpleDraft,
+  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,loadPaidSimpleDraft,savePaidSimpleDraft,
   paidSimpleSavedDraftPublicationState(tenantId:string):PaidSimpleSavedDraftPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=savedDraftPublications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
   paidSimpleDraftState(tenantId:string):PaidSimpleDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=ownerDrafts.get(tenantId);return state?.phase==='loaded'?{...state,draft:{...state.draft,presentation:{...state.draft.presentation}}}:state?{...state}:{phase:'ready'};},
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},

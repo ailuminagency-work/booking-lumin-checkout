@@ -1,9 +1,10 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {formatMoney} from '@lumin/contracts';
-import {PublicationError,type RuntimeClient,type ServiceRow,type PaidSimplePublicationState,type SavedPaidSimplePublication,PAID_SIMPLE_ACCENT_COLORS,PaidSimpleDraftError,type PaidSimpleDraftState,type PaidSimplePresentation} from '@lumin/runtime-client';
+import {PublicationError,type RuntimeClient,type ServiceRow,type PaidSimplePublicationState,type SavedPaidSimplePublication,PAID_SIMPLE_ACCENT_COLORS,PaidSimpleDraftError,type PaidSimpleDraftState,type PaidSimplePresentation,type PaidSimpleOwnerDraft} from '@lumin/runtime-client';
 export const STAGING_CHECKOUT_ORIGIN='https://booking-lumin-checkout-staging.netlify.app';
-type PublisherClient=Pick<RuntimeClient,'publishPaidSimple'|'recoverPaidSimplePublication'|'listPaidSimplePublications'|'paidSimplePublicationState'|'loadPaidSimpleDraft'|'savePaidSimpleDraft'|'paidSimpleDraftState'|'publishPaidSimpleDraft'|'paidSimpleSavedDraftPublicationState'>;
+type PublisherClient=Pick<RuntimeClient,'publishPaidSimple'|'recoverPaidSimplePublication'|'listPaidSimplePublications'|'paidSimplePublicationState'|'loadPaidSimpleDraft'|'savePaidSimpleDraft'|'paidSimpleDraftState'|'publishPaidSimpleDraft'|'paidSimpleSavedDraftPublicationState'|'listPaidSimpleDrafts'>;
 type SavedForms={phase:'idle'|'loading'|'loaded'|'failed';items:readonly SavedPaidSimplePublication[];error:string};
+type SavedDrafts={phase:'idle'|'loading'|'loaded'|'failed';items:readonly PaidSimpleOwnerDraft[];error:string};
 type DraftFields={flowId:string;serviceId:string;name:string;presentation:PaidSimplePresentation};
 type DraftEditorState={client:PublisherClient;tenantId:string;state:PaidSimpleDraftState;fields:DraftFields;notice:string;error:string};
 function draftEditorState(client:PublisherClient,tenantId:string):DraftEditorState{
@@ -12,10 +13,12 @@ function draftEditorState(client:PublisherClient,tenantId:string):DraftEditorSta
  return {client,tenantId,state,fields,notice:'',error:''};
 }
 function PaidSimpleDraftEditor({client,tenantId,services,catalogLoading,onPublicationChange}:{client:PublisherClient;tenantId:string;services:ServiceRow[];catalogLoading:boolean;onPublicationChange:()=>void}){
+ const [savedDraftSnapshot,setSavedDraftSnapshot]=useState<{client:PublisherClient;tenantId:string;list:SavedDrafts}>(()=>({client,tenantId,list:{phase:'idle',items:[],error:''}}));const draftListInFlight=useRef(false);
  const [publicationSnapshot,setPublicationSnapshot]=useState(()=>({client,tenantId,state:client.paidSimpleSavedDraftPublicationState(tenantId)}));
  const [snapshot,setSnapshot]=useState(()=>draftEditorState(client,tenantId));const generation=useRef(0),inFlight=useRef(false);
- useEffect(()=>{generation.current++;inFlight.current=false;setSnapshot(draftEditorState(client,tenantId));setPublicationSnapshot({client,tenantId,state:client.paidSimpleSavedDraftPublicationState(tenantId)});return()=>{generation.current++;}},[client,tenantId]);
+ useEffect(()=>{generation.current++;inFlight.current=false;draftListInFlight.current=false;setSavedDraftSnapshot({client,tenantId,list:{phase:'idle',items:[],error:''}});setSnapshot(draftEditorState(client,tenantId));setPublicationSnapshot({client,tenantId,state:client.paidSimpleSavedDraftPublicationState(tenantId)});return()=>{generation.current++;}},[client,tenantId]);
  const editor=snapshot.client===client&&snapshot.tenantId===tenantId?snapshot:draftEditorState(client,tenantId);
+ const savedDrafts:SavedDrafts=savedDraftSnapshot.client===client&&savedDraftSnapshot.tenantId===tenantId?savedDraftSnapshot.list:{phase:'idle',items:[],error:''};
  const {fields,state}=editor;const busy=state.phase==='saving'||state.phase==='loading';
  const savedPublication=publicationSnapshot.client===client&&publicationSnapshot.tenantId===tenantId?publicationSnapshot.state:client.paidSimpleSavedDraftPublicationState(tenantId);
  const publicationLocked=savedPublication.phase==='publishing'||savedPublication.phase==='unknown';
@@ -35,13 +38,19 @@ function PaidSimpleDraftEditor({client,tenantId,services,catalogLoading,onPublic
   catch(error){if(at===generation.current){const next=client.paidSimpleDraftState(tenantId);const retainedId=next.phase!=='ready'?next.flowId:state.phase==='ready'&&error instanceof PaidSimpleDraftError&&error.delivery==='rejected'?'':flowId;setSnapshot({...editor,state:next,fields:{...fields,flowId:retainedId},notice:'',error:error instanceof PaidSimpleDraftError?error.message:'Draft save status is unverified. Load this same draft before saving again.'});}}
   finally{if(at===generation.current)inFlight.current=false;}
  }
- async function load(){
-  if(publicationLocked||busy||inFlight.current)return;const flowId=fields.flowId.trim().toLowerCase();
+ async function load(selectedFlowId=fields.flowId){
+  if(publicationLocked||busy||inFlight.current)return;const flowId=selectedFlowId.trim().toLowerCase();
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(flowId)){setSnapshot({...editor,error:'Enter a known draft ID before loading.'});return;}
   const at=generation.current;inFlight.current=true;setSnapshot({...editor,state:{phase:'loading',flowId},fields:{...fields,flowId},notice:'',error:''});
   try{const draft=await client.loadPaidSimpleDraft(tenantId,flowId);if(at===generation.current)setSnapshot({client,tenantId,state:client.paidSimpleDraftState(tenantId),fields:{flowId:draft.flowId,serviceId:draft.serviceId,name:draft.name,presentation:{...draft.presentation}},notice:`Current draft revision ${draft.revision} loaded. This read shows current persisted fields; it does not verify a past uncertain save.`,error:''});}
   catch(error){if(at===generation.current)setSnapshot({...editor,state:client.paidSimpleDraftState(tenantId),fields:{...fields,flowId},notice:'',error:error instanceof PaidSimpleDraftError?error.message:'Current draft fields remain unverified. Load this same draft again before saving.'});}
   finally{if(at===generation.current)inFlight.current=false;}
+ }
+ async function refreshDrafts(){
+  if(draftListInFlight.current)return;const at=generation.current;draftListInFlight.current=true;setSavedDraftSnapshot({client,tenantId,list:{phase:'loading',items:[],error:''}});
+  try{const items=await client.listPaidSimpleDrafts(tenantId);if(at===generation.current)setSavedDraftSnapshot({client,tenantId,list:{phase:'loaded',items,error:''}});}
+  catch(error){if(at===generation.current)setSavedDraftSnapshot({client,tenantId,list:{phase:'failed',items:[],error:error instanceof PaidSimpleDraftError?error.message:'Saved drafts could not be verified. This does not release an uncertain save or publication.'}});}
+  finally{if(at===generation.current)draftListInFlight.current=false;}
  }
  function checkPublicationState(){setPublicationSnapshot({client,tenantId,state:client.paidSimpleSavedDraftPublicationState(tenantId)});onPublicationChange();}
  async function publishSaved(){
@@ -52,7 +61,7 @@ function PaidSimpleDraftEditor({client,tenantId,services,catalogLoading,onPublic
   catch(error){if(at===generation.current){setSnapshot({...editor,state:client.paidSimpleDraftState(tenantId),notice:'',error:error instanceof PublicationError?error.message:'Saved-draft publication status is unverified.'});checkPublicationState();}}
   finally{if(at===generation.current)inFlight.current=false;}
  }
- return <section aria-label="Saved draft design"><h2>Draft design</h2><p>Save or load a staging draft for this business. Draft saves do not publish a form or change its price. Load the saved fields before explicitly publishing this draft revision. The separate new-form action below does not use this draft.</p><form onSubmit={save}><fieldset disabled={busy||publicationLocked} className="form-stack" style={{minWidth:0}}>
+ return <section aria-label="Saved draft design"><h2>Draft design</h2><p>Save or load a staging draft for this business. Draft saves do not publish a form or change its price. Load the saved fields before explicitly publishing this draft revision. The separate new-form action below does not use this draft.</p><section aria-label="Saved staging drafts"><h3>Saved staging drafts</h3><p>Refresh to find up to 50 saved drafts for this business. Selecting one loads its current fields and replaces local edits. A list entry does not verify an uncertain save or publication, or make a draft published.</p><button type="button" disabled={savedDrafts.phase==='loading'} onClick={()=>void refreshDrafts()}>{savedDrafts.phase==='loading'?'Refreshing saved drafts...':'Refresh saved drafts'}</button>{savedDrafts.phase==='loading'&&<p role="status">Checking saved staging drafts...</p>}{savedDrafts.phase==='loaded'&&!savedDrafts.items.length&&<p role="status">No saved drafts were returned. This does not permit repeating an uncertain save or publication.</p>}{savedDrafts.error&&<p role="alert">{savedDrafts.error}</p>}{savedDrafts.items.length>0&&<ul>{savedDrafts.items.map(item=><li key={item.flowId}><h4>{item.name}</h4><p>Draft ID: {item.flowId}</p><p>Draft revision at last refresh: {item.revision}</p><button type="button" disabled={publicationLocked||busy||blocked&&state.flowId!==item.flowId} onClick={()=>void load(item.flowId)}>Load saved draft: {item.name}</button></li>)}</ul>}</section><form onSubmit={save}><fieldset disabled={busy||publicationLocked} className="form-stack" style={{minWidth:0}}>
   <label>Draft ID<input value={fields.flowId} readOnly={state.phase!=='ready'} onChange={event=>edit({flowId:event.target.value})} style={{width:'100%',maxWidth:'100%',minWidth:0}}/></label><p>Leave the ID empty for a new draft. To edit an existing draft, enter its ID and load it first. Keep the ID for loading after a reload.</p>
   <label>Draft simple service<select required disabled={catalogLoading} value={fields.serviceId} onChange={event=>edit({serviceId:event.target.value})}><option value="">Choose a service</option>{fields.serviceId&&!services.some(service=>service.id===fields.serviceId)&&<option value={fields.serviceId}>Saved service (unavailable in the current catalog)</option>}{services.map(service=><option key={service.id} value={service.id}>{service.name}</option>)}</select></label>
   <label>Draft name<input required maxLength={200} value={fields.name} onChange={event=>edit({name:event.target.value})}/></label>
