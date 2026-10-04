@@ -53,3 +53,4 @@ export * from "./owner-catalog";
 export * from "./owner-scheduling";
 
 export * from './paid-install-health';
+export * from './customer-draft-fields';
