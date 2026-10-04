@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {BusinessType,CreateBusiness,CreateSimpleOffer,type BusinessProfile} from '@lumin/contracts';
+import {ConnectedOfferScheduling} from './ConnectedOfferScheduling';
 import {getBusinessTemplateDefaults} from '@lumin/templates';
 import {BusinessOnboardingError,type RuntimeClient,type BusinessCreationState,type BusinessProfileRead,type SimpleOfferState,type SimpleOfferContext} from '@lumin/runtime-client';
 const types:Record<BusinessType,string>={HOUSEKEEPING:'Housekeeping',AUTO_DETAILING:'Auto detailing',VEHICLE_RENTAL:'Vehicle rental',EQUIPMENT_RENTAL:'Equipment rental',EVENT_RENTAL:'Event rental',JUNK_REMOVAL:'Junk removal'};
@@ -7,7 +8,7 @@ function BusinessDefaults({profile}:{profile:BusinessProfile}){
  const defaults=getBusinessTemplateDefaults(profile);
  return <section aria-label={'Unapplied setup defaults for business '+profile.tenantId}><h3>Unapplied setup defaults</h3><p>Business: {profile.tenantId}. Suggested catalog language: {defaults.catalog.plural}; option group: {defaults.catalog.optionsLabel}; resource group: {defaults.context.resourceLabel}.</p><p>These are structural defaults from the verified business type. They are not applied or persisted here. No prices, inventory, capacities or booking eligibility are configured by this description.</p></section>;
 }
-type Client=Pick<RuntimeClient,'createBusiness'|'businessCreationState'|'businessProfile'|'simpleOfferContext'|'createSimpleOffer'|'simpleOfferState'>;
+type Client=Pick<RuntimeClient,'createBusiness'|'businessCreationState'|'businessProfile'|'simpleOfferContext'|'createSimpleOffer'|'simpleOfferState'|'createOfferScheduling'|'offerSchedulingState'>;
 type Fields={name:string;slug:string;timezone:string;currency:string;businessType:string};
 const empty:Fields={name:'',slug:'',timezone:'',currency:'',businessType:''};
 type Props={client:Client;tenantId:string;role?:string;firstBusinessEligible?:boolean;staging:boolean;apiConfigured:boolean;contextBusy?:boolean;onStateChange:()=>void;onOpen:(profile:BusinessProfile)=>Promise<void>};
@@ -78,5 +79,6 @@ function HousekeepingOffer({client,tenantId,contextBusy,onStateChange,resumed}:{
  {reviewed&&<div role="dialog" aria-label="Review authoritative offer price" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();close();}}}><h4>Review authoritative service price</h4><p>Business: {tenantId}. {reviewed.body.name}; {reviewed.body.price.amount} minor units {reviewed.body.price.currency}; {reviewed.body.durationMinutes} minutes.</p><p>Description: {reviewed.body.description||'None'}. Confirming writes this new service and its price to the business catalog. This does not publish or enable appointment availability.</p><button ref={cancel} type="button" onClick={close}>Cancel offer creation</button><button type="button" disabled={contextBusy||locked} onClick={()=>void send(reviewed.body)}>Confirm create housekeeping offer</button></div>}
  {pending&&<p role="status">Checking or creating the reviewed offer...</p>}{(pending||state.phase==='unknown')&&<button type="button" onClick={sync}>Check this session's offer state</button>}
  {state.phase==='unknown'&&<><p role="alert">Offer creation is unverified. The account, business, details and attempt key remain frozen. Do not create another attempt.</p><p>Frozen offer: {state.attempt.name}; {state.attempt.price.amount} minor units {state.attempt.price.currency}; {state.attempt.durationMinutes} minutes. Attempt key: {state.attempt.idempotencyKey}.</p><button type="button" disabled={contextBusy} onClick={()=>void send(state.attempt)}>Retry this same housekeeping offer</button></>}
- {state.phase==='created'&&<><p role="status">Server offer receipt verified. Service ID: {state.receipt.service.id}; {state.receipt.service.name}; {state.receipt.service.price.amount} minor units {state.receipt.service.price.currency}; {state.receipt.service.durationMinutes} minutes.</p><p>Refresh the catalog to read this service. Availability and publication are not configured by this receipt.</p></>}{error&&<p role="alert">{error}</p>}</section>;
+ {state.phase==='created'&&<><p role="status">Server offer receipt verified. Service ID: {state.receipt.service.id}; {state.receipt.service.name}; {state.receipt.service.price.amount} minor units {state.receipt.service.price.currency}; {state.receipt.service.durationMinutes} minutes.</p><p>Refresh the catalog to read this service. Availability and publication are not configured by this receipt.</p></>}{state.phase==='created'&&<ConnectedOfferScheduling client={client} tenantId={tenantId} offer={state.receipt} contextBusy={contextBusy} onStateChange={onStateChange}/>}
+ {error&&<p role="alert">{error}</p>}</section>;
 }
