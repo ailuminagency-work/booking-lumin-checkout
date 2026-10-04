@@ -11,6 +11,8 @@ export interface PaidSimpleDraftReceipt {readonly flowId:string;readonly revisio
 export interface PaidSimpleOwnerDraft extends PaidSimpleDraftReceipt {readonly serviceId:string;readonly name:string;readonly presentation:PaidSimplePresentation}
 export interface PaidSimpleVersion {readonly versionId:string;readonly draftRevision:number;readonly name:string;readonly presentation:PaidSimplePresentation;readonly current:boolean;readonly publication:PaidSimplePublicationReceipt|null}
 export interface PaidSimpleVersionHistory {readonly flowId:string;readonly versions:readonly PaidSimpleVersion[]}
+export interface PaidSimpleRollbackReceipt extends PaidSimplePublicationReceipt {readonly flowId:string}
+export type PaidSimpleRollbackState={phase:'ready'}|{phase:'rolling_back'|'unknown';flowId:string;expectedCurrentVersionId:string;targetVersionId:string;targetPublication:PaidSimplePublicationReceipt}|{phase:'verified';flowId:string;receipt:PaidSimpleRollbackReceipt};
 export type PaidSimpleDraftState={phase:'ready'}|{phase:'saving'|'loading'|'unverified'|'conflict';flowId:string}|{phase:'saved';flowId:string;revision:number}|{phase:'loaded';flowId:string;revision:number;draft:PaidSimpleOwnerDraft};
 export class PaidSimpleDraftError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'conflict'|'unknown',message:string){super(message);}}
 export interface PaidSimpleSavedDraftPublicationReceipt {readonly flowId:string;readonly draftRevision:number;readonly publication:PaidSimplePublicationReceipt}
@@ -39,6 +41,11 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  let token:string|undefined;let generation=0;let userId:string|undefined;
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
  const recovering=new Set<string>();
+ const rollbacks=new Map<string,Exclude<PaidSimpleRollbackState,{phase:'ready'}>>();
+ const rollbackReads=new Set<string>();
+ const histories=new Map<string,PaidSimpleVersionHistory>();
+ const rollbackLocked=(tenantId:string)=>{const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='rolling_back'||state?.phase==='unknown';};
+ const requireNoRollback=(tenantId:string)=>{if(rollbackLocked(tenantId))throw new PublicationError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing drafts or publications.');};
  const savedDraftPublications=new Map<string,Exclude<PaidSimpleSavedDraftPublicationState,{phase:'ready'}>>();
  const ownerDrafts=new Map<string,Exclude<PaidSimpleDraftState,{phase:'ready'}>>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
@@ -47,7 +54,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -56,14 +63,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();
+  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
   try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear()}
+ function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
  const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
@@ -74,6 +81,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
   if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
   if(!uuid(tenantId)||!uuid(flowId)||!exact(input,['serviceId','name','checkoutOrigin'])||!uuid(input.serviceId)||typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>200||!httpsOrigin(input.checkoutOrigin))throw new PublicationError('not_sent','Check the service, form name and Checkout origin.');
+  requireNoRollback(tenantId);
   const previous=publications.get(tenantId);
   if(previous)throw new PublicationError(previous.phase==='published'?'not_sent':'unknown',previous.phase==='published'?'This session already has a published form.':'Publication status is unverified. Use the explicit receipt lookup for this attempt; do not repeat publication.');
   const current=generation;const credential=token;
@@ -92,6 +100,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   publications.set(tenantId,{phase:'published',flowId,receipt});return receipt;
  }
  async function recoverPaidSimplePublication(tenantId:string,flowId:string):Promise<PaidSimplePublicationReceipt>{
+  requireNoRollback(tenantId);
   if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
   if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
   if(!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Enter the exact publication attempt ID for this business.');
@@ -191,6 +200,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
   if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
   if(!uuid(tenantId)||!uuid(flowId)||flowId!==flowId.toLowerCase())throw new PublicationError('not_sent','Enter the exact form ID for this business.');
+  histories.delete(tenantId+'|'+flowId);
   const current=generation,credential=token;let response:Response,value:unknown;
   try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows/'+flowId+'/versions?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}
   catch{throw new PublicationError('not_sent','Version history could not be checked. This does not verify an uncertain save or publication.');}
@@ -212,11 +222,12 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    versions.push(Object.freeze({versionId:entry.versionId,draftRevision:entry.draftRevision,name:entry.name,presentation:Object.freeze({...entry.presentation}),current:entry.current,publication:receipt}));
   }
   if(currentCount!==1)throw new PublicationError('not_sent','Version history could not be validated.');
-  // Immutable evidence only: no draft, publication or retry authority changes.
-  return Object.freeze({flowId,versions:Object.freeze(versions)});
+  // History is evidence only; an unknown writer remains locked.
+  const result=Object.freeze({flowId,versions:Object.freeze(versions)});histories.set(tenantId+'|'+flowId,result);return result;
  }
  async function loadPaidSimpleDraft(tenantId:string,flowId:string):Promise<PaidSimpleOwnerDraft>{
   draftAuthority(tenantId,flowId);
+  if(rollbackLocked(tenantId))throw new PaidSimpleDraftError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing draft fields.');
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
   const previous=ownerDrafts.get(tenantId);
   if(previous&&(previous.phase==='saving'||previous.phase==='loading'||(previous.phase==='unverified'||previous.phase==='conflict')&&previous.flowId!==flowId))throw new PaidSimpleDraftError('not_sent','This business has a draft operation in progress or an unverified draft. Load that same draft first.');
@@ -235,6 +246,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  async function savePaidSimpleDraft(tenantId:string,flowId:string,input:{serviceId:string;name:string;presentation:PaidSimplePresentation;expectedRevision:number}):Promise<PaidSimpleDraftReceipt>{
   draftAuthority(tenantId,flowId);
+  if(rollbackLocked(tenantId))throw new PaidSimpleDraftError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing draft fields.');
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
   if(!exact(input,['serviceId','name','presentation','expectedRevision'])||!uuid(input.serviceId)||typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>200||!presentation(input.presentation)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0||input.expectedRevision>=Number.MAX_SAFE_INTEGER)throw new PaidSimpleDraftError('not_sent','Check the draft service, name, design choices and expected revision.');
   const previous=ownerDrafts.get(tenantId);
@@ -255,6 +267,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  async function publishPaidSimpleDraft(tenantId:string,flowId:string,input:{expectedDraftRevision:number;checkoutOrigin:string}):Promise<PaidSimpleSavedDraftPublicationReceipt>{
+  requireNoRollback(tenantId);
   if(!token||!userId||!bookingApiOrigin)throw new PublicationError('not_sent','Sign in with the configured publication service.');
   if(!uuid(tenantId)||!uuid(flowId)||flowId!==flowId.toLowerCase()||!exact(input,['expectedDraftRevision','checkoutOrigin'])||!draftRevision(input.expectedDraftRevision)||!httpsOrigin(input.checkoutOrigin))throw new PublicationError('not_sent','Choose the verified draft revision and Checkout origin.');
   const prior=savedDraftPublications.get(tenantId),publication=publications.get(tenantId),draft=ownerDrafts.get(tenantId);
@@ -283,8 +296,53 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }
   unknown();throw new PublicationError('unknown','Saved-draft publication status remains unverified. This response does not prove the earlier attempt failed. Retry only the same frozen revision and origin.');
  }
+
+ const rollbackAuthority=(tenantId:string,flowId:string)=>{
+  if(!token||!userId||!bookingApiOrigin)throw new PublicationError('not_sent','Sign in with the configured publication service.');
+  if(!uuid(tenantId)||tenantId!==tenantId.toLowerCase()||!uuid(flowId)||flowId!==flowId.toLowerCase())throw new PublicationError('not_sent','Choose the exact business and form ID.');
+ };
+ const writerUncertain=(tenantId:string)=>{
+  const matches=(id:string)=>id.toLowerCase()===tenantId;
+  return [...recovering].some(matches)||[...publications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...savedDraftPublications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...ownerDrafts].some(([id,state])=>matches(id)&&state.phase!=='saved'&&state.phase!=='loaded');
+ };
+ const samePublication=(left:PaidSimplePublicationReceipt,right:PaidSimplePublicationReceipt)=>left.versionId===right.versionId&&left.installationId===right.installationId&&left.renderSchemaVersion===right.renderSchemaVersion&&left.hostedPath===right.hostedPath;
+ async function rollbackPaidSimplePublication(tenantId:string,flowId:string,input:{expectedCurrentVersionId:string;targetVersionId:string}):Promise<PaidSimpleRollbackReceipt>{
+  rollbackAuthority(tenantId,flowId);requireNoRollback(tenantId);
+  if(writerUncertain(tenantId))throw new PublicationError('not_sent','An uncertain draft or publication must be verified before rollback.');
+  if(!exact(input,['expectedCurrentVersionId','targetVersionId'])||!uuid(input.expectedCurrentVersionId)||!uuid(input.targetVersionId))throw new PublicationError('not_sent','Select a verified prior version and current version.');
+  const history=histories.get(tenantId+'|'+flowId),currentVersion=history?.versions.find(version=>version.current),target=history?.versions.find(version=>version.versionId===input.targetVersionId);
+  if(!currentVersion?.publication||currentVersion.versionId!==input.expectedCurrentVersionId||!target?.publication||target.current||target.draftRevision>=currentVersion.draftRevision)throw new PublicationError('not_sent','Refresh version history and review an eligible prior version before rollback.');
+  const attempt={flowId,expectedCurrentVersionId:input.expectedCurrentVersionId,targetVersionId:input.targetVersionId,targetPublication:target.publication},at=generation,credential=token!;
+  rollbacks.set(tenantId,{phase:'rolling_back',...attempt});histories.delete(tenantId+'|'+flowId);
+  const unknown=()=>rollbacks.set(tenantId,{phase:'unknown',...attempt});let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin!+'/api/paid-simple-flows/'+flowId+'/rollback?tenantId='+encodeURIComponent(tenantId),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:JSON.stringify({expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId})});value=await response.json();}
+  catch{if(at===generation)unknown();throw new PublicationError('unknown','Rollback outcome is unverified. Do not repeat rollback; explicitly check this form current receipt.');}
+  if(at!==generation)throw new PublicationError('unknown','The session changed. This rollback outcome cannot be verified here.');
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  const receipt=exact(data,['flowId','versionId','installationId','renderSchemaVersion','hostedPath'])&&data.flowId===flowId?publicationReceipt(response,{ok:true,data:{versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:data.renderSchemaVersion,hostedPath:data.hostedPath}}):undefined;
+  if(receipt&&samePublication(receipt,attempt.targetPublication)){const result=Object.freeze({flowId,...receipt});rollbacks.set(tenantId,{phase:'verified',flowId,receipt:result});publications.set(tenantId,{phase:'published',flowId,receipt});return result;}
+  const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&response.status===codes[value.code]){rollbacks.delete(tenantId);throw new PublicationError('rejected','Rollback was rejected. Refresh version history and review the current version and catalog eligibility before another explicit action.');}
+  if(response.status===401&&exact(value,['ok','code'])&&value.ok===false&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('unknown','Sign in again to check this form current receipt.');}
+  unknown();throw new PublicationError('unknown','Rollback outcome is unverified. Its receipt could not be validated; check the current receipt without repeating rollback.');
+ }
+ async function reconcilePaidSimpleRollback(tenantId:string):Promise<PaidSimpleRollbackReceipt>{
+  const attempt=rollbacks.get(tenantId);if(!attempt||attempt.phase!=='unknown')throw new PublicationError('not_sent','Only an uncertain rollback can be checked; wait for an in-flight action to finish.');
+  rollbackAuthority(tenantId,attempt.flowId);if(rollbackReads.has(tenantId))throw new PublicationError('not_sent','The current rollback receipt is already being checked.');
+  const at=generation;rollbackReads.add(tenantId);
+  try{
+   let history:PaidSimpleVersionHistory;try{history=await paidSimpleVersionHistory(tenantId,attempt.flowId);}catch{throw new PublicationError('unknown','The current rollback receipt could not be checked. Rollback remains unverified and locked.');}
+   if(at!==generation)throw new PublicationError('unknown','The session changed. This rollback outcome cannot be verified here.');
+   const receipt=history.versions.find(version=>version.current)?.publication;
+   if(!receipt||!samePublication(receipt,attempt.targetPublication))throw new PublicationError('unknown','The current receipt does not verify the rollback target and installation. Rollback remains locked; refresh history for evidence or ask for help.');
+   const result=Object.freeze({flowId:attempt.flowId,...receipt});rollbacks.set(tenantId,{phase:'verified',flowId:attempt.flowId,receipt:result});publications.set(tenantId,{phase:'published',flowId:attempt.flowId,receipt});return result;
+  }finally{if(at===generation)rollbackReads.delete(tenantId);}
+ }
+
  return {
   signIn,signOut,
+  rollbackPaidSimplePublication,reconcilePaidSimpleRollback,
+  paidSimpleRollbackState(tenantId:string):PaidSimpleRollbackState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='verified'?{...state,receipt:{...state.receipt}}:state?{...state,targetPublication:{...state.targetPublication}}:{phase:'ready'};},
   publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,loadPaidSimpleDraft,savePaidSimpleDraft,
   paidSimpleSavedDraftPublicationState(tenantId:string):PaidSimpleSavedDraftPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=savedDraftPublications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
   paidSimpleDraftState(tenantId:string):PaidSimpleDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=ownerDrafts.get(tenantId);return state?.phase==='loaded'?{...state,draft:{...state.draft,presentation:{...state.draft.presentation}}}:state?{...state}:{phase:'ready'};},
