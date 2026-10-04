@@ -2,6 +2,8 @@ import {useMemo,useRef,useState,type FormEvent} from 'react';
 import {createRuntimeClient,type RuntimeConfig,type Membership,type BookingRow,type ServiceRow} from '@lumin/runtime-client';
 import { PortalShell } from "../components/Layout";
 import { PortalRoutes } from "../components/PortalRoutes";
+import {Link} from 'react-router-dom';
+import {ConnectedBookingDetail} from './ConnectedBookingDetail';
 export function ConnectedPortal({config}:{config:RuntimeConfig}){
  const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId]);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
@@ -15,7 +17,7 @@ export function ConnectedPortal({config}:{config:RuntimeConfig}){
  const bookingList = <section><h1>Bookings</h1><h2>Recent bookings and requests</h2>
   {busy ? <p role="status">Loading…</p> : drafts.length === 0 ? <p>No bookings found.</p> :
    <div className="table-wrap"><table><thead><tr><th>Reference</th><th>Scheduled time</th><th>Status</th></tr></thead><tbody>
-    {drafts.map(d => <tr key={d.id}><td>{d.reference}</td><td>{new Date(d.slot_start).toLocaleString()}</td><td>{bookingLabels[d.state]}</td></tr>)}
+    {drafts.map(d => <tr key={d.id}><td><Link to={`/bookings/${d.id}`}>{d.reference}</Link></td><td>{new Date(d.slot_start).toLocaleString()}</td><td>{bookingLabels[d.state]}</td></tr>)}
    </tbody></table></div>}
   <p>Up to 100 latest records. Status comes from the business database. Unconfirmed requests do not guarantee an appointment.</p>
  </section>;
@@ -37,7 +39,7 @@ export function ConnectedPortal({config}:{config:RuntimeConfig}){
     {members.length > 0 && <><label>Business<select disabled={busy} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id} · {m.role}</option>)}
     </select></label><button disabled={busy} onClick={() => void load(tenant)}>Refresh</button></>}
-   </div>{members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} services={serviceList} />}</>}
+   </div>{members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} />}</>}
   {error && <p role="alert">{error}</p>}
  </PortalShell>;
 }
