@@ -453,3 +453,11 @@ A28 push verification:
 - Added transport and final-expiry regressions. Host subprocess test now uses Node's direct tsx loader and writable TEMP/TMP; its health/readiness/shutdown assertions are unchanged.
 - No financial authority was widened, no confirmation writer added, no production or LeadGate mutation. Customer holds/payment remain next implementation steps; this batch does not certify the housekeeping golden flow or raise scores.
 - Staging migration/deploy and hosted success/denial checks are required after exact-candidate CI passes. Preserve PR97 as draft. Next executable cell is customer hold bound to the same session and request provenance; do not substitute an owner identity.
+
+Customer availability hosted verification:
+- Pushed candidate `55c942c292eb1b6b1b97df2ea76458b682c2790d`; exact GitHub CI `37174382801` succeeded, including migration replay and observed-lock expiry integration. API suite passed 73/73 with the threads pool.
+- Migration0034 applied only to isolated staging `hqgtjztrsizjrsidtlqt`. Render deploy `dep-db0siudg1s2s73fg28tg` is LIVE at the same SHA; health and readiness both HTTP200.
+- Hosted synthetic installation session returned15 available slots. Tenant spoof was400, missing bearer401, foreign origin403 and unknown session403. Tokens stayed in process memory; output evidence contains no credentials.
+- Canonical Portal deploy `6ac1c8de4d23ca0009e88b90` and Checkout deploy `6ac1c8de2df2c6000895bcef` are ready at55c942c. Browser then reproduced a Checkout direct-link Netlify404 at `/checkout/flow/:installation`; this is a deployment routing defect, not a hosted golden-flow pass.
+- Active exclusive cells: `/root/customer_hold_builder` owns API/session hold + migration0035 in `work/customer-hold-cell`; `/root/customer_availability_ui_builder` owns flow client and HostedFlow UI in `work/customer-availability-ui-cell`. Root owns Checkout static routing and ledger/CI integration. No payment or confirmation authority is widened.
+- Scores remain overall35, Portal40, Staging45. Full hosted booking, payment, confirmation and Portal acceptance are still incomplete.
