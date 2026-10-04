@@ -1,3 +1,5 @@
+import {CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
+import type {OfferSchedulingCreator} from './owner-scheduling';
 import {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
 import type {SimpleOfferCreator} from './owner-catalog';
 import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
@@ -24,6 +26,8 @@ import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,ty
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ schedulingAuthoring?:boolean;
+ offerSchedulingCreate?:OfferSchedulingCreator;
  catalogAuthoring?:boolean;
  simpleOfferCreate?:SimpleOfferCreator;
  businessOnboarding?:boolean;
@@ -181,6 +185,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
     if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   const scheduling=url.pathname.match(/^\/api\/catalog\/simple-offers\/([^/]+)\/scheduling$/);
+   if(scheduling){
+    if(!options.schedulingAuthoring||!options.offerSchedulingCreate)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const service=Uuid.parse(scheduling[1]).toLowerCase(),body=CreateOfferScheduling.parse(await jsonBody(req)),result=OfferSchedulingReceipt.safeParse(await options.offerSchedulingCreate(actor,tenant,service,body));
+    if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.serviceId!==service||!schedulingReceiptMatches(result.data,body))throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==="/api/catalog/simple-offers"){
     if(!options.catalogAuthoring||!options.simpleOfferCreate)throw new FlowError("UNSUPPORTED_CONFIG");

@@ -49,3 +49,5 @@ export * from "./webhooks";
 export * from "./business-profile";
 
 export * from "./owner-catalog";
+
+export * from "./owner-scheduling";

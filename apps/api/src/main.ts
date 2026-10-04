@@ -1,3 +1,4 @@
+import {schedulingAuthoringEnabled,createOfferSchedulingCreator} from './owner-scheduling';
 import {catalogAuthoringEnabled,createSimpleOfferCreator} from './owner-catalog';
 import {businessOnboardingEnabled,createBusinessApi} from './business';
 import {createPaidPublicationRollback} from './paid-publication-rollback';
@@ -118,6 +119,7 @@ function main(): void {
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool)}:{}),
+    ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),
