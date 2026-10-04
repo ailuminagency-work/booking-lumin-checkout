@@ -1,7 +1,7 @@
 import { CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -25,6 +25,9 @@ export const PaidCustomerFieldDraft=SavePaidCustomerFieldDraft.omit({expectedRev
 export const AnyPaidSimpleDraft=z.union([PaidSimpleDraft,PaidCustomerFieldDraft]);
 export const PaidSimpleDraftList=z.object({drafts:z.array(AnyPaidSimpleDraft).max(50)}).strict().refine(list=>list.drafts.every((d,i)=>i===0||list.drafts[i-1]!.flowId<d.flowId));
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
+/** Explicit V5 informational request boundary, intentionally not wired to the
+ * legacy submit RPC. Acceptance additionally requires immutable field validation. */
+export const CustomerFieldRequestInput=RequestInput.extend({schemaVersion:z.literal(2),answers:z.object({}).strict(),customerAnswers:CustomerFieldAnswers}).strict();
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 const Render=z.object({versionId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 // V2 is explicit; no permissive legacy fallback when a stored marker is present.
