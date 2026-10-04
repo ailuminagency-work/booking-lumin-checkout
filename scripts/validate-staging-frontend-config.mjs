@@ -8,9 +8,44 @@ const configs = [
 
 const placeholders = /__SET_|__PLATFORM_CONTEXT_ONLY__/;
 const stagingApiOrigin = 'https://booking-lumin-api-staging.onrender.com';
+// Public Supabase URL/key are supplied by the staging site environment, never
+// this blueprint. Customer session capabilities derive tenant identity server-side.
+// Check only the narrow approved TOML shape; unknown overrides fail closed.
+export function validateCheckoutStaging(source) {
+  const expected = new Map([
+    ['build', new Map([['command', 'npm run build --workspace @lumin/checkout'], ['publish', 'apps/checkout/dist']])],
+    ['build.environment', new Map([['NODE_VERSION', '20'], ['VITE_RUNTIME_ENV', 'staging'], ['VITE_RUNTIME_MODE', 'supabase'], ['VITE_API_ORIGIN', stagingApiOrigin], ['VITE_FLOW_API_URL', stagingApiOrigin]])],
+    ['context.deploy-preview', new Map([['command', 'npm run build --workspace @lumin/checkout']])],
+  ]);
+  const fail = () => { throw new Error('Checkout staging blueprint: invalid public site environment contract'); };
+  if (typeof source !== 'string') fail();
+  const seen = new Map();
+  let section;
+  for (const line of source.replace(/\r\n/g, '\n').split('\n')) {
+    const text = line.trim();
+    if (!text || text.startsWith('#')) continue;
+    const heading = text.match(/^\[([a-z.-]+)\]$/)?.[1];
+    if (heading) {
+      if (!expected.has(heading) || seen.has(heading)) fail();
+      section = heading;
+      seen.set(section, new Set());
+      continue;
+    }
+    const assignment = text.match(/^([A-Za-z_]+)\s*=\s*"([^"\\]*)"$/);
+    if (!section || !assignment) fail();
+    const [, key, value] = assignment;
+    if (!expected.get(section).has(key) || seen.get(section).has(key) || expected.get(section).get(key) !== value) fail();
+    seen.get(section).add(key);
+  }
+  for (const [name, fields] of expected) {
+    if (seen.get(name)?.size !== fields.size) fail();
+  }
+}
+validateCheckoutStaging(readFileSync('deploy/netlify/checkout/netlify.toml', 'utf8'));
 if (readFileSync("deploy/netlify/portal/netlify.toml", "utf8").replace(/\r\n/g, "\n") !== readFileSync("deploy/netlify/portal.staging.toml", "utf8").replace(/\r\n/g, "\n")) throw new Error("Netlify-selected Portal config must match the staging contract");
 for (const path of configs) {
   const source = readFileSync(path, "utf8");
+  if (path.includes('checkout')) { validateCheckoutStaging(source); continue; }
   if (!source.includes('NODE_VERSION = "20"')) throw new Error(`${path}: missing Node version`);
   if (!source.includes("npm run build --workspace")) throw new Error(`${path}: build must run from the workspace root`);
   if (!source.includes("publish = \"apps/")) throw new Error(`${path}: missing workspace publish directory`);
@@ -25,7 +60,7 @@ for (const path of configs) {
     if (path.includes("portal")) {
       if (placeholders.test(source) || source.includes("VITE_TENANT_ID")) throw new Error(`${path}: owner configuration must use site environment and authenticated memberships`);
       if (readFileSync("apps/portal/public/_redirects", "utf8").trim() !== "/* /index.html 200") throw new Error("Portal requires non-forced SPA fallback");
-    } else if (!placeholders.test(source)) throw new Error(`${path}: unresolved Supabase or tenant staging values must remain explicit placeholders`);
+    }
   }
 }
 console.log(`validated ${configs.length} frontend staging contracts`);
