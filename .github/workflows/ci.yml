@@ -130,3 +130,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           npx tsx apps/api/src/paid-simple-publication.integration.ts
+      - name: Read-only owner publication recovery and ambiguous delivery
+        env:
+          PAID_RECOVERY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_recovery_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_recovery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-publication-reader.integration.ts
