@@ -106,7 +106,7 @@ jobs:
             customer_field_install_health_tests \
             customer_field_rollback_recovery_tests \
             existing_business_profile_initialization_tests \
-            conditional_customer_field_tests; do
+            conditional_customer_field_tests conditional_customer_field_install_health_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -361,3 +361,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/conditional-customer-field-publication.integration.ts
+      - name: Conditional V6 installation health and immutable financial provenance
+        env:
+          CONDITIONAL_CUSTOMER_FIELD_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_health_v6_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_health_v6_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/conditional-customer-field-install-health.integration.ts
