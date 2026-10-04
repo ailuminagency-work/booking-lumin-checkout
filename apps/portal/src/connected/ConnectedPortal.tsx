@@ -5,8 +5,11 @@ import { PortalRoutes } from "../components/PortalRoutes";
 import {Link} from 'react-router-dom';
 import {ConnectedBookingDetail} from './ConnectedBookingDetail';
 import {PaidSimplePublisher} from './PaidSimplePublisher';
+import {ConnectedBusinessOnboarding} from './ConnectedBusinessOnboarding';
+import type {BusinessProfile} from '@lumin/contracts';
 export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
  const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId,config.bookingApiOrigin]);
+ const [,setCreationRevision]=useState(0);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
  const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0);
  useEffect(()=>{generation.current++;sessionGeneration.current++;setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false);return()=>{generation.current++;sessionGeneration.current++;client?.signOut();}},[client]);
@@ -14,6 +17,8 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
  async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;const at=++sessionGeneration.current;setBusy(true);setError('');try{await client.signIn(email,password);const own=await client.memberships();if(at!==sessionGeneration.current)return;setMembers(own);setSignedIn(true);const first=own[0]?.tenant_id??'';setTenant(first);if(first)await load(first)}catch(e){if(at===sessionGeneration.current){client.signOut();setError(e instanceof Error?e.message:'Unable to sign in.')}}finally{if(at===sessionGeneration.current){setPassword('');setBusy(false)}}}
  function logout(){generation.current++;sessionGeneration.current++;client?.signOut();setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false)}
  async function toggle(s:ServiceRow){if(!client||busy)return;const current=generation.current;setBusy(true);setError('');try{await client.setServiceActive(tenant,s.id,!s.active);if(current===generation.current)await load(tenant)}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to update service.')}finally{if(current===generation.current)setBusy(false)}}
+ const creation=signedIn&&staging&&config.bookingApiOrigin?client?.businessCreationState():undefined,creationLocked=creation?.phase==='checking'||creation?.phase==='creating'||creation?.phase==='unknown';
+ async function openCreatedBusiness(profile:BusinessProfile){if(!client)return;const at=sessionGeneration.current,context=generation.current;const own=await client.memberships();if(context!==generation.current)throw Error('The selected business changed. Open the created business again after reviewing its receipt.');if(at!==sessionGeneration.current)throw Error('The signed-in account changed. Sign in again before opening the created business.');if(!own.some(member=>member.tenant_id===profile.tenantId&&member.role==='BUSINESS_OWNER'))throw Error('The created business owner membership could not be verified. The creation receipt is retained. Refresh it before opening.');setMembers(own);setTenant(profile.tenantId);await load(profile.tenantId);}
  const role = members.find(member => member.tenant_id === tenant)?.role;
  const bookingLabels:Record<string,string>={draft:'Unconfirmed request',pending_payment:'Awaiting payment',confirmed:'Confirmed',completed:'Completed',cancelled:'Cancelled',refunded:'Refunded',failed:'Failed'};
  const bookingList = <section><h1>Bookings</h1><h2>Recent bookings and requests</h2>
@@ -38,10 +43,10 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
     </fieldset>
    </form><p>Use an existing authorized business account. Sessions stay in memory and end when this page reloads.</p></section> :
    <><div className="panel"><button onClick={logout}>Sign out</button>
-    {members.length > 0 && <><label>Business<select disabled={busy} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
+    {members.length > 0 && <><label>Business<select disabled={busy||creationLocked} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id} · {m.role}</option>)}
     </select></label><button disabled={busy} onClick={() => void load(tenant)}>Refresh</button></>}
-   </div>{members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} catalogLoading={busy}/>:undefined} />}</>}
+   </div>{members.length>0&&<ConnectedBusinessOnboarding client={client} tenantId={tenant} role={role} staging={staging} apiConfigured={!!config.bookingApiOrigin} contextBusy={busy} onStateChange={()=>setCreationRevision(value=>value+1)} onOpen={openCreatedBusiness}/>} {members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} catalogLoading={busy}/>:undefined} />}</>}
   {error && <p role="alert">{error}</p>}
  </PortalShell>;
 }
