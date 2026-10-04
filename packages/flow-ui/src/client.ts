@@ -34,7 +34,7 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  availability,
  hold:(token:string)=>{
   if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('INVALID_REQUEST');
-  return call('/api/flow-sessions/hold',z.object({bookingId:z.string().uuid(),holdId:z.string().uuid(),status:z.literal('active'),expiresAt:z.string().datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value)))}).strict(),token,{});
+  return call('/api/flow-sessions/hold',z.object({schemaVersion:z.literal(1),bookingId:z.string().uuid(),holdId:z.string().uuid(),status:z.literal('active'),expiresAt:z.string().datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value)))}).strict(),token,{});
  },
  services:(token:string,id:string)=>call('/api/services'+tenant(id),z.object({services:z.array(ServiceRender).max(100)}).strict(),token),
  flows:(token:string,id:string)=>call('/api/flows'+tenant(id),FlowList,token),

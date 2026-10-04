@@ -58,15 +58,23 @@ it('accepts actual core full-day output, retains cross-midnight ends and filters
  expect(result.slots).toEqual(slots.filter(slot=>slot.start>=from&&slot.start<to));expect(result.slots).toContainEqual(crossMidnight);expect(result.slots.some(slot=>slot.start===to)).toBe(false);
 });
 it('holds the persisted session request with an empty body and strict receipt',async()=>{
- const token='t'.repeat(43),receipt={bookingId:id,holdId:'22222222-2222-4222-8222-222222222222',status:'active',expiresAt:'2030-01-01T10:05:00Z'};
+ const token='t'.repeat(43),receipt={schemaVersion:1,bookingId:id,holdId:'22222222-2222-4222-8222-222222222222',status:'active',expiresAt:'2030-01-01T10:05:00Z'};
  const fetcher=vi.fn(async()=>new Response(JSON.stringify({ok:true,data:receipt})));const client=createFlowClient('https://api.example',false,fetcher);expect(await client.hold(token)).toEqual(receipt);
  const [url,options]=fetcher.mock.calls[0] as unknown as [string,RequestInit];expect(url).toBe('https://api.example/api/flow-sessions/hold');expect(options.method).toBe('POST');expect(options.body).toBe('{}');expect(options.headers).toMatchObject({Authorization:'Bearer '+token});expect(options.credentials).toBe('omit');
  expect(()=>client.hold('bad-token')).toThrow();expect(fetcher).toHaveBeenCalledTimes(1);
- for(const change of [{bookingId:'invalid'},{holdId:'invalid'},{status:'confirmed'},{expiresAt:'invalid'},{confirmed:true},{tenantId:id}]){
+ for(const change of [{schemaVersion:2},{schemaVersion:undefined},{bookingId:'invalid'},{holdId:'invalid'},{status:'confirmed'},{expiresAt:'invalid'},{confirmed:true},{tenantId:id}]){
   const bad=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{...receipt,...change}})));await expect(bad.hold(token)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
  }
 });
 it('discards a hold receipt when the customer session is invalidated',async()=>{
  let resolve!:(value:unknown)=>void;const body=new Promise(r=>resolve=r);const client=createFlowClient('https://api.example',false,async()=>({ok:true,json:()=>body} as Response));
- const request=client.hold('t'.repeat(43));client.invalidate();resolve({ok:true,data:{bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'}});await expect(request).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+ const request=client.hold('t'.repeat(43));client.invalidate();resolve({ok:true,data:{schemaVersion:1,bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'}});await expect(request).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+});
+it('accepts the actual customer hold HTTP response envelope',async()=>{
+ const {createFlowHttpServer}=await import('../../../apps/api/src/http');const token='t'.repeat(43),origin='https://checkout.example.test';
+ const server=createFlowHttpServer({repository:{call:async()=>{throw Error('unexpected');}},ownerOrigins:[],customerOrigins:[origin],customerHold:async()=>({bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'})});
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{const address=server.address() as {port:number};const client=createFlowClient('http://127.0.0.1:'+address.port,true,(input,options)=>fetch(input,{...options,headers:{...options?.headers,Origin:origin}}));
+  expect(await client.hold(token)).toEqual({schemaVersion:1,bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'});
+ }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
