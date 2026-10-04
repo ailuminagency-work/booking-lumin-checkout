@@ -1,4 +1,5 @@
 import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
+import {createCustomerHoldWriter} from './customer-hold';
 import {createCustomerAvailabilityReader} from './customer-availability';
 import {createRentalMockPaymentWriter} from './rental-mock-payment';
 import {createDraftWriter} from './draft';
@@ -109,6 +110,7 @@ function main(): void {
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
     availability: createAvailabilityReader(pool),
+    customerHold: createCustomerHoldWriter(pool),
     customerAvailability: createCustomerAvailabilityReader(pool),
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),

@@ -3,6 +3,7 @@ import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWr
 import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
 import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
+import type {CustomerHoldWriter} from './customer-hold';
 import type {CustomerAvailabilityReader} from './customer-availability';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
@@ -17,6 +18,7 @@ export interface FlowHttpOptions{
  tenantProfile?:TenantProfileReader;
  availability?:AvailabilityReader;
  customerAvailability?:CustomerAvailabilityReader;
+ customerHold?:CustomerHoldWriter;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -83,6 +85,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const match=url.pathname.match(/^\/api\/installations\/([^/]+)\/sessions$/);
     if(match){const id=Uuid.parse(match[1]);z.object({}).strict().parse(await jsonBody(req));
      const sessionToken=randomBytes(32).toString("base64url");const data=RpcResults.issue_flow_session.parse(await call("issue_flow_session",[id,tokenHash(sessionToken),origin]));send(res,200,{ok:true,data:{...data,sessionToken}});return;
+    }
+    if(url.pathname==="/api/flow-sessions/hold"){
+     if(!options.customerHold)throw new FlowError("NOT_AVAILABLE");
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
+     z.object({}).strict().parse(await jsonBody(req));
+     const data=HoldReceipt.parse(await options.customerHold(tokenHash(token),origin));
+     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
     }
     if(url.pathname==="/api/flow-sessions/request"){
      const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");

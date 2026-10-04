@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool,PoolClient } from 'pg';
 import { z } from 'zod';
 import { createAvailabilityEngine } from '@lumin/core';
 import type { AvailabilityRule,AvailabilityOverride,SchedulingPolicy } from '@lumin/contracts';
@@ -20,9 +20,18 @@ export function createReservationWriter(pool:Pool,clock=()=>new Date().toISOStri
   await client.query('set local role service_role');
   const membership=await client.query(`select t.id from public.tenants t join public.tenant_members m on m.tenant_id=t.id where t.id=$1::uuid and m.user_id=$2::uuid and t.status='active' and m.role in('BUSINESS_OWNER','BUSINESS_STAFF') for share of t,m`,[tenant,actor]);
   if(!membership.rows.length)throw new FlowError('FORBIDDEN');
+  const receipt=await reserveBookingInTransaction(client,tenant,booking,clock);
+  await client.query('commit');return receipt;
+ }catch(error){try{await client.query('rollback');}catch{broken=true;}if(error instanceof FlowError)throw error;const code=(error as {code?:string})?.code;throw new FlowError(code==='0A000'?'UNSUPPORTED_CONFIG':code==='40001'||code==='40P01'||code==='55P03'||code==='23P01'?'CONFLICT':'INTERNAL_ERROR');}
+ finally{client.release(broken);}
+};}
+
+/** Internal transaction primitive: callers must establish their own owner/capability authority. */
+export async function reserveBookingInTransaction(client:PoolClient,tenant:string,booking:string,clock:()=>string,expectedService?:string){
   const stored=await client.query(`select b.slot_start,b.slot_end,b.selection->>'serviceId' as service_id from public.bookings b where b.id=$1::uuid and b.tenant_id=$2::uuid and b.state='draft' for update`,[booking,tenant]);
   const b=stored.rows[0];if(!b)throw new FlowError('NOT_AVAILABLE');
   const service=z.string().uuid().parse(b.service_id);
+  if(expectedService&&service!==expectedService)throw new FlowError('FORBIDDEN');
   const start=new Date(b.slot_start).toISOString(),end=new Date(b.slot_end).toISOString();
   const base=(await client.query(`select s.duration_minutes,t.timezone from public.services s join public.tenants t on t.id=s.tenant_id where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active`,[service,tenant])).rows[0];
   if(!base)throw new FlowError('NOT_AVAILABLE');
@@ -42,7 +51,5 @@ export function createReservationWriter(pool:Pool,clock=()=>new Date().toISOStri
   if(row?.result!=='GRANTED'||row.hold_status!=='active')throw new FlowError('INTERNAL_ERROR');
   const receipt=HoldReceipt.parse({bookingId:booking,holdId:row.hold_id,status:row.hold_status,expiresAt:new Date(row.expires_at).toISOString()});
   if(Date.parse(receipt.expiresAt)<=Date.parse(clock()))throw new FlowError('CONFLICT');
-  await client.query('commit');return receipt;
- }catch(error){try{await client.query('rollback');}catch{broken=true;}if(error instanceof FlowError)throw error;const code=(error as {code?:string})?.code;throw new FlowError(code==='0A000'?'UNSUPPORTED_CONFIG':code==='40001'||code==='40P01'||code==='55P03'||code==='23P01'?'CONFLICT':'INTERNAL_ERROR');}
- finally{client.release(broken);}
-};}
+  return receipt;
+}
