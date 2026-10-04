@@ -29,3 +29,4 @@ export * from "./configurablePublication";
 export * from './paidPublication';
 export * from './paidOptionPublication';
 export * from './paidCustomerFieldPublication';
+export * from './paidConditionalCustomerFieldPublication';
