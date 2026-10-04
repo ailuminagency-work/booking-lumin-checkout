@@ -416,3 +416,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/detailing-publication.integration.ts
+      - name: Detailing session availability authority, capacity and expiry
+        env:
+          DETAILING_AVAILABILITY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_availability_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_availability_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-availability.integration.ts
