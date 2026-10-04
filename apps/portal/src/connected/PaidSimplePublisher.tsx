@@ -1,9 +1,53 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {formatMoney} from '@lumin/contracts';
-import {PublicationError,type RuntimeClient,type ServiceRow,type PaidSimplePublicationState,type SavedPaidSimplePublication} from '@lumin/runtime-client';
+import {PublicationError,type RuntimeClient,type ServiceRow,type PaidSimplePublicationState,type SavedPaidSimplePublication,PAID_SIMPLE_ACCENT_COLORS,PaidSimpleDraftError,type PaidSimpleDraftState,type PaidSimplePresentation} from '@lumin/runtime-client';
 export const STAGING_CHECKOUT_ORIGIN='https://booking-lumin-checkout-staging.netlify.app';
-type PublisherClient=Pick<RuntimeClient,'publishPaidSimple'|'recoverPaidSimplePublication'|'listPaidSimplePublications'|'paidSimplePublicationState'>;
+type PublisherClient=Pick<RuntimeClient,'publishPaidSimple'|'recoverPaidSimplePublication'|'listPaidSimplePublications'|'paidSimplePublicationState'|'loadPaidSimpleDraft'|'savePaidSimpleDraft'|'paidSimpleDraftState'>;
 type SavedForms={phase:'idle'|'loading'|'loaded'|'failed';items:readonly SavedPaidSimplePublication[];error:string};
+type DraftFields={flowId:string;serviceId:string;name:string;presentation:PaidSimplePresentation};
+type DraftEditorState={client:PublisherClient;tenantId:string;state:PaidSimpleDraftState;fields:DraftFields;notice:string;error:string};
+function draftEditorState(client:PublisherClient,tenantId:string):DraftEditorState{
+ const state=client.paidSimpleDraftState(tenantId);
+ const fields:DraftFields=state.phase==='loaded'?{flowId:state.flowId,serviceId:state.draft.serviceId,name:state.draft.name,presentation:{...state.draft.presentation}}:{flowId:state.phase==='ready'?'':state.flowId,serviceId:'',name:'',presentation:{accentColor:'#4f46e5',layout:'stacked'}};
+ return {client,tenantId,state,fields,notice:'',error:''};
+}
+function PaidSimpleDraftEditor({client,tenantId,services,catalogLoading}:{client:PublisherClient;tenantId:string;services:ServiceRow[];catalogLoading:boolean}){
+ const [snapshot,setSnapshot]=useState(()=>draftEditorState(client,tenantId));const generation=useRef(0),inFlight=useRef(false);
+ useEffect(()=>{generation.current++;inFlight.current=false;setSnapshot(draftEditorState(client,tenantId));return()=>{generation.current++;}},[client,tenantId]);
+ const editor=snapshot.client===client&&snapshot.tenantId===tenantId?snapshot:draftEditorState(client,tenantId);
+ const {fields,state}=editor;const busy=state.phase==='saving'||state.phase==='loading';
+ const revision=state.phase==='saved'||state.phase==='loaded'?state.revision:undefined;
+ const blocked=state.phase==='unverified'||state.phase==='conflict';
+ const canSave=!busy&&!blocked&&!catalogLoading&&(state.phase!=='ready'||!fields.flowId.trim())&&(revision===undefined||revision<Number.MAX_SAFE_INTEGER);
+ function edit(change:Partial<DraftFields>){setSnapshot({...editor,fields:{...fields,...change},notice:'Unsaved draft edits. Save draft to persist them.',error:''});}
+ function checkSessionDraftState(){const next=client.paidSimpleDraftState(tenantId);setSnapshot({...editor,state:next,fields:{...fields,flowId:next.phase==='ready'?'':next.flowId},notice:'The draft state held in this session was checked. Load draft to refresh the current persisted fields.',error:''});}
+ async function save(event:FormEvent){
+  event.preventDefault();if(!canSave||inFlight.current)return;
+  if(!services.some(service=>service.id===fields.serviceId)||!fields.name.trim()||fields.name.trim().length>200){setSnapshot({...editor,error:'Choose a supported simple service and enter a draft name.'});return;}
+  const flowId=state.phase==='ready'?crypto.randomUUID():state.flowId,expectedRevision=revision??0,at=generation.current;
+  inFlight.current=true;setSnapshot({...editor,state:{phase:'saving',flowId},fields:{...fields,flowId},notice:'',error:''});
+  try{const receipt=await client.savePaidSimpleDraft(tenantId,flowId,{serviceId:fields.serviceId,name:fields.name.trim(),presentation:{...fields.presentation},expectedRevision});if(at===generation.current)setSnapshot({...editor,state:client.paidSimpleDraftState(tenantId),fields:{...fields,flowId,name:fields.name.trim()},notice:`Draft revision ${receipt.revision} saved. This draft is not published.`,error:''});}
+  catch(error){if(at===generation.current){const next=client.paidSimpleDraftState(tenantId);const retainedId=next.phase!=='ready'?next.flowId:state.phase==='ready'&&error instanceof PaidSimpleDraftError&&error.delivery==='rejected'?'':flowId;setSnapshot({...editor,state:next,fields:{...fields,flowId:retainedId},notice:'',error:error instanceof PaidSimpleDraftError?error.message:'Draft save status is unverified. Load this same draft before saving again.'});}}
+  finally{if(at===generation.current)inFlight.current=false;}
+ }
+ async function load(){
+  if(busy||inFlight.current)return;const flowId=fields.flowId.trim().toLowerCase();
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(flowId)){setSnapshot({...editor,error:'Enter a known draft ID before loading.'});return;}
+  const at=generation.current;inFlight.current=true;setSnapshot({...editor,state:{phase:'loading',flowId},fields:{...fields,flowId},notice:'',error:''});
+  try{const draft=await client.loadPaidSimpleDraft(tenantId,flowId);if(at===generation.current)setSnapshot({client,tenantId,state:client.paidSimpleDraftState(tenantId),fields:{flowId:draft.flowId,serviceId:draft.serviceId,name:draft.name,presentation:{...draft.presentation}},notice:`Current draft revision ${draft.revision} loaded. This read shows current persisted fields; it does not verify a past uncertain save.`,error:''});}
+  catch(error){if(at===generation.current)setSnapshot({...editor,state:client.paidSimpleDraftState(tenantId),fields:{...fields,flowId},notice:'',error:error instanceof PaidSimpleDraftError?error.message:'Current draft fields remain unverified. Load this same draft again before saving.'});}
+  finally{if(at===generation.current)inFlight.current=false;}
+ }
+ return <section aria-label="Saved draft design"><h2>Draft design</h2><p>Save or load a staging draft for this business. Draft saves do not publish a form or change its price. The separate publication action below does not yet use this saved draft or its design.</p><form onSubmit={save}><fieldset disabled={busy} className="form-stack" style={{minWidth:0}}>
+  <label>Draft ID<input value={fields.flowId} readOnly={state.phase!=='ready'} onChange={event=>edit({flowId:event.target.value})} style={{width:'100%',maxWidth:'100%',minWidth:0}}/></label><p>Leave the ID empty for a new draft. To edit an existing draft, enter its ID and load it first. Keep the ID for loading after a reload.</p>
+  <label>Draft simple service<select required disabled={catalogLoading} value={fields.serviceId} onChange={event=>edit({serviceId:event.target.value})}><option value="">Choose a service</option>{fields.serviceId&&!services.some(service=>service.id===fields.serviceId)&&<option value={fields.serviceId}>Saved service (unavailable in the current catalog)</option>}{services.map(service=><option key={service.id} value={service.id}>{service.name}</option>)}</select></label>
+  <label>Draft name<input required maxLength={200} value={fields.name} onChange={event=>edit({name:event.target.value})}/></label>
+  <label>Draft accent color<select value={fields.presentation.accentColor} onChange={event=>{const accentColor=PAID_SIMPLE_ACCENT_COLORS.find(color=>color===event.target.value);if(accentColor)edit({presentation:{...fields.presentation,accentColor}});}}>{PAID_SIMPLE_ACCENT_COLORS.map((color,index)=><option key={color} value={color}>{['Indigo','Cyan','Teal','Blue','Rose'][index]}</option>)}</select></label>
+  <label>Draft layout<select value={fields.presentation.layout} onChange={event=>{const layout=event.target.value;if(layout==='stacked'||layout==='compact')edit({presentation:{...fields.presentation,layout}});}}><option value="stacked">Stacked</option><option value="compact">Compact</option></select></label>
+  {revision!==undefined&&<p>Last verified draft revision: {revision}</p>}{revision===Number.MAX_SAFE_INTEGER&&<p role="alert">The maximum draft revision was reached. Further saves are unavailable.</p>}
+  <button type="submit" disabled={!canSave}>Save draft</button><button type="button" disabled={busy||!fields.flowId.trim()} onClick={()=>void load()}>Load draft</button><p>Loading replaces the local draft fields with the server's current fields.</p>
+ </fieldset></form>{busy&&<><p role="status">{state.phase==='saving'?'Saving draft...':'Loading draft...'}</p><button type="button" onClick={checkSessionDraftState}>Check this session's draft state</button><p>This checks only the state held in this signed-in session. It does not repeat a save or load. After the pending operation finishes, load the draft for a fresh read.</p></>}{blocked&&<p role="status">Draft writes are locked. Load this same draft before saving again; loading does not verify a publication attempt.</p>}{editor.notice&&<p role="status">{editor.notice}</p>}{editor.error&&<p role="alert">{editor.error}</p>}</section>;
+}
 export function PaidSimplePublisher({client,tenantId,role,services,staging,catalogLoading=false}:{client:PublisherClient;tenantId:string;role?:string;services:ServiceRow[];staging:boolean;catalogLoading?:boolean}){
  const [name,setName]=useState(''),[serviceId,setServiceId]=useState(''),[error,setError]=useState('');
  const [attemptId,setAttemptId]=useState(''),[checking,setChecking]=useState(false);
@@ -46,6 +90,7 @@ export function PaidSimplePublisher({client,tenantId,role,services,staging,catal
  const hostedUrl=receipt?STAGING_CHECKOUT_ORIGIN+receipt.hostedPath:'';
  const iframe=receipt?`<iframe src="${hostedUrl}" title="Booking Lumin staging test booking" width="100%" height="720" style="border:0"></iframe>`:'';
  return <section style={{minWidth:0,overflowWrap:'anywhere'}}><h1>Booking Form</h1><p>Staging paid simple-service form. Payment is simulated; no real money is charged.</p>
+  <PaidSimpleDraftEditor client={client} tenantId={tenantId} services={available} catalogLoading={catalogLoading}/>
   <section aria-label="Saved staging forms"><h2>Saved staging forms</h2><p>Refresh to find up to 50 current staging publications for this business. This list does not verify an uncertain attempt or authorize publishing it again.</p><button type="button" disabled={saved.phase==='loading'} onClick={()=>void refreshSavedForms()}>{saved.phase==='loading'?'Refreshing saved forms...':'Refresh saved forms'}</button>
    {saved.phase==='loading'&&<p role="status">Checking saved staging forms...</p>}
    {saved.phase==='loaded'&&!saved.items.length&&<p role="status">No current saved forms were returned. An empty list does not prove an uncertain publication was not saved; check its attempt ID directly.</p>}
