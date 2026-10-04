@@ -27,13 +27,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  if(bookingApiOrigin!==undefined&&!httpsOrigin(bookingApiOrigin))return fail('Connected mode configuration is missing or invalid.');
  let token:string|undefined;let generation=0;let userId:string|undefined;
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
+ const recovering=new Set<string>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
   if(authenticated&&!token)return fail('Please sign in again.');
   const current=generation;
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -42,40 +43,72 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;publications.clear();
+  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
   try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;publications.clear()}
+ function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+ const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['versionId','installationId','renderSchemaVersion','hostedPath'])||!uuid(data.versionId)||!uuid(data.installationId)||data.renderSchemaVersion!==3||data.hostedPath!==`/checkout/flow/${data.installationId}`)return undefined;
+  return Object.freeze({...data}) as unknown as PaidSimplePublicationReceipt;
+ };
  async function publishPaidSimple(tenantId:string,flowId:string,input:{serviceId:string;name:string;checkoutOrigin:string}):Promise<PaidSimplePublicationReceipt>{
   if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
   if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
   if(!uuid(tenantId)||!uuid(flowId)||!exact(input,['serviceId','name','checkoutOrigin'])||!uuid(input.serviceId)||typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>200||!httpsOrigin(input.checkoutOrigin))throw new PublicationError('not_sent','Check the service, form name and Checkout origin.');
   const previous=publications.get(tenantId);
-  if(previous)throw new PublicationError(previous.phase==='published'?'not_sent':'unknown',previous.phase==='published'?'This session already has a published form.':'Publication status is unverified. This create-only request cannot be replayed or recovered here.');
+  if(previous)throw new PublicationError(previous.phase==='published'?'not_sent':'unknown',previous.phase==='published'?'This session already has a published form.':'Publication status is unverified. Use the explicit receipt lookup for this attempt; do not repeat publication.');
   const current=generation;const credential=token;
   publications.set(tenantId,{phase:'publishing',flowId});
   let response:Response;let value:unknown;
   try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows/'+flowId+'/publish?tenantId='+encodeURIComponent(tenantId),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:JSON.stringify({serviceId:input.serviceId,name:input.name.trim(),allowedOrigins:[input.checkoutOrigin]})});value=await response.json();}
-  catch{if(current===generation)publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The request may have been saved. Automatic recovery and replay are unavailable.');}
+  catch{if(current===generation)publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The request may have been saved. Use the explicit receipt lookup for this attempt; do not repeat publication.');}
   if(current!==generation)throw new PublicationError('unknown','The session changed. This publication outcome cannot be verified here.');
   const codes:Record<string,string>={INVALID_REQUEST:'Check the service, form name and Checkout origin.',UNAUTHENTICATED:'Please sign in again.',FORBIDDEN:'Only an authorized business owner can publish this form.',CONFLICT:'Publication was rejected because the saved data changed.',NOT_AVAILABLE:'The selected service is unavailable.',UNSUPPORTED_CONFIG:'This service does not support the staging paid form.',INTERNAL_ERROR:'The server rejected publication.',RATE_LIMITED:'Too many requests. Wait before publishing again.'};
   if(!response.ok&&exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&Object.hasOwn(codes,value.code)){
-   if(response.status>=500||value.code==='INTERNAL_ERROR'){publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The server could not verify the outcome. Recovery and replay are unavailable.');}
+   if(response.status>=500||value.code==='INTERNAL_ERROR'){publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The server could not verify the outcome. Use the explicit receipt lookup for this attempt; do not repeat publication.');}
    publications.delete(tenantId);if(value.code==='UNAUTHENTICATED')signOut();throw new PublicationError('rejected',codes[value.code]!);
   }
-  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
-  if(response.status!==200||!exact(data,['versionId','installationId','renderSchemaVersion','hostedPath'])||!uuid(data.versionId)||!uuid(data.installationId)||data.renderSchemaVersion!==3||data.hostedPath!==`/checkout/flow/${data.installationId}`){publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The receipt could not be validated. Recovery and replay are unavailable.');}
-  const receipt=Object.freeze({...data}) as unknown as PaidSimplePublicationReceipt;
+  const receipt=publicationReceipt(response,value);
+  if(!receipt){publications.set(tenantId,{phase:'unknown',flowId});throw new PublicationError('unknown','Publication status is unverified. The receipt could not be validated. Use the explicit receipt lookup for this attempt; do not repeat publication.');}
   publications.set(tenantId,{phase:'published',flowId,receipt});return receipt;
  }
+ async function recoverPaidSimplePublication(tenantId:string,flowId:string):Promise<PaidSimplePublicationReceipt>{
+  if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
+  if(!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Enter the exact publication attempt ID for this business.');
+  const previous=publications.get(tenantId);
+  if(previous&&(previous.flowId!==flowId||previous.phase==='publishing'))throw new PublicationError('not_sent','This session is bound to another publication attempt or publication is still in progress.');
+  if(previous?.phase==='published')throw new PublicationError('not_sent','This session already holds this publication receipt.');
+  if(recovering.has(tenantId))throw new PublicationError('not_sent','A receipt lookup is already in progress for this business.');
+  const current=generation,credential=token;
+  // Absence is not proof that the create-only publication did not commit.
+  publications.set(tenantId,{phase:'unknown',flowId});recovering.add(tenantId);
+  try{
+   let response:Response,value:unknown;
+   try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows/'+flowId+'/publication?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}
+   catch{throw new PublicationError('unknown','The receipt could not be checked. Publication status remains unverified. Check this same attempt again; do not publish again.');}
+   if(current!==generation)throw new PublicationError('unknown','The session changed. This publication outcome cannot be verified here.');
+   const receipt=publicationReceipt(response,value);
+   if(receipt){publications.set(tenantId,{phase:'published',flowId,receipt});return receipt;}
+   if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+    if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('unknown','Please sign in again to check this same publication attempt.');}
+    if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PublicationError('unknown','No active receipt was found for this attempt in this business. Publication status remains unverified; this does not make publishing again safe.');
+    if(response.status===403&&value.code==='FORBIDDEN')throw new PublicationError('unknown','Only an authorized business owner can check this receipt. Publication status remains unverified.');
+    if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PublicationError('unknown','Receipt lookup is unavailable in this workspace. Publication status remains unverified.');
+   }
+   throw new PublicationError('unknown','The receipt could not be validated. Publication status remains unverified; do not publish again.');
+  }finally{if(current===generation)recovering.delete(tenantId);}
+ }
+
  return {
   signIn,signOut,
-  publishPaidSimple,
+  publishPaidSimple,recoverPaidSimplePublication,
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},
   async services(tenantId=config.tenantId,member=false):Promise<ServiceRow[]>{
    const result=rows(await request(`/rest/v1/services?select=id,tenant_id,name,currency,duration_minutes,base_price,active&tenant_id=eq.${tenant(tenantId)}&archetype=eq.simple${member?'':'&active=eq.true'}&order=name`,'GET',undefined,member));
