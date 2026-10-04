@@ -32,7 +32,7 @@ export function PortalRoutes({ mode, bookings, services, embed, workers }: { mod
   const demo = mode === "demo";
   const page = (title: string, content: ReactNode) => demo ? content : <UnavailablePage title={title} />;
   return <Routes>
-    <Route index element={demo ? <DashboardPage /> : <section><h1>Dashboard</h1><p>Use Bookings to review unconfirmed requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View requests</Link> · <Link to="/services">View services</Link></p></section>} />
+    <Route index element={demo ? <DashboardPage /> : <section><h1>Dashboard</h1><p>Use Bookings to review bookings and requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View bookings</Link> · <Link to="/services">View services</Link></p></section>} />
     <Route path="bookings" element={demo ? <BookingsPage /> : bookings} />
     <Route path="bookings/:bookingId" element={<UnavailablePage title="Booking detail" />} />
     <Route path="calendar" element={<UnavailablePage title="Calendar">{demo && <p><Link to="/calendar/availability">View demo availability settings</Link></p>}</UnavailablePage>} />

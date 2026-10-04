@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { App, PortalApplication } from "../App";
 
 const runtime = vi.hoisted(() => ({
-  signIn: vi.fn(), memberships: vi.fn(), drafts: vi.fn(), services: vi.fn(), setServiceActive: vi.fn(), signOut: vi.fn(),
+  signIn: vi.fn(), memberships: vi.fn(), bookings: vi.fn(), services: vi.fn(), setServiceActive: vi.fn(), signOut: vi.fn(),
 }));
 vi.mock("@lumin/runtime-client", () => ({
   readPublicRuntimeConfig: (env: Record<string, unknown>) => ({
@@ -114,11 +114,14 @@ describe("Portal navigation migration", () => {
     expect(screen.queryByTestId("checkout-preview")).not.toBeInTheDocument();
   });
 
-  it("keeps authenticated drafts and service activation across navigation without rendering demo data", async () => {
+  it("keeps authenticated bookings and service activation across navigation without rendering demo data", async () => {
     connected();
     runtime.signIn.mockResolvedValue("user");
     runtime.memberships.mockResolvedValue([{ tenant_id: tenant, role: "BUSINESS_OWNER" }]);
-    runtime.drafts.mockResolvedValue([{ id: "draft", reference: "LIVE-REQUEST", state: "draft", slot_start: "2030-01-01T10:00:00Z" }]);
+    runtime.bookings.mockResolvedValue([
+      { id: "draft", tenant_id: tenant, reference: "LIVE-REQUEST", state: "draft", slot_start: "2030-01-01T10:00:00Z" },
+      { id: "confirmed", tenant_id: tenant, reference: "CONFIRMED-BOOKING", state: "confirmed", slot_start: "2030-01-02T10:00:00Z" },
+    ]);
     runtime.services.mockResolvedValue([{ id: "service", tenant_id: tenant, name: "Connected service", active: true }]);
     runtime.setServiceActive.mockResolvedValue(undefined);
     portal("/bookings");
@@ -126,6 +129,9 @@ describe("Portal navigation migration", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "synthetic-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText("LIVE-REQUEST")).toBeInTheDocument();
+    expect(screen.getByText("CONFIRMED-BOOKING")).toBeInTheDocument();
+    expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    expect(runtime.bookings).toHaveBeenCalledWith(tenant);
     const navigation = screen.getByRole("navigation", { name: "Portal sections" });
     fireEvent.click(within(navigation).getByRole("link", { name: /Services & Pricing/ }));
     expect(await screen.findByText(/Connected service/)).toBeInTheDocument();
@@ -139,6 +145,7 @@ describe("Portal navigation migration", () => {
     expect(runtime.signOut).toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Sign in to your business" })).toBeInTheDocument();
     expect(screen.queryByText("LIVE-REQUEST")).not.toBeInTheDocument();
+    expect(screen.queryByText("CONFIRMED-BOOKING")).not.toBeInTheDocument();
   });
   it.each(["resolve", "reject"])("discards a service mutation %s after logout and a different login", async outcome => {
     connected();
@@ -146,7 +153,7 @@ describe("Portal navigation migration", () => {
     runtime.signIn.mockResolvedValue("user");
     runtime.memberships.mockResolvedValueOnce([{ tenant_id: tenant, role: "BUSINESS_OWNER" }])
       .mockResolvedValueOnce([{ tenant_id: otherTenant, role: "BUSINESS_OWNER" }]);
-    runtime.drafts.mockResolvedValue([]);
+    runtime.bookings.mockResolvedValue([]);
     runtime.services.mockImplementation(async id => [{ id: "service", tenant_id: id, name: id === tenant ? "Old business service" : "New business service", active: true }]);
     let resolve!: () => void;
     let reject!: (error: Error) => void;

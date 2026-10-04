@@ -5,6 +5,22 @@ const config:RuntimeConfig={url:'https://example.supabase.co',publishableKey:'sb
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
 function transport(responses:Response[]){return vi.fn<typeof fetch>(async()=>responses.shift()??json({private:'do not display'},500))}
 describe('public runtime transport boundary',()=>{
+ it('reads all booking states through an authenticated tenant-filtered query',async()=>{
+  const states=['draft','pending_payment','confirmed','completed','cancelled','refunded','failed'];
+  const bookings=states.map(state=>({id:S,tenant_id:T,reference:'LMN-'+state,state,slot_start:'2030-01-01T12:00:00Z',created_at:'2029-12-01T12:00:00Z'}));
+  const f=transport([json({access_token:'synthetic'}),json({id:U}),json(bookings)]);const c=createRuntimeClient(config,f);
+  await expect(c.bookings(T)).rejects.toThrow('sign in');expect(f).not.toHaveBeenCalled();
+  await c.signIn('synthetic@example.test','fixture');expect(await c.bookings(T)).toEqual(bookings);
+  const url=String(f.mock.calls[2]?.[0]);expect(url).toContain(`tenant_id=eq.${T}`);expect(url).not.toContain('state=eq.draft');
+  expect(f.mock.calls[2]?.[1]?.headers).toMatchObject({Authorization:'Bearer synthetic'});
+  c.signOut();await expect(c.bookings(T)).rejects.toThrow('sign in');expect(f).toHaveBeenCalledTimes(3);
+ });
+ it('rejects foreign-tenant booking rows and malformed state or dates',async()=>{
+  const row={id:S,tenant_id:T,reference:'LMN-TEST',state:'confirmed',slot_start:'2030-01-01T12:00:00Z',created_at:'2029-12-01T12:00:00Z'};
+  for(const patch of [{tenant_id:U},{state:'paid-by-client'},{slot_start:'invalid'},{created_at:'invalid'}]){
+   const f=transport([json({access_token:'synthetic'}),json({id:U}),json([{...row,...patch}])]);const c=createRuntimeClient(config,f);await c.signIn('synthetic@example.test','fixture');await expect(c.bookings(T)).rejects.toThrow('Booking data is invalid');
+  }
+ });
  it('discovers authenticated memberships without a configured tenant but cannot submit an unbound booking',async()=>{
   const f=transport([json({access_token:'synthetic'}),json({id:U}),json([{tenant_id:T,role:'BUSINESS_OWNER'}])]);
   const owner=createRuntimeClient({...config,tenantId:'',allowMembershipDiscovery:true},f);
