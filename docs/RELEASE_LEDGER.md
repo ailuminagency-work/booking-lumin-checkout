@@ -444,3 +444,12 @@ A28 push verification:
 - Render recovery verified: deploy `dep-db0plp5g1s2s73f5e3vg` LIVE at `6372dac6d279a28c79f5d6035cbdb838c9d24415`; `/health` 200 and `/ready` 200. This supersedes the previous DB_AUTH/readiness blocker. Isolated staging target remains hqgtjztrsizjrsidtlqt.
 - Scores: Portal remains40 pending hosted acceptance of this list change; Staging40 ->45 for restored hosted database readiness. Overall remains35; no hosted housekeeping/detailing/rental golden flow certified.
 - Next executable task: verify this Portal batch on canonical Netlify, then connect the public installation-session availability/hold/confirmation journey without reusing owner credentials or weakening tenant authority.
+
+## Goal 1 customer availability capability — 2026-10-04 UTC
+
+- Builder/integration/runtime guardian: `/root`; independent review accepted by `/root/booking_list_review` after adding planning-only rejection and observed-lock expiry evidence.
+- Added GET /api/flow-sessions/availability: installation-session bearer + exact customer origin, bounded seven-day window, no caller tenant/service identity. SQL derives scope, checks active authority and expiry, holds row locks, excludes planning/resource allocation and rechecks expiry before commit. Existing owner availability calculation is reused without replacing owner authorization.
+- Added migration0034 and transactional SQL attacks; local replay through0034 passed. RLS, capacity, overbooking and customer scope attacks passed. Real local integration demonstrated blocked session/origin mutation and denial after an observed tenant-lock wait outlived expiry.
+- Added transport and final-expiry regressions. Host subprocess test now uses Node's direct tsx loader and writable TEMP/TMP; its health/readiness/shutdown assertions are unchanged.
+- No financial authority was widened, no confirmation writer added, no production or LeadGate mutation. Customer holds/payment remain next implementation steps; this batch does not certify the housekeeping golden flow or raise scores.
+- Staging migration/deploy and hosted success/denial checks are required after exact-candidate CI passes. Preserve PR97 as draft. Next executable cell is customer hold bound to the same session and request provenance; do not substitute an owner identity.

@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const API_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const TSX_CLI = resolve(API_ROOT, '../../node_modules/tsx/dist/cli.mjs');
 const unavailableDatabase = 'postgres://postgres:a26-host-runtime-secret@127.0.0.1:1/lumin_host_runtime_a26';
 const secretSentinel = 'a26-host-runtime-secret';
 type HostChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -35,12 +34,14 @@ async function freeLoopbackPort(): Promise<number> {
 async function startHostRuntime(): Promise<{ child: HostChild; base: string; output: () => string }> {
   const port = await freeLoopbackPort();
   const lines: string[] = [];
-  const child = spawn(process.execPath, [TSX_CLI, 'src/main.ts'], {
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts'], {
     cwd: API_ROOT,
     env: {
       PATH: process.env.PATH ?? '',
       SystemRoot: process.env.SystemRoot ?? '',
       ComSpec: process.env.ComSpec ?? '',
+      TEMP: process.env.TEMP ?? '',
+      TMP: process.env.TMP ?? '',
       BOOKING_LUMIN_ENV: 'staging',
       DATABASE_URL: unavailableDatabase,
       SUPABASE_URL: 'https://aaaaaaaaaaaaaaaaaaaa.supabase.co',

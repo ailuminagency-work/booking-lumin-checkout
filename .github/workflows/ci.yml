@@ -78,7 +78,17 @@ jobs:
             flow_storage_tests \
             outbox_tests \
             mode_installations_tests \
-            mode_flow_session_tests; do
+            mode_flow_session_tests \
+            customer_session_availability_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Customer capability concurrency and expiry
+        env:
+          CUSTOMER_SCOPE_LOCAL_TEST: '1'
+        run: npx tsx apps/api/src/customer-availability.integration.ts

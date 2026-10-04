@@ -84,6 +84,16 @@ export function createTenantProfileReader(pool:Pool):TenantProfileReader{return 
 /** Read only the tenant-owned scheduling inputs needed to compute slots.
  * The pure engine remains the availability authority; SQL only supplies its
  * tenant-bound inputs and existing capacity consumers. */
+export async function readAvailabilitySlots(client:import("pg").PoolClient,tenant:string,service:string,base:{timezone:string;duration_minutes:number},from:string,to:string,clock:()=>string) {
+  const rules=(await client.query<AvailabilityRule>(`select id,tenant_id as "tenantId",service_id as "serviceId",weekday,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_rules where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null)`,[tenant,service])).rows;
+  const overrides=(await client.query<AvailabilityOverride>(`select id,tenant_id as "tenantId",service_id as "serviceId",date::text,kind,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_overrides where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) and date between ($3::timestamptz at time zone $4)::date and ($5::timestamptz at time zone $4)::date`,[tenant,service,from,base.timezone,to])).rows;
+  const policyRow=(await client.query<SchedulingPolicy>(`select lead_time_minutes as "leadTimeMinutes",horizon_days as "horizonDays",slot_interval_minutes as "slotIntervalMinutes" from public.scheduling_policies where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) order by service_id nulls last limit 1`,[tenant,service])).rows[0]??{leadTimeMinutes:0,horizonDays:60,slotIntervalMinutes:30};
+  const consumers=(await client.query<CapacityHold & {booking_id:string}>(`select slot_start as start,slot_end as end,booking_id from public.capacity_holds where tenant_id=$1::uuid and service_id=$4::uuid and status='active' and expires_at>now() and slot_start < $2::timestamptz and slot_end > $3::timestamptz union all select b.slot_start as start,b.slot_end as end,b.id as booking_id from public.bookings b where b.tenant_id=$1::uuid and (b.selection ->> 'serviceId')::uuid=$4::uuid and b.state in ('pending_payment','confirmed','completed') and b.slot_start < $2::timestamptz and b.slot_end > $3::timestamptz and not exists (select 1 from public.capacity_holds h2 where h2.booking_id=b.id and h2.status='active' and h2.expires_at>now())`,[tenant,to,from,service])).rows;
+  const holds=[...new Map(consumers.map(consumer=>[`${consumer.booking_id}:${new Date(consumer.start).toISOString()}:${new Date(consumer.end).toISOString()}`,{start:consumer.start,end:consumer.end}])).values()];
+  const policy={leadTimeMinutes:Number(policyRow.leadTimeMinutes),horizonDays:Number(policyRow.horizonDays),slotIntervalMinutes:Number(policyRow.slotIntervalMinutes)};
+  const slots=createAvailabilityEngine().getSlots({tenantTimezone:base.timezone,serviceId:service,durationMinutes:Number(base.duration_minutes),policy,rules,overrides,existing:holds,now:clock(),from,to});
+ return {serviceId:service,durationMinutes:Number(base.duration_minutes),slots};
+}
 export function createAvailabilityReader(pool:Pool,clock:()=>string=()=>new Date().toISOString()):AvailabilityReader{return async(actor,tenant,service,from,to)=>{
  const client=await pool.connect();
  try{
@@ -96,13 +106,7 @@ export function createAvailabilityReader(pool:Pool,clock:()=>string=()=>new Date
    [tenant,service,actor],
   );
   const base=membership.rows[0];if(!base){await client.query("commit");return null;}
-  const rules=(await client.query<AvailabilityRule>(`select id,tenant_id as "tenantId",service_id as "serviceId",weekday,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_rules where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null)`,[tenant,service])).rows;
-  const overrides=(await client.query<AvailabilityOverride>(`select id,tenant_id as "tenantId",service_id as "serviceId",date::text,kind,start_minute as "startMinute",end_minute as "endMinute",capacity from public.availability_overrides where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) and date between ($3::timestamptz at time zone $4)::date and ($5::timestamptz at time zone $4)::date`,[tenant,service,from,base.timezone,to])).rows;
-  const policyRow=(await client.query<SchedulingPolicy>(`select lead_time_minutes as "leadTimeMinutes",horizon_days as "horizonDays",slot_interval_minutes as "slotIntervalMinutes" from public.scheduling_policies where tenant_id=$1::uuid and (service_id=$2::uuid or service_id is null) order by service_id nulls last limit 1`,[tenant,service])).rows[0]??{leadTimeMinutes:0,horizonDays:60,slotIntervalMinutes:30};
-  const consumers=(await client.query<CapacityHold & {booking_id:string}>(`select slot_start as start,slot_end as end,booking_id from public.capacity_holds where tenant_id=$1::uuid and service_id=$4::uuid and status='active' and expires_at>now() and slot_start < $2::timestamptz and slot_end > $3::timestamptz union all select b.slot_start as start,b.slot_end as end,b.id as booking_id from public.bookings b where b.tenant_id=$1::uuid and (b.selection ->> 'serviceId')::uuid=$4::uuid and b.state in ('pending_payment','confirmed','completed') and b.slot_start < $2::timestamptz and b.slot_end > $3::timestamptz and not exists (select 1 from public.capacity_holds h2 where h2.booking_id=b.id and h2.status='active' and h2.expires_at>now())`,[tenant,to,from,service])).rows;
-  const holds=[...new Map(consumers.map(consumer=>[`${consumer.booking_id}:${new Date(consumer.start).toISOString()}:${new Date(consumer.end).toISOString()}`,{start:consumer.start,end:consumer.end}])).values()];
-  const policy={leadTimeMinutes:Number(policyRow.leadTimeMinutes),horizonDays:Number(policyRow.horizonDays),slotIntervalMinutes:Number(policyRow.slotIntervalMinutes)};
-  const slots=createAvailabilityEngine().getSlots({tenantTimezone:base.timezone,serviceId:service,durationMinutes:Number(base.duration_minutes),policy,rules,overrides,existing:holds,now:clock(),from,to});
-  await client.query("commit");return {serviceId:service,durationMinutes:Number(base.duration_minutes),slots};
+  const result=await readAvailabilitySlots(client,tenant,service,base,from,to,clock);
+  await client.query("commit");return result;
  }catch(error){await client.query("rollback").catch(()=>{});throw error;}finally{client.release();}
 };}

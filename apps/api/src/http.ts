@@ -3,6 +3,7 @@ import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWr
 import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
 import { ConfirmationInput,ConfirmationReceipt,type BookingConfirmation } from './confirmation';
 import { HoldInput,HoldReceipt,type ReservationWriter } from './reservation';
+import type {CustomerAvailabilityReader} from './customer-availability';
 import { handleRosterRoute } from "./roster-http";
 import { createServer,type IncomingMessage,type ServerResponse } from "node:http";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
@@ -15,6 +16,7 @@ export interface FlowHttpOptions{
  repository:FlowRepository;
  tenantProfile?:TenantProfileReader;
  availability?:AvailabilityReader;
+ customerAvailability?:CustomerAvailabilityReader;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -54,7 +56,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const instant=now();let rate=limits.get(address);if(!rate||instant-rate.start>=60000){rate={start:instant,count:0};limits.set(address,rate);}if(++rate.count>120)throw new FlowError("RATE_LIMITED");
    const url=new URL(req.url??"/","http://127.0.0.1");
    if(url.pathname==="/health"&&req.method==="GET"){send(res,200,{ok:true,data:{mode:"LOCAL_HARNESS",providerConnections:false}});return;}
-   const customer=url.pathname.startsWith("/api/installations/")||url.pathname==="/api/flow-sessions/request";
+   const customer=url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
    const origin=originHeader(req,customer?customerOrigins:ownerOrigins);
    res.setHeader("Access-Control-Allow-Origin",origin);res.setHeader("Vary","Origin");
    if(req.method==="OPTIONS"){
@@ -66,6 +68,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==="/api/flow-sessions/availability"){
+     if(req.method!=="GET"||!options.customerAvailability)throw new FlowError("NOT_AVAILABLE");
+     if([...url.searchParams.keys()].some(k=>k!=="from"&&k!=="to")||url.searchParams.getAll("from").length!==1||url.searchParams.getAll("to").length!==1)throw new FlowError("INVALID_REQUEST");
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
+     const from=z.string().datetime({offset:true}).parse(url.searchParams.get("from"));
+     const to=z.string().datetime({offset:true}).parse(url.searchParams.get("to"));
+     const range=Date.parse(to)-Date.parse(from);if(!Number.isFinite(range)||range<=0||range>7*86400000)throw new FlowError("INVALID_REQUEST");
+     const data=await options.customerAvailability(tokenHash(token),origin,new Date(from).toISOString(),new Date(to).toISOString());
+     if(!data)throw new FlowError("NOT_AVAILABLE");
+     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+    }
     if([...url.searchParams].length||req.method!=="POST")throw new FlowError("INVALID_REQUEST");
     const match=url.pathname.match(/^\/api\/installations\/([^/]+)\/sessions$/);
     if(match){const id=Uuid.parse(match[1]);z.object({}).strict().parse(await jsonBody(req));
