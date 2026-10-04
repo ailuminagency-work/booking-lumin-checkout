@@ -1,5 +1,7 @@
 import {CustomerFieldRollbackInput,CustomerFieldRollbackReceipt,type CustomerFieldRollback} from './customer-field-rollback';
 import {CustomerFieldVersionHistory,type CustomerFieldVersionHistoryReader} from './customer-field-version-history';
+import {CustomerFieldInstallHealth} from '@lumin/contracts';
+import type {CustomerFieldInstallHealthReader} from './customer-field-install-health';
 import {PaidInstallHealth} from '@lumin/contracts';
 import {CustomerFieldPublicationReceipt,type CustomerFieldPublicationReader} from './customer-field-publication-reader';
 import type {PaidInstallHealthReader} from './paid-install-health';
@@ -53,6 +55,7 @@ export interface FlowHttpOptions{
  paidVersionHistory?:PaidVersionHistoryReader;
  paidCustomerFieldVersionHistory?:CustomerFieldVersionHistoryReader;
  paidInstallHealth?:PaidInstallHealthReader;
+ customerFieldInstallHealth?:CustomerFieldInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
  paidCustomerFieldRollback?:CustomerFieldRollback;
  reservation?:ReservationWriter;
@@ -288,6 +291,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const flow=Uuid.parse(rollback[1]).toLowerCase(),body=PaidRollbackInput.parse(await jsonBody(req));
     const parsed=PaidRollbackReceipt.safeParse(await options.paidRollback(actor,tenant,flow,body));
     if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const customerFieldHealth=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/health$/);
+   if(customerFieldHealth){
+    if(!options.paidSimplePublication||!options.customerFieldInstallHealth)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(customerFieldHealth[1]),parsed=CustomerFieldInstallHealth.safeParse(await options.customerFieldInstallHealth(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
    const installHealth=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/health$/);

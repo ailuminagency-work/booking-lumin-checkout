@@ -1,5 +1,6 @@
 import {createCustomerFieldRollback} from './customer-field-rollback';
 import {createCustomerFieldVersionHistoryReader} from './customer-field-version-history';
+import {createCustomerFieldInstallHealthReader} from './customer-field-install-health';
 import {createPaidInstallHealthReader} from './paid-install-health';
 import {createCustomerFieldPublicationReader} from './customer-field-publication-reader';
 import {schedulingAuthoringEnabled,createOfferSchedulingCreator} from './owner-scheduling';
@@ -131,7 +132,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidCustomerFieldPublication:createCustomerFieldPublicationReader(pool,customerOrigins),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidCustomerFieldVersionHistory:createCustomerFieldVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins),paidCustomerFieldRollback:createCustomerFieldRollback(pool,customerOrigins)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),customerFieldInstallHealth:createCustomerFieldInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidCustomerFieldPublication:createCustomerFieldPublicationReader(pool,customerOrigins),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidCustomerFieldVersionHistory:createCustomerFieldVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins),paidCustomerFieldRollback:createCustomerFieldRollback(pool,customerOrigins)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,

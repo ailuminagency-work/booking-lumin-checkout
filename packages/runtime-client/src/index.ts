@@ -1,3 +1,5 @@
+import {CustomerFieldInstallHealth} from '@lumin/contracts';
+export type {CustomerFieldInstallHealth} from '@lumin/contracts';
 import {BusinessProfile,CreateBusiness,CreateSimpleOffer,SimpleOfferReceipt,CurrencyCode,BusinessTimezone,CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches,PaidInstallHealth,CustomerDraftFields,type CustomerDraftTextField} from '@lumin/contracts';
 export type PaidInstallReceipt=NonNullable<PaidInstallHealth['installation']['receipt']>;
 export type {PaidInstallHealth} from '@lumin/contracts';
@@ -258,6 +260,25 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!parsed?.success)throw new PublicationError('not_sent','Install evidence could not be validated. Browser load health remains unverified.');
   const health=parsed.data,receipt=health.installation.receipt;
   if(health.flowId!==flowId||health.versionId!==selected.versionId||health.renderSchemaVersion!==selected.renderSchemaVersion||receipt&&(receipt.versionId!==selected.versionId||receipt.installationId!==selected.installationId||receipt.renderSchemaVersion!==selected.renderSchemaVersion||receipt.hostedPath!==selected.hostedPath))throw new PublicationError('not_sent','The current publication no longer matches the selected version and installation. Refresh its receipt before checking evidence again.');
+  return health;
+ }
+ async function paidCustomerFieldPublicationHealth(tenantId:string,expected:PaidCustomerFieldPublicationReceipt):Promise<CustomerFieldInstallHealth>{
+  if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PublicationError('not_sent','The publication health service is not configured.');
+  if(!uuid(tenantId)||!exact(expected,['flowId','draftRevision','publication'])||!uuid(expected.flowId)||expected.flowId!==expected.flowId.toLowerCase()||!draftRevision(expected.draftRevision)||!exact(expected.publication,['versionId','installationId','renderSchemaVersion','hostedPath'])||!uuid(expected.publication.versionId)||!uuid(expected.publication.installationId)||expected.publication.renderSchemaVersion!==5||expected.publication.hostedPath!=='/checkout/flow/'+expected.publication.installationId)throw new PublicationError('not_sent','Choose a verified customer-field publication receipt for this business.');
+  const flowId=expected.flowId,revision=expected.draftRevision,selected={...expected.publication},current=generation,credential=token;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-customer-field-flows/'+flowId+'/health?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new PublicationError('not_sent','Install evidence could not be checked. Browser load health remains unverified.');}
+  if(current!==generation)throw new PublicationError('not_sent','The session changed. Sign in again before checking install evidence.');
+  if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('not_sent','Please sign in again to check install evidence.');}
+   if(response.status===403&&value.code==='FORBIDDEN')throw new PublicationError('not_sent','Only an authorized owner of this active business can check install evidence.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PublicationError('not_sent','Install evidence is unavailable. The server staging capability is disabled.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PublicationError('not_sent','Install evidence is unavailable for this publication. This does not verify an uncertain publication or authorize another attempt.');
+  }
+  const parsed=response.status===200&&exact(value,['ok','data'])&&value.ok===true?CustomerFieldInstallHealth.safeParse(value.data):undefined;
+  if(!parsed?.success)throw new PublicationError('not_sent','Install evidence could not be validated. Browser load health remains unverified.');
+  const health=parsed.data,receipt=health.installation.receipt;
+  if(health.flowId!==flowId||health.draftRevision!==revision||health.versionId!==selected.versionId||health.renderSchemaVersion!==selected.renderSchemaVersion||receipt&&(receipt.versionId!==selected.versionId||receipt.installationId!==selected.installationId||receipt.renderSchemaVersion!==selected.renderSchemaVersion||receipt.hostedPath!==selected.hostedPath))throw new PublicationError('not_sent','The current publication no longer matches the selected version and installation. Refresh its receipt before checking evidence again.');
   return health;
  }
  async function paidSimpleVersionHistory(tenantId:string,flowId:string):Promise<PaidSimpleVersionHistory>{
@@ -598,7 +619,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   paidSimpleRollbackState(tenantId:string):PaidSimpleRollbackState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='verified'?{...state,receipt:{...state.receipt}}:state?{...state,targetPublication:{...state.targetPublication}}:{phase:'ready'};},
   publishPaidCustomerFieldDraft,recoverPaidCustomerFieldPublication,
   paidCustomerFieldPublicationState(tenantId:string):PaidCustomerFieldPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=customerPublications.get(tenantId.toLowerCase());return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
-  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,paidPublicationHealth,loadPaidSimpleDraft,savePaidSimpleDraft,savePaidSimpleCustomerFieldDraft,
+  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,paidPublicationHealth,paidCustomerFieldPublicationHealth,loadPaidSimpleDraft,savePaidSimpleDraft,savePaidSimpleCustomerFieldDraft,
   paidSimpleSavedDraftPublicationState(tenantId:string):PaidSimpleSavedDraftPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=savedDraftPublications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
   paidSimpleDraftState(tenantId:string):PaidSimpleDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=ownerDrafts.get(tenantId.toLowerCase());return state?.phase==='loaded'?{...state,draft:{...state.draft,presentation:{...state.draft.presentation},...(state.draft.schemaVersion===2?{customerFields:state.draft.customerFields.map(field=>({...field}))}:{})}}:state?{...state}:{phase:'ready'};},
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},
