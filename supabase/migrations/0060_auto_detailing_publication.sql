@@ -67,7 +67,11 @@ begin
  if not found or v.render_schema_version<>7 or not lumin.detailing_snapshot_valid(v.detailing_snapshot,v.source_revision) then raise exception 'UNSUPPORTED_CONFIG' using errcode='0A000';end if;
  select * into p from public.detailing_publications where tenant_id=t and flow_id=f and version_id=v_id;if not found then raise exception 'UNSUPPORTED_CONFIG' using errcode='0A000';end if;
  select * into b from public.bound_flow_versions where tenant_id=t and flow_id=f and version_id=v_id;if not found then raise exception 'UNSUPPORTED_CONFIG' using errcode='0A000';end if;
- c:=lumin.detailing_context(p.actor_id,t,b.service_id);cfg:=jsonb_build_object('key','detailing_quote','steps',jsonb_build_array(jsonb_build_object('key','service','kind','info','title',c#>>'{service,name}')));
+ c:=lumin.detailing_context(p.actor_id,t,b.service_id);
+ -- Fence installation aliases through their composite version FK after catalog locks.
+ select * into v from public.flow_versions where tenant_id=t and flow_id=f and id=v_id for update;
+ if not found or v.render_schema_version<>7 or not lumin.detailing_snapshot_valid(v.detailing_snapshot,v.source_revision) then raise exception 'UNSUPPORTED_CONFIG' using errcode='0A000';end if;
+ cfg:=jsonb_build_object('key','detailing_quote','steps',jsonb_build_array(jsonb_build_object('key','service','kind','info','title',c#>>'{service,name}')));
  if b.service_snapshot is distinct from c->'service' or p.catalog_snapshot is distinct from c->'catalog' or p.scheduling_snapshot is distinct from c->'scheduling' or v.detailing_snapshot->'catalog' is distinct from c->'catalog' or v.detailing_snapshot->>'serviceId' is distinct from b.service_id::text or v.config is distinct from cfg then raise exception 'UNSUPPORTED_CONFIG' using errcode='0A000';end if;
  return c||jsonb_build_object('render',v.detailing_snapshot||jsonb_build_object('versionId',v.id));
 end$$;
