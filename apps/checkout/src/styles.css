@@ -722,3 +722,9 @@ a:focus-visible {
   text-decoration: line-through;
   cursor: not-allowed;
 }
+
+/* Published presentation changes spacing only; prices and scheduling stay authoritative. */
+.paid-form-layout-stacked fieldset { display: grid; gap: 16px; }
+.paid-form-layout-compact fieldset { display: grid; gap: 8px; }
+.paid-form-layout-stacked fieldset label,
+.paid-form-layout-compact fieldset label { min-width: 0; }

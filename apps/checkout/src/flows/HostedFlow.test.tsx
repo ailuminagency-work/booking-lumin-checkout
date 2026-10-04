@@ -88,6 +88,28 @@ it.each(['foreign booking','unverifiable reference'])('rejects a hold receipt wi
  render(<HostedFlow installationId={id} apiUrl="https://api.example"/>);await saveRequest();fireEvent.click(screen.getByText('Reserve selected time'));await screen.findByText('Retry reservation of selected time');expect(screen.getByText(reference)).toBeTruthy();expect(screen.queryByText(/Selected time temporarily reserved until/)).toBeNull();expect(screen.getByText('Reservation status is unverified. Retry safely to check the same reservation.')).toBeTruthy();expect(screen.queryByText(/No time was reserved/)).toBeNull();
 });
 const paidRender={versionId:id,renderSchemaVersion:3,submissionMode:'paid_service_request',paymentMode:'staging_mock',simulated:true,service:{id,name:'Paid housekeeping',durationMinutes:30,price:{amount:12500,currency:'USD'}}};
+it('renders only the immutable published name and whitelisted presentation while retaining service price',async()=>{
+ vi.stubGlobal('location',{protocol:'https:'});
+ const publication={name:'<img src=x onerror=alert(1)>',draftRevision:2,presentation:{accentColor:'#0e7490',layout:'compact'}};
+ const fetcher=vi.fn(async()=>new Response(JSON.stringify({ok:true,data:{sessionToken:token,expiresAt:'2035-01-01T00:00:00Z',render:{...paidRender,publication}}})));
+ vi.stubGlobal('fetch',fetcher);render(<HostedFlow installationId={id} apiUrl="https://api.example"/>);
+ const heading=await screen.findByRole('heading',{name:publication.name});
+ expect(heading.querySelector('img')).toBeNull();
+ expect(screen.getByText('Service: Paid housekeeping')).toBeTruthy();
+ expect(screen.getByText('Published service price: $125.00')).toBeTruthy();
+ const main=screen.getByRole('main');expect(main).toHaveClass('paid-form-layout-compact');
+ expect(main.style.getPropertyValue('--accent')).toBe('#0e7490');
+ expect(main.parentElement).toHaveClass('checkout-root');
+ expect(screen.getByLabelText('Your name')).toBeEnabled();
+ expect(screen.queryByText('Test booking confirmed')).toBeNull();expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it('rejects a published presentation with an unapproved color instead of applying caller CSS',async()=>{
+ vi.stubGlobal('location',{protocol:'https:'});
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({ok:true,data:{sessionToken:token,expiresAt:'2035-01-01T00:00:00Z',render:{...paidRender,publication:{name:'Invalid design',draftRevision:1,presentation:{accentColor:'url(https://unapproved.example)',layout:'compact'}}}}}))));
+ render(<HostedFlow installationId={id} apiUrl="https://api.example"/>);
+ await screen.findByRole('alert');expect(screen.queryByLabelText('Your name')).toBeNull();
+ expect(screen.getByRole('main').style.getPropertyValue('--accent')).toBe('');
+});
 const paymentData={schemaVersion:1,bookingId:id,paymentId:'33333333-3333-4333-8333-333333333333',state:'confirmed',replayed:false,provider:'staging_mock',simulated:true};
 async function savePaidRequest(retryRequest=false){
  await screen.findByText('Paid housekeeping');fireEvent.change(screen.getByLabelText('Your name'),{target:{value:'Synthetic Person'}});fireEvent.change(screen.getByLabelText('Email'),{target:{value:'synthetic@example.test'}});fireEvent.change(screen.getByLabelText('Requested date'),{target:{value:'2030-01-01'}});await waitFor(()=>expect(screen.getByLabelText('Available time')).toBeEnabled());fireEvent.change(screen.getByLabelText('Available time'),{target:{value:slotStart}});fireEvent.click(screen.getByText('Send unconfirmed request'));if(retryRequest){fireEvent.click(await screen.findByText('Retry the same request'));}await screen.findByText('Request saved');
