@@ -56,3 +56,4 @@ export * from './paid-install-health';
 export * from './customer-draft-fields';
 
 export * from './customer-field-install-health';
+export * from './conditional-customer-fields';
