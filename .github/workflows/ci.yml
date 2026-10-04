@@ -84,7 +84,8 @@ jobs:
             customer_session_availability_tests \
             customer_session_hold_tests \
             customer_session_payment_tests \
-            paid_simple_publication_tests; do
+            paid_simple_publication_tests \
+            paid_simple_draft_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -141,3 +142,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           npx tsx apps/api/src/paid-publication-reader.integration.ts
+      - name: Owner draft persistence and concurrent revision conflicts
+        env:
+          PAID_DRAFT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_draft_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_draft_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-simple-draft.integration.ts

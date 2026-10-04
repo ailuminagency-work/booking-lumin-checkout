@@ -561,3 +561,19 @@ Hosted service capacity and simulated-payment concurrency:
 - Builder verification: runtime-client 56/56, Portal 113/113, typechecks and Portal build passed. Root integration: runtime-client 56/56 and publisher 17/17 passed. API prior exact source 158/158 and typecheck passed; this batch does not change API code.
 - Hosted owner usability remains uncertified pending controlled staging owner login. No score increase. Paid draft persistence is already in progress in /root/customer_hold_builder on codex/paid-simple-drafts.
 - Candidate push, exact CI and hosted deployment evidence will be recorded after verification. Main, production, and LeadGate remain untouched.
+
+### Exact candidate staging promotion 6552e9a
+- Remote integration head and draft PR97 head: 6552e9a2699e8b9664701acca66ef46e554854db. PR remains OPEN/DRAFT; main untouched.
+- GitHub CI37181847929 SUCCESS: repository typecheck/tests/build/contamination and database migration/RLS/domain suites, paid publication HTTP journey and owner recovery/discovery integration.
+- Render booking-lumin-api-staging deploy dep-db0ur59srm7s73997dig LIVE at exact candidate SHA. Hosted health 200/status ok; ready 200/status ready. Owner saved-form list without JWT401; foreign origin403.
+- Canonical Netlify exact SHA ready: Checkout6ac1ecf2e03dca000879868b, Portal6ac1ecf2e3a0220008c519f2, CommandCenter6ac1ecf2e92ca40008cf76ef.
+- Runtime dependency audit: zero vulnerabilities. Isolated database hqgtjztrsizjrsidtlqt remains migration0037; no database migration in this batch.
+- Browser refreshed connected staging Portal booking-detail deep link successfully to authorized sign-in gate; controlled owner password unavailable. Authenticated list/draft/Portal acceptance is NOT certified. Existing customer hosted test confirmation proof is recorded separately.
+- Overall35, Portal40, Booking55, Staging55, Booking Form30, Production20 unchanged. Next cells active: /root/customer_hold_builder private draft persistence; /root/customer_availability_ui_builder draft owner controls with exclusive API/UI ownership. No LeadGate or production actions.
+
+### Private owner draft persistence candidate
+- Builder /root/customer_hold_builder source1e87c2948742284898aa6360af352528a57ca7d6; root integratedcd33d82. Independent reviewer /root/booking_list_review accepted exact source and root CI wiring, independently reproduced33focused tests.
+- API GET/POST paid-simple-flows/:flowId/draft stores service/name/whitelisted presentation only. Fresh ownerJWT, active tenant/membership, exact origin and staging gate; strict fields and server service eligibility. Migration0038 dedicated forced-RLS table, no direct browser/service-role table grants, fixed security-definer RPCs with owner recheck. Revision comparison rejects stale and concurrent losers. No publishing/customer/payment writes.
+- Builder191API tests, typecheck,39SQLfile fresh replay,26SQLsecurity suites, actual local HTTP persistence/conflict/concurrency/tenant/role/eligibility tests passed. Root integrated191/191 andtypecheck passed; root CI adds SQL suite and dedicated fresh-database actualHTTP integration.
+- Runtime Guardian: financial/booking/tenant authority preserved. Release Governor permits exact CI then additive isolated-staging migration and API staging deployment only. Parent database and production prohibited.
+- Draft UI /root/customer_availability_ui_builder remains in progress; saved draft is not a published/customer-visible design. Hosted owner acceptance unverified; no score increase.
