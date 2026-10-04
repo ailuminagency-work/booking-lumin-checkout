@@ -1,4 +1,5 @@
 import {createPaidInstallHealthReader} from './paid-install-health';
+import {createCustomerFieldPublicationReader} from './customer-field-publication-reader';
 import {schedulingAuthoringEnabled,createOfferSchedulingCreator} from './owner-scheduling';
 import {catalogAuthoringEnabled,createSimpleOfferCreator} from './owner-catalog';
 import {businessOnboardingEnabled,createBusinessApi} from './business';
@@ -128,7 +129,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidCustomerFieldPublication:createCustomerFieldPublicationReader(pool,customerOrigins),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,

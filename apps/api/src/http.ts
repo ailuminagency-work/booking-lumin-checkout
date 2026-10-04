@@ -1,4 +1,5 @@
 import {PaidInstallHealth} from '@lumin/contracts';
+import {CustomerFieldPublicationReceipt,type CustomerFieldPublicationReader} from './customer-field-publication-reader';
 import type {PaidInstallHealthReader} from './paid-install-health';
 import {CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
 import type {OfferSchedulingCreator} from './owner-scheduling';
@@ -44,6 +45,7 @@ export interface FlowHttpOptions{
  /** Explicit staging test-publication gate; owner identity remains required. */
  paidSimplePublication?:boolean;
  paidPublication?:PaidPublicationReader;
+ paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
@@ -300,6 +302,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!existing)throw new FlowError("NOT_AVAILABLE");
     const receipt=PaidPublicationReceipt.safeParse(existing);
     if(!receipt.success)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:receipt.data});return;
+   }
+   const customerFieldRecovery=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/publication$/);
+   if(customerFieldRecovery){
+    if(!options.paidSimplePublication||!options.paidCustomerFieldPublication)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(customerFieldRecovery[1]).toLowerCase(),existing=await options.paidCustomerFieldPublication(actor,tenant,flow);
+    if(!existing)throw new FlowError("NOT_AVAILABLE");
+    const receipt=CustomerFieldPublicationReceipt.safeParse(existing);
+    if(!receipt.success||receipt.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:receipt.data});return;
    }
    const publishCustomerFields=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/publish-draft$/);
