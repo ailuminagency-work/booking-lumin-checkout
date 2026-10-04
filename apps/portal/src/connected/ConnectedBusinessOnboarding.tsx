@@ -5,7 +5,7 @@ import {BusinessOnboardingError,type RuntimeClient,type BusinessCreationState,ty
 const types:Record<BusinessType,string>={HOUSEKEEPING:'Housekeeping',AUTO_DETAILING:'Auto detailing',VEHICLE_RENTAL:'Vehicle rental',EQUIPMENT_RENTAL:'Equipment rental',EVENT_RENTAL:'Event rental',JUNK_REMOVAL:'Junk removal'};
 function BusinessDefaults({profile}:{profile:BusinessProfile}){
  const defaults=getBusinessTemplateDefaults(profile);
- return <section aria-label={'Unapplied setup defaults for business '+profile.tenantId}><h3>Unapplied setup defaults</h3><p>Business: {profile.tenantId}. Suggested catalog language: {defaults.catalog.plural}; option group: {defaults.catalog.optionsLabel}; resource group: {defaults.primaryNavigation.find(item=>item.id==='resources')?.label}.</p><p>These are structural defaults from the verified business type. They are not applied or persisted here. No prices, inventory, capacities or booking eligibility are configured by this description.</p></section>;
+ return <section aria-label={'Unapplied setup defaults for business '+profile.tenantId}><h3>Unapplied setup defaults</h3><p>Business: {profile.tenantId}. Suggested catalog language: {defaults.catalog.plural}; option group: {defaults.catalog.optionsLabel}; resource group: {defaults.context.resourceLabel}.</p><p>These are structural defaults from the verified business type. They are not applied or persisted here. No prices, inventory, capacities or booking eligibility are configured by this description.</p></section>;
 }
 type Client=Pick<RuntimeClient,'createBusiness'|'businessCreationState'|'businessProfile'>;
 type Fields={name:string;slug:string;timezone:string;currency:string;businessType:string};
