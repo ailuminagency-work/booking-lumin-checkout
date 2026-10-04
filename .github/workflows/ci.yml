@@ -90,7 +90,8 @@ jobs:
             paid_simple_draft_list_tests \
             paid_option_publication_tests \
             paid_simple_version_history_tests \
-            paid_simple_publication_rollback_tests; do
+            paid_simple_publication_rollback_tests \
+            staging_business_type_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -213,3 +214,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           npx tsx apps/api/src/paid-publication-rollback.integration.ts
+      - name: Immutable staging business type and atomic owner onboarding
+        env:
+          BUSINESS_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_business_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_business_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/business.integration.ts
