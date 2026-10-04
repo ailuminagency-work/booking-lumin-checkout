@@ -47,3 +47,5 @@ export type {
 export * from "./webhooks";
 
 export * from "./business-profile";
+
+export * from "./owner-catalog";

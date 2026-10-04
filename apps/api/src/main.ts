@@ -1,3 +1,4 @@
+import {catalogAuthoringEnabled,createSimpleOfferCreator} from './owner-catalog';
 import {businessOnboardingEnabled,createBusinessApi} from './business';
 import {createPaidPublicationRollback} from './paid-publication-rollback';
 import {createPaidVersionHistoryReader} from './paid-version-history-reader';
@@ -116,6 +117,7 @@ function main(): void {
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read}:{}),
+    ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),

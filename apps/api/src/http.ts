@@ -1,3 +1,5 @@
+import {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
+import type {SimpleOfferCreator} from './owner-catalog';
 import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
 import type {BusinessCreator,BusinessProfileReader} from './business';
 import {PaidRollbackInput,PaidRollbackReceipt,type PaidPublicationRollback} from './paid-publication-rollback';
@@ -22,6 +24,8 @@ import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,ty
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ catalogAuthoring?:boolean;
+ simpleOfferCreate?:SimpleOfferCreator;
  businessOnboarding?:boolean;
  businessCreate?:BusinessCreator;
  businessProfile?:BusinessProfileReader;
@@ -177,6 +181,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
     if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   if(url.pathname==="/api/catalog/simple-offers"){
+    if(!options.catalogAuthoring||!options.simpleOfferCreate)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=CreateSimpleOffer.parse(await jsonBody(req)),result=SimpleOfferReceipt.safeParse(await options.simpleOfferCreate(actor,tenant,body));
+    if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.service.name!==body.name||result.data.service.description!==body.description||result.data.service.price.amount!==body.price.amount||result.data.service.price.currency!==body.price.currency||result.data.service.durationMinutes!==body.durationMinutes)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==="/api/business-profile"){
     if(!options.businessOnboarding||!options.businessProfile)throw new FlowError("UNSUPPORTED_CONFIG");
