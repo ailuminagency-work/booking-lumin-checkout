@@ -4,7 +4,6 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # The API endpoint is the isolated Booking Lumin Render staging service.
   # Public auth configuration belongs to the isolated staging site environment.
   # Customer installation sessions derive tenant identity on the server.
   VITE_RUNTIME_ENV = "staging"
