@@ -9,6 +9,8 @@ export const PAID_SIMPLE_ACCENT_COLORS=['#4f46e5','#0e7490','#0f766e','#2563eb',
 export interface PaidSimplePresentation {readonly accentColor:typeof PAID_SIMPLE_ACCENT_COLORS[number];readonly layout:'stacked'|'compact'}
 export interface PaidSimpleDraftReceipt {readonly flowId:string;readonly revision:number}
 export interface PaidSimpleOwnerDraft extends PaidSimpleDraftReceipt {readonly serviceId:string;readonly name:string;readonly presentation:PaidSimplePresentation}
+export interface PaidSimpleVersion {readonly versionId:string;readonly draftRevision:number;readonly name:string;readonly presentation:PaidSimplePresentation;readonly current:boolean;readonly publication:PaidSimplePublicationReceipt|null}
+export interface PaidSimpleVersionHistory {readonly flowId:string;readonly versions:readonly PaidSimpleVersion[]}
 export type PaidSimpleDraftState={phase:'ready'}|{phase:'saving'|'loading'|'unverified'|'conflict';flowId:string}|{phase:'saved';flowId:string;revision:number}|{phase:'loaded';flowId:string;revision:number;draft:PaidSimpleOwnerDraft};
 export class PaidSimpleDraftError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'conflict'|'unknown',message:string){super(message);}}
 export interface PaidSimpleSavedDraftPublicationReceipt {readonly flowId:string;readonly draftRevision:number;readonly publication:PaidSimplePublicationReceipt}
@@ -185,6 +187,34 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   // Discovery grants no save, publish or retry authority; selection needs a fresh draft read.
   return Object.freeze(result);
  }
+ async function paidSimpleVersionHistory(tenantId:string,flowId:string):Promise<PaidSimpleVersionHistory>{
+  if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
+  if(!uuid(tenantId)||!uuid(flowId)||flowId!==flowId.toLowerCase())throw new PublicationError('not_sent','Enter the exact form ID for this business.');
+  const current=generation,credential=token;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows/'+flowId+'/versions?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}
+  catch{throw new PublicationError('not_sent','Version history could not be checked. This does not verify an uncertain save or publication.');}
+  if(current!==generation)throw new PublicationError('not_sent','The session changed. Sign in again before checking version history.');
+  if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('not_sent','Please sign in again to check version history.');}
+   if(response.status===403&&value.code==='FORBIDDEN')throw new PublicationError('not_sent','Only an authorized owner of this active business can check version history.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PublicationError('not_sent','Version history is unavailable in this workspace.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PublicationError('not_sent','Version history is unavailable for this form. This does not permit repeating an uncertain save or publication.');
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['flowId','versions'])||data.flowId!==flowId||!Array.isArray(data.versions)||data.versions.length<1||data.versions.length>50)throw new PublicationError('not_sent','Version history could not be validated.');
+  const versions:PaidSimpleVersion[]=[],ids=new Set<string>();let previous:number|undefined,currentCount=0;
+  for(const entry of data.versions){
+   if(!exact(entry,['versionId','draftRevision','name','presentation','current','publication'])||!uuid(entry.versionId)||ids.has(entry.versionId.toLowerCase())||!draftRevision(entry.draftRevision)||(previous!==undefined&&entry.draftRevision>=previous)||typeof entry.name!=='string'||entry.name.length<1||entry.name.length>200||!presentation(entry.presentation)||typeof entry.current!=='boolean')throw new PublicationError('not_sent','Version history could not be validated.');
+   const receipt=entry.publication===null?null:publicationReceipt(response,{ok:true,data:entry.publication});
+   if(receipt===undefined||receipt!==null&&receipt.versionId!==entry.versionId)throw new PublicationError('not_sent','Version history could not be validated.');
+   previous=entry.draftRevision;ids.add(entry.versionId.toLowerCase());if(entry.current)currentCount++;
+   versions.push(Object.freeze({versionId:entry.versionId,draftRevision:entry.draftRevision,name:entry.name,presentation:Object.freeze({...entry.presentation}),current:entry.current,publication:receipt}));
+  }
+  if(currentCount!==1)throw new PublicationError('not_sent','Version history could not be validated.');
+  // Immutable evidence only: no draft, publication or retry authority changes.
+  return Object.freeze({flowId,versions:Object.freeze(versions)});
+ }
  async function loadPaidSimpleDraft(tenantId:string,flowId:string):Promise<PaidSimpleOwnerDraft>{
   draftAuthority(tenantId,flowId);
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
@@ -255,7 +285,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  return {
   signIn,signOut,
-  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,loadPaidSimpleDraft,savePaidSimpleDraft,
+  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,loadPaidSimpleDraft,savePaidSimpleDraft,
   paidSimpleSavedDraftPublicationState(tenantId:string):PaidSimpleSavedDraftPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=savedDraftPublications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
   paidSimpleDraftState(tenantId:string):PaidSimpleDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=ownerDrafts.get(tenantId);return state?.phase==='loaded'?{...state,draft:{...state.draft,presentation:{...state.draft.presentation}}}:state?{...state}:{phase:'ready'};},
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},
