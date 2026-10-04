@@ -16,6 +16,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Hosted customer concurrency harness safety regressions
+        run: node --test scripts/customer-paid-concurrency.test.mjs
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
