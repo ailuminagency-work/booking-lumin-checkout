@@ -1,3 +1,4 @@
+import {ConditionalCustomerFieldPublicationReceipt,type ConditionalCustomerFieldPublicationReader} from './conditional-customer-field-publication-reader';
 import type {BusinessProfileInitializer} from './existing-business-profile';
 import {InitializeBusinessProfile} from '@lumin/contracts';
 import {attachRequestId} from './request-id';
@@ -33,7 +34,7 @@ import { createServer,type IncomingMessage,type ServerResponse } from "node:http
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
-import { CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDraft,CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -57,6 +58,7 @@ export interface FlowHttpOptions{
  paidSimplePublication?:boolean;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
+ paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
@@ -157,6 +159,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
      const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
      const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");
      if(raw&&typeof raw==='object'&&Object.hasOwn(raw,'schemaVersion')){
+      if((raw as {schemaVersion?:unknown}).schemaVersion===3){const body=ConditionalCustomerFieldRequestInput.parse(raw);const data=await call('submit_conditional_customer_field_request',[tokenHash(token),origin,body.idempotencyKey,body.customerAnswers,body.customer,body.requestedStart]);send(res,200,{ok:true,data});return;}
       const body=CustomerFieldRequestInput.parse(raw);const data=await call("submit_customer_field_request",[tokenHash(token),origin,body.idempotencyKey,body.customerAnswers,body.customer,body.requestedStart]);send(res,200,{ok:true,data});return;
      }
      const body=RequestInput.parse(raw);const data=await call("submit_flow_request",[tokenHash(token),origin,body.idempotencyKey,body.answers,body.customer,body.requestedStart]);send(res,200,{ok:true,data});return;
@@ -277,6 +280,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(req.method==="POST"){
      const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");
      if(raw&&typeof raw==='object'&&'schemaVersion' in raw){
+      if((raw as {schemaVersion?:unknown}).schemaVersion===3){const body=SavePaidConditionalCustomerFieldDraft.parse(raw);const data=await call('save_paid_conditional_customer_field_draft',[actor,tenant,flow,body.serviceId,body.expectedRevision,body.name,body.presentation.accentColor,body.presentation.layout,body.customerFields]);send(res,200,{ok:true,data});return;}
       const body=SavePaidCustomerFieldDraft.parse(raw);
       const data=await call("save_paid_customer_field_draft",[actor,tenant,flow,body.serviceId,body.expectedRevision,body.name,body.presentation.accentColor,body.presentation.layout,body.customerFields]);
       send(res,200,{ok:true,data});return;
@@ -372,6 +376,25 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const receipt=CustomerFieldPublicationReceipt.safeParse(existing);
     if(!receipt.success||receipt.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:receipt.data});return;
+   }
+   const conditionalRecovery=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/publication$/);
+   if(conditionalRecovery){
+    if(!options.paidSimplePublication||!options.paidConditionalCustomerFieldPublication)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+    const flow=Uuid.parse(conditionalRecovery[1]).toLowerCase(),result=await options.paidConditionalCustomerFieldPublication(actor,tenant,flow);
+    if(!result)throw new FlowError('NOT_AVAILABLE');
+    const receipt=ConditionalCustomerFieldPublicationReceipt.safeParse(result);if(!receipt.success||receipt.data.flowId!==flow)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:receipt.data});return;
+   }
+   const publishConditionalFields=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/publish-draft$/);
+   if(publishConditionalFields){
+    if(!options.paidSimplePublication)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(publishConditionalFields[1]);const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");
+    const body=PublishPaidSimpleDraft.parse(raw);if(body.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError("FORBIDDEN");
+    const data=RpcResults.publish_paid_conditional_customer_field_draft.parse(await call("publish_paid_conditional_customer_field_draft",[actor,tenant,flow,body.expectedDraftRevision,randomUUID(),randomUUID(),body.allowedOrigins]));
+    if(data.flowId!==flow||data.draftRevision!==body.expectedDraftRevision)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{flowId:data.flowId,draftRevision:data.draftRevision,publication:{versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:6,hostedPath:`/checkout/flow/${data.installationId}`}}});return;
    }
    const publishCustomerFields=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/publish-draft$/);
    if(publishCustomerFields){

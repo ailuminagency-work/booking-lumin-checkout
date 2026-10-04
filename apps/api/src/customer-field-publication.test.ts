@@ -32,8 +32,12 @@ describe('V5 informational request HTTP dispatch',()=>{
   const f=await requestFixture();const r=await f.post(f.input);expect(r.status).toBe(200);expect(await r.json()).toEqual({ok:true,data:{reference:'LMN-TEST',state:'draft',confirmed:false}});
   expect(f.call).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledWith('submit_customer_field_request',[expect.stringMatching(/^[a-f0-9]{64}$/),customerOrigin,f.input.idempotencyKey,f.input.customerAnswers,f.input.customer,'2030-01-01T10:00:00.000Z']);
  });
- it.each([{schemaVersion:3},{schemaVersion:1},{price:1},{tenantId:tenant},{customerAnswers:{custom_price:'1'}},{answers:{service:{quantity:1}}},{customerAnswers:{custom_access:'bad\ud800'}}])('rejects explicit malformed markers and caller authority without legacy fallback %j',async change=>{
+ it.each([{schemaVersion:4},{schemaVersion:1},{price:1},{tenantId:tenant},{customerAnswers:{custom_price:'1'}},{answers:{service:{quantity:1}}},{customerAnswers:{custom_access:'bad\ud800'}}])('rejects explicit malformed markers and caller authority without legacy fallback %j',async change=>{
   const f=await requestFixture();expect((await f.post({...f.input,...change})).status).toBe(400);expect(f.call).not.toHaveBeenCalled();
+ });
+ it('dispatches explicit schema3 only to the conditional RPC without V5 or legacy fallback',async()=>{
+  const f=await requestFixture();expect((await f.post({...f.input,schemaVersion:3})).status).toBe(200);
+  expect(f.call).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledWith('submit_conditional_customer_field_request',[expect.stringMatching(/^[a-f0-9]{64}$/),customerOrigin,f.input.idempotencyKey,f.input.customerAnswers,f.input.customer,'2030-01-01T10:00:00.000Z']);
  });
  it('preserves the unchanged legacy RPC for an unversioned valid legacy request',async()=>{
   const f=await requestFixture();const {schemaVersion:_,customerAnswers:__,...legacy}=f.input;

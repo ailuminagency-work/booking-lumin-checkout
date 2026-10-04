@@ -1,7 +1,7 @@
-import { CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
+import { ConditionalCustomerFields,ConditionalCustomerFieldAnswers,CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { PaidCustomerFieldRender,CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { PaidConditionalCustomerFieldRender,PaidCustomerFieldRender,CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -18,16 +18,19 @@ export const PublishPaidSimple=z.object({serviceId:Uuid,name:z.string().trim().m
 export {PaidSimplePresentation};
 export const SavePaidSimpleDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),presentation:PaidSimplePresentation}).strict();
 export const SavePaidCustomerFieldDraft=SavePaidSimpleDraft.extend({schemaVersion:z.literal(2),customerFields:CustomerDraftFields}).strict();
+export const SavePaidConditionalCustomerFieldDraft=SavePaidSimpleDraft.extend({schemaVersion:z.literal(3),customerFields:ConditionalCustomerFields}).strict().refine(postgresV2Strings,'Invalid database text');
 const PaidSimpleDraftRevision=z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 export const PublishPaidSimpleDraft=z.object({expectedDraftRevision:PaidSimpleDraftRevision,allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export const PaidSimpleDraft=SavePaidSimpleDraft.omit({expectedRevision:true}).extend({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict();
 export const PaidCustomerFieldDraft=SavePaidCustomerFieldDraft.omit({expectedRevision:true}).extend({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict();
-export const AnyPaidSimpleDraft=z.union([PaidSimpleDraft,PaidCustomerFieldDraft]);
+export const PaidConditionalCustomerFieldDraft=SavePaidSimpleDraft.omit({expectedRevision:true}).extend({schemaVersion:z.literal(3),customerFields:ConditionalCustomerFields,flowId:Uuid,revision:PaidSimpleDraftRevision}).strict().refine(postgresV2Strings,'Invalid database text');
+export const AnyPaidSimpleDraft=z.union([PaidSimpleDraft,PaidCustomerFieldDraft,PaidConditionalCustomerFieldDraft]);
 export const PaidSimpleDraftList=z.object({drafts:z.array(AnyPaidSimpleDraft).max(50)}).strict().refine(list=>list.drafts.every((d,i)=>i===0||list.drafts[i-1]!.flowId<d.flowId));
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
 /** Explicit V5 informational request boundary, intentionally not wired to the
  * legacy submit RPC. Acceptance additionally requires immutable field validation. */
 export const CustomerFieldRequestInput=RequestInput.extend({schemaVersion:z.literal(2),answers:z.object({}).strict(),customerAnswers:CustomerFieldAnswers}).strict();
+export const ConditionalCustomerFieldRequestInput=RequestInput.extend({schemaVersion:z.literal(3),answers:z.object({}).strict(),customerAnswers:ConditionalCustomerFieldAnswers}).strict().refine(postgresV2Strings,'Invalid database text');
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 const Render=z.object({versionId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 // V2 is explicit; no permissive legacy fallback when a stored marker is present.
@@ -47,6 +50,9 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ publish_paid_conditional_customer_field_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(6),replayed:z.boolean()}).strict(),
+ save_paid_conditional_customer_field_draft:z.object({schemaVersion:z.literal(3),flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
+ submit_conditional_customer_field_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
  publish_paid_customer_field_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(5),replayed:z.boolean()}).strict(),
  publish_paid_option_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(4)}).strict(),
  publish_paid_simple_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3),replayed:z.boolean()}).strict(),
@@ -66,7 +72,7 @@ export const RpcResults={
  flow_owner_requests:z.object({requests:z.array(z.object({id:Uuid,reference:z.string().min(1).max(100),state:z.literal("draft"),slotStart:z.string(),createdAt:z.string()}).strict()).max(100)}).strict(),
  save_bound_flow_draft:z.object({flowId:Uuid,revision:Version}).strict(),
  publish_bound_flow:z.object({versionId:Uuid,installationId:Uuid}).strict(),
- issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender,PaidOptionRender,PaidCustomerFieldRender])}).strict(),
+ issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender,PaidOptionRender,PaidCustomerFieldRender,PaidConditionalCustomerFieldRender])}).strict(),
  submit_customer_field_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
  submit_flow_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
 };
