@@ -4,9 +4,12 @@ import { MemoryRouter } from "react-router-dom";
 import { App, PortalApplication } from "../App";
 
 const runtime = vi.hoisted(() => ({
-  signIn: vi.fn(), memberships: vi.fn(), bookings: vi.fn(), services: vi.fn(), setServiceActive: vi.fn(), signOut: vi.fn(),
+  signIn: vi.fn(), memberships: vi.fn(), bookings: vi.fn(), services: vi.fn(), setServiceActive: vi.fn(), signOut: vi.fn(), unexpectedNetwork: vi.fn(),
 }));
-vi.mock("@lumin/runtime-client", () => ({
+vi.mock("@lumin/runtime-client", async importOriginal => {
+  const actual = await importOriginal<typeof import("@lumin/runtime-client")>();
+  return {
+  ...actual,
   readPublicRuntimeConfig: (env: Record<string, unknown>) => ({
     environment: typeof env.VITE_RUNTIME_ENV === "string" && env.VITE_RUNTIME_ENV.trim()
       ? env.VITE_RUNTIME_ENV.trim()
@@ -26,11 +29,17 @@ vi.mock("@lumin/runtime-client", () => ({
       : "",
     tenantId: typeof env.VITE_TENANT_ID === "string" ? env.VITE_TENANT_ID.trim() : "",
   }),
-  createRuntimeClient: (config: { url: string }) => {
-    if (!config.url) throw new Error("Invalid config");
-    return runtime;
+  createRuntimeClient: (config: Parameters<typeof actual.createRuntimeClient>[0]) => {
+    // Preserve the complete connected state contract; navigation only replaces
+    // the identity/catalog reads and service mutation exercised below.
+    const client = actual.createRuntimeClient(config, async () => {
+      runtime.unexpectedNetwork();
+      throw new Error("Unexpected network request from navigation fixture");
+    });
+    return { ...client, ...runtime };
   },
-}));
+};
+});
 
 const labels = ["Home", "Bookings", "Booking Form", "Services & Pricing", "Settings"];
 const tenant = "11111111-1111-4111-8111-111111111111";
@@ -138,9 +147,16 @@ describe("Portal navigation migration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
     await waitFor(() => expect(runtime.setServiceActive).toHaveBeenCalledWith(tenant, "service", false));
     fireEvent.click(within(navigation).getByRole("link", { name: /Booking Form/ }));
-    expect(screen.getByRole("status")).toHaveTextContent("not available yet");
+    if (import.meta.env.VITE_RUNTIME_ENV === "staging" && import.meta.env.VITE_FLOW_API_URL?.trim()) {
+      expect(await screen.findByRole("tab", { name: "Build" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Booking Form", level: 1 })).toBeInTheDocument();
+      expect(screen.getByText(/Payment is simulated/)).toBeInTheDocument();
+    } else {
+      expect(screen.getByRole("status")).toHaveTextContent("not available yet");
+    }
     expect(screen.queryByTestId("checkout-preview")).not.toBeInTheDocument();
     expect(runtime.signIn).toHaveBeenCalledTimes(1);
+    expect(runtime.unexpectedNetwork).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(runtime.signOut).toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Sign in to your business" })).toBeInTheDocument();
