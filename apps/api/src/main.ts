@@ -1,3 +1,4 @@
+import {createCustomerConfirmation,createCustomerMockPayment} from './customer-payment';
 import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
 import {createCustomerHoldWriter} from './customer-hold';
 import {createCustomerAvailabilityReader} from './customer-availability';
@@ -110,12 +111,13 @@ function main(): void {
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
     availability: createAvailabilityReader(pool),
+    customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),
     customerAvailability: createCustomerAvailabilityReader(pool),
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,

@@ -1,3 +1,4 @@
+import {type CustomerConfirmation,type CustomerMockPayment} from './customer-payment';
 import {MockPaymentInput,MockPaymentReceipt,type MockPaymentWriter} from './mock-payment';
 import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWriter} from './rental-mock-payment';
 import {DraftInput,DraftReceipt,type DraftWriter} from './draft';
@@ -19,6 +20,8 @@ export interface FlowHttpOptions{
  availability?:AvailabilityReader;
  customerAvailability?:CustomerAvailabilityReader;
  customerHold?:CustomerHoldWriter;
+ customerConfirmation?:CustomerConfirmation;
+ customerMockPayment?:CustomerMockPayment;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -85,6 +88,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const match=url.pathname.match(/^\/api\/installations\/([^/]+)\/sessions$/);
     if(match){const id=Uuid.parse(match[1]);z.object({}).strict().parse(await jsonBody(req));
      const sessionToken=randomBytes(32).toString("base64url");const data=RpcResults.issue_flow_session.parse(await call("issue_flow_session",[id,tokenHash(sessionToken),origin]));send(res,200,{ok:true,data:{...data,sessionToken}});return;
+    }
+    if(url.pathname==="/api/flow-sessions/confirm"||url.pathname==="/api/flow-sessions/mock-payment"){
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError("UNAUTHENTICATED");
+     z.object({}).strict().parse(await jsonBody(req));
+     const mock=url.pathname.endsWith('/mock-payment');
+     const writer=mock?options.customerMockPayment:options.customerConfirmation;
+     if(!writer)throw new FlowError("UNSUPPORTED_CONFIG");
+     const raw=await writer(tokenHash(token),origin);
+     const data=mock?MockPaymentReceipt.parse(raw):ConfirmationReceipt.parse(raw);
+     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
     }
     if(url.pathname==="/api/flow-sessions/hold"){
      if(!options.customerHold)throw new FlowError("NOT_AVAILABLE");

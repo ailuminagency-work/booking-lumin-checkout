@@ -1,4 +1,4 @@
-import type {Pool} from 'pg';
+import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
 import {Service,Selection} from '@lumin/contracts';
 import {createPricingEngine} from '@lumin/core';
@@ -35,6 +35,21 @@ export function createMockPaymentWriter(pool:Pool,env:Record<string,string|undef
    await c.query('begin');await c.query("set local statement_timeout='5s'");await c.query('set local role service_role');
    const member=await c.query(`select t.id from public.tenants t join public.tenant_members m on m.tenant_id=t.id where t.id=$1::uuid and m.user_id=$2::uuid and t.status='active' and m.role in ('BUSINESS_OWNER','BUSINESS_STAFF') for share of t,m`,[tenant,actor]);
    if(member.rows.length!==1)throw new FlowError('FORBIDDEN');
+   const receipt=await mockPaymentInTransaction(c,tenant,booking);
+   await c.query('commit');return receipt;
+  }catch(error){
+   try{await c.query('rollback');}catch{broken=true;}
+   if(error instanceof FlowError)throw error;
+   const code=(error as {code?:string})?.code;
+   if(code==='42883'||code==='0A000')throw new FlowError('UNSUPPORTED_CONFIG');
+   if(['40001','40P01','22023','23505'].includes(code??''))throw new FlowError('CONFLICT');
+   throw new FlowError('INTERNAL_ERROR');
+  }finally{c.release(broken);}
+ };
+}
+
+/** Internal staging transaction primitive. Caller owns capability/owner authorization and the staging gate. */
+export async function mockPaymentInTransaction(c:PoolClient,tenant:string,booking:string):Promise<z.infer<typeof MockPaymentReceipt>>{
    // Existing statement trigger acquires the policy/head prefix without touching rows.
    await c.query('update public.bookings set payment_id=payment_id where false');
    await c.query('lock table public.services,public.service_items,public.service_addons,public.service_questions,public.service_resources,public.refunds in share mode');
@@ -73,14 +88,5 @@ export function createMockPaymentWriter(pool:Pool,env:Record<string,string|undef
    const confirmed=await c.query('select public.confirm_succeeded_payment($1::uuid) result',[paymentId]);
    const receipt=ConfirmationReceipt.safeParse(confirmed.rows[0]?.result);
    if(!receipt.success||receipt.data.bookingId!==booking||receipt.data.paymentId!==paymentId)throw new FlowError('INTERNAL_ERROR');
-   await c.query('commit');return{...receipt.data,provider:'staging_mock',simulated:true};
-  }catch(error){
-   try{await c.query('rollback');}catch{broken=true;}
-   if(error instanceof FlowError)throw error;
-   const code=(error as {code?:string})?.code;
-   if(code==='42883'||code==='0A000')throw new FlowError('UNSUPPORTED_CONFIG');
-   if(['40001','40P01','22023','23505'].includes(code??''))throw new FlowError('CONFLICT');
-   throw new FlowError('INTERNAL_ERROR');
-  }finally{c.release(broken);}
- };
+   return{...receipt.data,provider:'staging_mock',simulated:true};
 }
