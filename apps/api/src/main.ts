@@ -1,3 +1,4 @@
+import {readReleaseMetadata,serveReleaseMetadata} from './release-metadata';
 import {createCustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {createCustomerFieldRollback} from './customer-field-rollback';
 import {createCustomerFieldVersionHistoryReader} from './customer-field-version-history';
@@ -83,6 +84,7 @@ function main(): void {
   const ownerOrigins = originList("OWNER_ORIGINS");
   const customerOrigins = originList("CUSTOMER_ORIGINS");
   const listenPort = port();
+  const releaseMetadata = readReleaseMetadata(process.env);
 
   // ---- Real Supabase-JWT identity verification ----------------------------
   // Constructing the verifier validates projectUrl/publicKey shape and throws
@@ -158,6 +160,7 @@ function main(): void {
     } catch {
       path = "/";
     }
+    if (serveReleaseMetadata(req, res, path, releaseMetadata)) return;
     // Liveness: no auth, no I/O.
     if (req.method === "GET" && path === "/health") {
       send(res, 200, { status: "ok" });

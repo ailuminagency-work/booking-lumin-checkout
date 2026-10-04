@@ -1,3 +1,4 @@
+import {readReleaseMetadata,serveReleaseMetadata,type ReleaseEnvironment} from './release-metadata';
 import {CustomerFieldRollbackReadReceipt,type CustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {CustomerFieldRollbackInput,CustomerFieldRollbackReceipt,type CustomerFieldRollback} from './customer-field-rollback';
 import {CustomerFieldVersionHistory,type CustomerFieldVersionHistoryReader} from './customer-field-version-history';
@@ -33,6 +34,7 @@ import { CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,Pu
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
+ releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
  schedulingAuthoring?:boolean;
  offerSchedulingCreate?:OfferSchedulingCreator;
@@ -90,6 +92,7 @@ function jsonBody(req:IncomingMessage):Promise<unknown>{
 function originHeader(req:IncomingMessage,allowed:readonly string[]){const value=req.headers.origin;if(typeof value!=="string"||!allowed.includes(value))throw new FlowError("FORBIDDEN");return value;}
 /** Local harness HTTP only. Production needs a separately reviewed TLS/auth composition. */
 export function createFlowHttpServer(options:FlowHttpOptions){
+ const releaseMetadata=readReleaseMetadata(options.releaseEnvironment??{});
  const ownerOrigins=[...options.ownerOrigins],customerOrigins=[...options.customerOrigins];
  const trustProxy=options.trustProxy===true;
  const now=options.now??Date.now;const limits=new Map<string,{start:number;count:number}>();
@@ -98,6 +101,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const address=req.socket.remoteAddress??"";if(!trustProxy&&!["127.0.0.1","::1","::ffff:127.0.0.1"].includes(address))throw new FlowError("FORBIDDEN");
    const instant=now();let rate=limits.get(address);if(!rate||instant-rate.start>=60000){rate={start:instant,count:0};limits.set(address,rate);}if(++rate.count>120)throw new FlowError("RATE_LIMITED");
    const url=new URL(req.url??"/","http://127.0.0.1");
+   if(serveReleaseMetadata(req,res,url.pathname,releaseMetadata))return;
    if(url.pathname==="/health"&&req.method==="GET"){send(res,200,{ok:true,data:{mode:"LOCAL_HARNESS",providerConnections:false}});return;}
    const customer=url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
    const origin=originHeader(req,customer?customerOrigins:ownerOrigins);
