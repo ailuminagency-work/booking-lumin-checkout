@@ -1,3 +1,5 @@
+import {DetailingReservationInput,DetailingRequestReceipt,DetailingHoldReceipt} from '@lumin/contracts';
+import type {DetailingReservationApi} from './detailing-reservation';
 import {DetailingAvailabilityQuery,DetailingAvailabilityReceipt} from '@lumin/contracts';
 import type {DetailingAvailabilityReader} from './detailing-availability';
 import {SaveDetailingDraft,DetailingDraft,PublishDetailingDraft,DetailingPublicationReceipt,DetailingQuoteInput} from '@lumin/contracts';
@@ -56,6 +58,7 @@ export interface FlowHttpOptions{
  releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
  detailingPublication?:boolean;
+ detailingReservationApi?:DetailingReservationApi;
  detailingAvailability?:DetailingAvailabilityReader;
  detailingPublicationApi?:DetailingPublicationApi;
  schedulingAuthoring?:boolean;
@@ -153,6 +156,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
      const data=DetailingAvailabilityReceipt.safeParse(await options.detailingAvailability(tokenHash(token),origin,query));
      if(!data.success||data.data.slots.some(s=>Date.parse(s.start)<Date.parse(query.from)||Date.parse(s.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
      send(res,200,{ok:true,data:data.data});return;
+    }
+    if(url.pathname==='/api/detailing-flow-sessions/request'||url.pathname==='/api/detailing-flow-sessions/hold'){
+     if(!options.detailingPublication||!options.detailingReservationApi)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST'||[...url.searchParams].length)throw new FlowError('INVALID_REQUEST');
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     if(url.pathname.endsWith('/request')){const body=DetailingReservationInput.parse(await jsonBody(req));const data=DetailingRequestReceipt.safeParse(await options.detailingReservationApi.request(tokenHash(token),origin,body));if(!data.success||data.data.slot.start!==body.requestedStart||data.data.selection.packageId!==body.selection.packageId||data.data.selection.vehicleId!==body.selection.vehicleId||data.data.selection.locationId!==body.selection.locationId||data.data.selection.addonIds.length!==body.selection.addonIds.length||data.data.selection.addonIds.some(id=>!body.selection.addonIds.includes(id)))throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data:data.data});return;}
+     z.object({}).strict().parse(await jsonBody(req));const data=DetailingHoldReceipt.safeParse(await options.detailingReservationApi.hold(tokenHash(token),origin));if(!data.success)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data:data.data});return;
     }
     if(url.pathname.startsWith('/api/detailing-')){
      if(!options.detailingPublication||!options.detailingPublicationApi)throw new FlowError('UNSUPPORTED_CONFIG');

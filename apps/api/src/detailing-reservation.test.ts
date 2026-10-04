@@ -1,7 +1,9 @@
-import {expect,it,vi} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+import type {Server} from 'node:http';
 import {buildDetailingService} from '@lumin/contracts';
 import {createPricingEngine} from '@lumin/core';
 import {createDetailingReservationApi} from './detailing-reservation';
+import {createFlowHttpServer} from './http';
 const mocks=vi.hoisted(()=>({reserve:vi.fn(),availability:vi.fn()}));
 vi.mock('./reservation',async()=>({...await vi.importActual<typeof import('./reservation')>('./reservation'),reserveBookingInTransaction:mocks.reserve}));
 vi.mock('./repository',async()=>({...await vi.importActual<typeof import('./repository')>('./repository'),readAvailabilitySlots:mocks.availability}));
@@ -22,3 +24,6 @@ it.each([{status:'released',expires_at:held.expiresAt},{status:'consumed',expire
 it('rolls back shared hold on final session expiry',async()=>{let checks=0;const f=fixture({clock:()=>++checks>=2?Date.parse(context.expiresAt):now});await expect(f.api.hold(hash,origin)).rejects.toMatchObject({code:'FORBIDDEN'});expect(f.query).toHaveBeenLastCalledWith('rollback');});
 it.each(['42501','55P03','40P01','22023'])('sanitizes authority/lock/validation SQLSTATE %s',async error=>{await expect(fixture({error}).api.request(hash,origin,input)).rejects.toMatchObject({message:error==='42501'?'FORBIDDEN':error==='22023'?'INVALID_REQUEST':'CONFLICT'});});
 it('rejects spoofed bearer hash and foreign origin before DB',async()=>{const f=fixture();await expect(f.api.hold('token',origin)).rejects.toMatchObject({code:'INVALID_REQUEST'});await expect(f.api.request(hash,'https://foreign.example.test',input)).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(f.connect).not.toHaveBeenCalled();});
+const servers:Server[]=[];afterEach(async()=>{for(const s of servers.splice(0)){s.closeAllConnections();await new Promise<void>(r=>s.close(()=>r()));}});
+async function http(enabled=true){const api={request:vi.fn(async()=>receipt),hold:vi.fn(async()=>({schemaVersion:1,versionId:id(5),installationId:id(6),serviceId:service,...held}))};const server=createFlowHttpServer({repository:{call:vi.fn()} as never,customerOrigins:[origin],ownerOrigins:['https://portal.example.test'],detailingPublication:enabled,detailingReservationApi:api as never});servers.push(server);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;return{api,req:async(kind:string,body:unknown,token='a'.repeat(43),o=origin)=>{const r=await fetch(base+'/api/detailing-flow-sessions/'+kind,{method:'POST',headers:{origin:o,authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});return{status:r.status,json:await r.json()};}};}
+it('actual strict request/empty hold transport hashes bearer and preserves staged gate',async()=>{const f=await http();expect((await f.req('request',input)).status).toBe(200);expect((await f.req('hold',{})).status).toBe(200);expect(f.api.hold).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{64}$/),origin);expect((await f.req('hold',{bookingId:id(90)})).status).toBe(400);expect((await f.req('request',{...input,total:1})).status).toBe(400);expect((await f.req('request?tenantId='+tenant,input)).status).toBe(400);expect((await f.req('hold',{},'bad')).status).toBe(401);expect((await f.req('hold',{},'a'.repeat(43),'https://foreign.example.test')).status).toBe(403);expect((await(await http(false)).req('request',input)).status).toBe(422);});
