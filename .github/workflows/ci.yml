@@ -81,7 +81,8 @@ jobs:
             mode_flow_session_tests \
             customer_session_availability_tests \
             customer_session_hold_tests \
-            customer_session_payment_tests; do
+            customer_session_payment_tests \
+            paid_simple_publication_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -116,3 +117,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           npx tsx apps/api/src/customer-payment.integration.ts
+      - name: Paid simple publication HTTP journey and expiry rollback
+        env:
+          PAID_SIMPLE_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_paid_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_paid_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-simple-publication.integration.ts
