@@ -106,7 +106,7 @@ jobs:
             customer_field_install_health_tests \
             customer_field_rollback_recovery_tests \
             existing_business_profile_initialization_tests \
-            conditional_customer_field_tests conditional_customer_field_install_health_tests conditional_customer_field_rollback_tests auto_detailing_catalog_tests auto_detailing_scheduling_tests auto_detailing_publication_tests; do
+            conditional_customer_field_tests conditional_customer_field_install_health_tests conditional_customer_field_rollback_tests auto_detailing_catalog_tests auto_detailing_scheduling_tests auto_detailing_publication_tests detailing_customer_reservation_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -427,3 +427,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/detailing-availability.integration.ts
+      - name: Detailing reservations price authority, atomic rollback and last-slot concurrency
+        env:
+          DETAILING_RESERVATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_reservation_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_reservation_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-reservation.integration.ts

@@ -1,0 +1,10 @@
+import {z} from 'zod';
+import {DetailingQuoteInput,DetailingQuoteReceipt,SaveDetailingDraft} from './detailing-publication';
+const Id=z.string().uuid().regex(/^[0-9a-f-]+$/);
+const Instant=z.string().datetime().refine(v=>Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v);
+export const DetailingReservationInput=z.object({schemaVersion:z.literal(1),idempotencyKey:z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/),selection:DetailingQuoteInput,customer:z.object({name:SaveDetailingDraft.shape.name,email:z.string().max(254).email().refine(s=>s===s.trim()&&!/[\u0000-\u001f\u007f]/.test(s))}).strict(),requestedStart:Instant}).strict();
+export type DetailingReservationInput=z.infer<typeof DetailingReservationInput>;
+export const DetailingRequestReceipt=z.object({schemaVersion:z.literal(1),versionId:Id,installationId:Id,serviceId:Id,bookingId:Id,reference:z.string().regex(/^LMN-[A-Z0-9]{6,32}$/),selection:DetailingQuoteInput,pricing:DetailingQuoteReceipt.innerType().shape.pricing,slot:z.object({start:Instant,end:Instant}).strict(),state:z.literal('draft'),confirmed:z.literal(false),paymentMode:z.literal('unavailable')}).strict().refine(r=>Date.parse(r.slot.end)>Date.parse(r.slot.start)&&DetailingQuoteReceipt.safeParse({schemaVersion:1,versionId:r.versionId,installationId:r.installationId,serviceId:r.serviceId,expiresAt:r.slot.end,pricingModel:'package_subtotal_vehicle_multiplier',selection:r.selection,pricing:r.pricing,bookingMode:'unavailable',paymentMode:'unavailable'}).success);
+export type DetailingRequestReceipt=z.infer<typeof DetailingRequestReceipt>;
+export const DetailingHoldReceipt=z.object({schemaVersion:z.literal(1),versionId:Id,installationId:Id,serviceId:Id,bookingId:Id,holdId:Id,status:z.literal('active'),expiresAt:Instant}).strict();
+export type DetailingHoldReceipt=z.infer<typeof DetailingHoldReceipt>;

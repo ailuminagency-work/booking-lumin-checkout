@@ -1,3 +1,4 @@
+import {createDetailingReservationApi} from './detailing-reservation';
 import {createDetailingAvailabilityReader} from './detailing-availability';
 import {createDetailingOfferCreator,createDetailingOfferReader} from './detailing-catalog';
 import {createConditionalCustomerFieldVersionHistoryReader} from './conditional-customer-field-version-history';
@@ -139,7 +140,7 @@ function main(): void {
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
     ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool),detailingSchedulingCreate:createDetailingSchedulingCreator(pool)}:{}),
-    ...(detailingPublicationEnabled(process.env)?{detailingPublication:true,detailingPublicationApi:createDetailingPublicationApi(pool,customerOrigins),detailingAvailability:createDetailingAvailabilityReader(pool,customerOrigins)}:{}),
+    ...(detailingPublicationEnabled(process.env)?{detailingPublication:true,detailingPublicationApi:createDetailingPublicationApi(pool,customerOrigins),detailingAvailability:createDetailingAvailabilityReader(pool,customerOrigins),detailingReservationApi:createDetailingReservationApi(pool,customerOrigins)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),
