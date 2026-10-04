@@ -1,4 +1,6 @@
-import {BusinessProfile,CreateBusiness,CreateSimpleOffer,SimpleOfferReceipt,CurrencyCode,BusinessTimezone,CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
+import {BusinessProfile,CreateBusiness,CreateSimpleOffer,SimpleOfferReceipt,CurrencyCode,BusinessTimezone,CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches,PaidInstallHealth} from '@lumin/contracts';
+export type PaidInstallReceipt=NonNullable<PaidInstallHealth['installation']['receipt']>;
+export type {PaidInstallHealth} from '@lumin/contracts';
 export type {BusinessProfile,CreateBusiness,BusinessType} from '@lumin/contracts';
 /** Browser-only public Supabase interface. No provider credentials or service role. */
 import {parseBookingDetail,type ConnectedBookingDetail} from './bookingDetail';
@@ -214,6 +216,25 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }
   // Discovery grants no save, publish or retry authority; selection needs a fresh draft read.
   return Object.freeze(result);
+ }
+ async function paidPublicationHealth(tenantId:string,flowId:string,expected:PaidInstallReceipt):Promise<PaidInstallHealth>{
+  if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PublicationError('not_sent','The publication health service is not configured.');
+  if(!uuid(tenantId)||!uuid(flowId)||flowId!==flowId.toLowerCase()||!exact(expected,['versionId','installationId','renderSchemaVersion','hostedPath'])||!uuid(expected.versionId)||!uuid(expected.installationId)||(expected.renderSchemaVersion!==3&&expected.renderSchemaVersion!==4)||expected.hostedPath!=='/checkout/flow/'+expected.installationId)throw new PublicationError('not_sent','Choose a verified publication receipt for this business.');
+  const selected={...expected},current=generation,credential=token;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows/'+flowId+'/health?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new PublicationError('not_sent','Install evidence could not be checked. Browser load health remains unverified.');}
+  if(current!==generation)throw new PublicationError('not_sent','The session changed. Sign in again before checking install evidence.');
+  if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('not_sent','Please sign in again to check install evidence.');}
+   if(response.status===403&&value.code==='FORBIDDEN')throw new PublicationError('not_sent','Only an authorized owner of this active business can check install evidence.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PublicationError('not_sent','Install evidence is unavailable. The server staging capability is disabled.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PublicationError('not_sent','Install evidence is unavailable for this publication. This does not verify an uncertain publication or authorize another attempt.');
+  }
+  const parsed=response.status===200&&exact(value,['ok','data'])&&value.ok===true?PaidInstallHealth.safeParse(value.data):undefined;
+  if(!parsed?.success)throw new PublicationError('not_sent','Install evidence could not be validated. Browser load health remains unverified.');
+  const health=parsed.data,receipt=health.installation.receipt;
+  if(health.flowId!==flowId||health.versionId!==selected.versionId||health.renderSchemaVersion!==selected.renderSchemaVersion||receipt&&(receipt.versionId!==selected.versionId||receipt.installationId!==selected.installationId||receipt.renderSchemaVersion!==selected.renderSchemaVersion||receipt.hostedPath!==selected.hostedPath))throw new PublicationError('not_sent','The current publication no longer matches the selected version and installation. Refresh its receipt before checking evidence again.');
+  return health;
  }
  async function paidSimpleVersionHistory(tenantId:string,flowId:string):Promise<PaidSimpleVersionHistory>{
   if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
@@ -483,7 +504,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   signIn,signOut,
   rollbackPaidSimplePublication,reconcilePaidSimpleRollback,
   paidSimpleRollbackState(tenantId:string):PaidSimpleRollbackState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='verified'?{...state,receipt:{...state.receipt}}:state?{...state,targetPublication:{...state.targetPublication}}:{phase:'ready'};},
-  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,loadPaidSimpleDraft,savePaidSimpleDraft,
+  publishPaidSimpleDraft,publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,listPaidSimpleDrafts,paidSimpleVersionHistory,paidPublicationHealth,loadPaidSimpleDraft,savePaidSimpleDraft,
   paidSimpleSavedDraftPublicationState(tenantId:string):PaidSimpleSavedDraftPublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=savedDraftPublications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt,publication:{...state.receipt.publication}}}:state?{...state}:{phase:'ready'};},
   paidSimpleDraftState(tenantId:string):PaidSimpleDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=ownerDrafts.get(tenantId);return state?.phase==='loaded'?{...state,draft:{...state.draft,presentation:{...state.draft.presentation}}}:state?{...state}:{phase:'ready'};},
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},
