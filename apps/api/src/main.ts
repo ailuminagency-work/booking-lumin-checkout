@@ -1,3 +1,4 @@
+import {businessOnboardingEnabled,createBusinessApi} from './business';
 import {createPaidPublicationRollback} from './paid-publication-rollback';
 import {createPaidVersionHistoryReader} from './paid-version-history-reader';
 import {createPaidDraftListReader} from './paid-draft-list-reader';
@@ -114,6 +115,7 @@ function main(): void {
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
+    ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),

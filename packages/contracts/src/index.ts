@@ -45,3 +45,5 @@ export type {
 } from "./installation";
 
 export * from "./webhooks";
+
+export * from "./business-profile";

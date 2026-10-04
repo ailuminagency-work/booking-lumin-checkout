@@ -1,3 +1,5 @@
+import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
+import type {BusinessCreator,BusinessProfileReader} from './business';
 import {PaidRollbackInput,PaidRollbackReceipt,type PaidPublicationRollback} from './paid-publication-rollback';
 import {PaidVersionHistory,type PaidVersionHistoryReader} from './paid-version-history-reader';
 import {type PaidDraftListReader} from './paid-draft-list-reader';
@@ -20,6 +22,9 @@ import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,ty
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
  repository:FlowRepository;
+ businessOnboarding?:boolean;
+ businessCreate?:BusinessCreator;
+ businessProfile?:BusinessProfileReader;
  tenantProfile?:TenantProfileReader;
  availability?:AvailabilityReader;
  customerAvailability?:CustomerAvailabilityReader;
@@ -123,6 +128,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     }throw new FlowError("NOT_AVAILABLE");
    }
    const actor=await owner();
+   if(url.pathname==="/api/businesses"){
+    if(!options.businessOnboarding||!options.businessCreate)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    if([...url.searchParams].length)throw new FlowError("INVALID_REQUEST");
+    const body=CreateBusiness.parse(await jsonBody(req)),result=BusinessProfile.safeParse(await options.businessCreate(actor,body));
+    if(!result.success||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
+   }
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
@@ -164,6 +177,13 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
     if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   if(url.pathname==="/api/business-profile"){
+    if(!options.businessOnboarding||!options.businessProfile)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const result=BusinessProfile.safeParse(await options.businessProfile(actor,tenant));
+    if(!result.success||result.data.tenantId!==tenant.toLowerCase())throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==="/api/profile"){
     if(req.method!=="GET"||!options.tenantProfile)throw new FlowError("NOT_AVAILABLE");
