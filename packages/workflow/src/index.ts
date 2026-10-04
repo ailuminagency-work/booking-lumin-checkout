@@ -27,3 +27,4 @@ export * from "./publication";
 export * from "./configurablePublication";
 
 export * from './paidPublication';
+export * from './paidOptionPublication';

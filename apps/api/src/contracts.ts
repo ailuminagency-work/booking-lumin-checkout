@@ -1,7 +1,7 @@
 import { RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -13,6 +13,7 @@ export const Origin=z.string().max(2048).refine(s=>{try{const u=new URL(s);retur
 export const SaveDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),config:BoundConfig}).strict();
 export const PublishDraft=z.object({expectedRevision:Version.refine(n=>n>0),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export {PaidSimpleRender};
+export const PublishPaidOption=z.object({serviceId:Uuid,name:z.string().trim().min(1).max(200),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export const PublishPaidSimple=z.object({serviceId:Uuid,name:z.string().trim().min(1).max(200),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export {PaidSimplePresentation};
 export const SavePaidSimpleDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),presentation:PaidSimplePresentation}).strict();
@@ -40,6 +41,7 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ publish_paid_option_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(4)}).strict(),
  publish_paid_simple_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3),replayed:z.boolean()}).strict(),
  save_paid_simple_draft:z.object({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
  get_paid_simple_draft:PaidSimpleDraft,
@@ -56,7 +58,7 @@ export const RpcResults={
  flow_owner_requests:z.object({requests:z.array(z.object({id:Uuid,reference:z.string().min(1).max(100),state:z.literal("draft"),slotStart:z.string(),createdAt:z.string()}).strict()).max(100)}).strict(),
  save_bound_flow_draft:z.object({flowId:Uuid,revision:Version}).strict(),
  publish_bound_flow:z.object({versionId:Uuid,installationId:Uuid}).strict(),
- issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender])}).strict(),
+ issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender,PaidOptionRender])}).strict(),
  submit_flow_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
 };
 export type FlowRpc=keyof typeof RpcResults;

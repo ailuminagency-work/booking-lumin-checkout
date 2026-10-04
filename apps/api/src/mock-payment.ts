@@ -1,3 +1,4 @@
+import {PaidOptionSelection,PaidOptionService,validatePaidOptionAnswers} from '@lumin/workflow';
 import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
 import {Service,Selection} from '@lumin/contracts';
@@ -10,7 +11,8 @@ export type MockPaymentWriter=(actor:string,tenant:string,booking:string)=>Promi
 /**
  * The staging mock provider currently has one intentionally narrow contract:
  * it can complete only a simple service whose price is reconstructed from
- * the tenant-scoped service row. Configurable/cart/rental selections stay
+ * the tenant-scoped service row. A persisted V4 request may include one
+ * proven price-neutral choice; configurable/cart/rental selections stay
  * fail-closed until their catalog, pricing, and (for rentals) resource-hold
  * authority are available at this boundary. In particular, this seam must
  * never fall back to a client supplied total. A rental implementation must
@@ -62,18 +64,34 @@ export async function mockPaymentInTransaction(c:PoolClient,tenant:string,bookin
    if(!selection.success)throw new FlowError('UNSUPPORTED_CONFIG');
    // Parse the shared contract before the service lookup so a canonical
    // rental selection reaches the same tenant/service boundary. The mock
-   // provider still accepts only the exact simple shape below.
+   // provider accepts only exact simple or persisted V4 neutral-choice shapes.
    const simpleSelection=SimpleMockPaymentSelection.safeParse(b.selection);
-   const service=await c.query(`select s.* from public.services s where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active and s.archetype='simple' and s.tax_rate_bp=0 and s.rental is null and not exists(select 1 from public.service_items where service_id=s.id) and not exists(select 1 from public.service_addons where service_id=s.id) and not exists(select 1 from public.service_questions where service_id=s.id) and not exists(select 1 from public.service_resources where service_id=s.id)`,[selection.data.serviceId,tenant]);
+   let s;let questions:unknown[]=[];let pricedSelection:unknown={serviceId:selection.data.serviceId};
+   const optionSelection=PaidOptionSelection.safeParse(b.selection);
+   if(optionSelection.success){
+    // Only a persisted V4 request with current pinned eligibility reaches this path.
+    const proven=(await c.query('select public.paid_option_booking_service($1::uuid,$2::uuid) as service',[tenant,booking])).rows[0]?.service;
+    if(!proven)throw new FlowError('UNSUPPORTED_CONFIG');
+    const option=PaidOptionService.parse(proven);
+    pricedSelection=validatePaidOptionAnswers(option,optionSelection.data.answers);
+    if(option.id!==selection.data.serviceId)throw new FlowError('UNSUPPORTED_CONFIG');
+    s={id:option.id,tenant_id:tenant,name:option.name,archetype:'simple',currency:option.price.currency,base_price:option.price.amount,duration_minutes:option.durationMinutes};
+    questions=option.questions.map(q=>({...q,choices:q.choices.map(c=>({...c,priceDelta:0,priceMultiplierBp:10000}))}));
+   }else{
+    const service=await c.query(`select s.* from public.services s where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active and s.archetype='simple' and s.tax_rate_bp=0 and s.rental is null and not exists(select 1 from public.service_items where service_id=s.id) and not exists(select 1 from public.service_addons where service_id=s.id) and not exists(select 1 from public.service_questions where service_id=s.id) and not exists(select 1 from public.service_resources where service_id=s.id)`,[selection.data.serviceId,tenant]);
    if(service.rows.length!==1)throw new FlowError('UNSUPPORTED_CONFIG');
-   const s=service.rows[0];
+   s=service.rows[0];
    if(!simpleSelection.success)throw new FlowError('UNSUPPORTED_CONFIG');
    // Keep the explicit runtime guard alongside the SQL predicate: mocked or
    // substituted adapters must not widen this staging-only authority.
    if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
+
+   }
+   if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
    const amount=Number(s.base_price);
    if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
-   const pricing=createPricingEngine().price(Service.parse({id:s.id,tenantId:s.tenant_id,name:s.name,archetype:s.archetype,currency:s.currency,basePrice:amount,durationMinutes:s.duration_minutes}),Selection.parse({serviceId:s.id}));
+   const pricing=createPricingEngine().price(Service.parse({id:s.id,tenantId:s.tenant_id,name:s.name,archetype:s.archetype,currency:s.currency,basePrice:amount,durationMinutes:s.duration_minutes,questions}),Selection.parse(pricedSelection));
+   if(pricing.total.amount!==amount||pricing.total.currency!==s.currency)throw new FlowError('UNSUPPORTED_CONFIG');
    let paymentId:string;
    if(payments.rows.length){
     const p=payments.rows[0];
