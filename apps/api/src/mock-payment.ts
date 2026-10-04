@@ -1,7 +1,8 @@
+import {isDeepStrictEqual} from 'node:util';
 import {PaidOptionSelection,PaidOptionService,validatePaidOptionAnswers} from '@lumin/workflow';
 import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
-import {Service,Selection} from '@lumin/contracts';
+import {Service,Selection,type PriceBreakdown} from '@lumin/contracts';
 import {createPricingEngine} from '@lumin/core';
 import {ConfirmationInput,ConfirmationReceipt} from './confirmation';
 import {FlowError} from './repository';
@@ -92,14 +93,22 @@ export async function mockPaymentInTransaction(c:PoolClient,tenant:string,bookin
    if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
    const pricing=createPricingEngine().price(Service.parse({id:s.id,tenantId:s.tenant_id,name:s.name,archetype:s.archetype,currency:s.currency,basePrice:amount,durationMinutes:s.duration_minutes,questions}),Selection.parse(pricedSelection));
    if(pricing.total.amount!==amount||pricing.total.currency!==s.currency)throw new FlowError('UNSUPPORTED_CONFIG');
+   return stagingMockEvidenceInTransaction(c,tenant,booking,b,payments.rows,pricing);
+}
+
+/** Internal tail only: caller must prove eligibility, authorization and payment-before-booking locks. */
+export async function stagingMockEvidenceInTransaction(c:PoolClient,tenant:string,booking:string,b:Record<string,any>,payments:Record<string,any>[],pricing:PriceBreakdown,pricingAlreadyPersisted=false):Promise<z.infer<typeof MockPaymentReceipt>>{
+   const amount=pricing.total.amount,currency=pricing.total.currency;
+   if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
+   if(b.id!==booking||b.tenant_id.toLowerCase()!==tenant.toLowerCase()||(pricingAlreadyPersisted&&!isDeepStrictEqual(b.pricing,pricing)))throw new FlowError('CONFLICT');
    let paymentId:string;
-   if(payments.rows.length){
-    const p=payments.rows[0];
-    if(payments.rows.length!==1||p.provider!=='staging_mock'||p.provider_intent_id!==`staging_mock:${booking}`||p.tenant_id.toLowerCase()!==tenant.toLowerCase()||p.id!==b.payment_id||p.state!=='succeeded'||Number(p.amount)!==amount||p.currency!==s.currency||b.pricing?.total?.amount!==amount||b.pricing?.total?.currency!==s.currency)throw new FlowError('CONFLICT');
+   if(payments.length){
+    const p=payments[0];
+    if(!p||payments.length!==1||p.provider!=='staging_mock'||p.provider_intent_id!==`staging_mock:${booking}`||p.tenant_id.toLowerCase()!==tenant.toLowerCase()||p.id!==b.payment_id||p.state!=='succeeded'||Number(p.amount)!==amount||p.currency!==currency||b.pricing?.total?.amount!==amount||b.pricing?.total?.currency!==currency)throw new FlowError('CONFLICT');
     paymentId=p.id;
    }else{
-    if(b.state!=='draft'||b.payment_id!==null||Object.keys(b.pricing??{}).length)throw new FlowError('CONFLICT');
-    const inserted=await c.query(`insert into public.payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2::uuid,'staging_mock',$3,'succeeded',$4::bigint,$5) returning id`,[tenant,booking,`staging_mock:${booking}`,amount,s.currency]);
+    if(b.state!=='draft'||b.payment_id!==null||(!pricingAlreadyPersisted&&Object.keys(b.pricing??{}).length))throw new FlowError('CONFLICT');
+    const inserted=await c.query(`insert into public.payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2::uuid,'staging_mock',$3,'succeeded',$4::bigint,$5) returning id`,[tenant,booking,`staging_mock:${booking}`,amount,currency]);
     paymentId=z.string().uuid().parse(inserted.rows[0]?.id);
     await c.query('update public.bookings set pricing=$1::jsonb,payment_id=$2::uuid where id=$3::uuid',[JSON.stringify(pricing),paymentId,booking]);
    }

@@ -1,3 +1,4 @@
+import {DetailingPaymentReceipt,type DetailingPaymentApi} from './detailing-payment';
 import {DetailingReservationInput,DetailingRequestReceipt,DetailingHoldReceipt} from '@lumin/contracts';
 import type {DetailingReservationApi} from './detailing-reservation';
 import {DetailingAvailabilityQuery,DetailingAvailabilityReceipt} from '@lumin/contracts';
@@ -58,6 +59,7 @@ export interface FlowHttpOptions{
  releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
  detailingPublication?:boolean;
+ detailingPaymentApi?:DetailingPaymentApi;
  detailingReservationApi?:DetailingReservationApi;
  detailingAvailability?:DetailingAvailabilityReader;
  detailingPublicationApi?:DetailingPublicationApi;
@@ -156,6 +158,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
      const data=DetailingAvailabilityReceipt.safeParse(await options.detailingAvailability(tokenHash(token),origin,query));
      if(!data.success||data.data.slots.some(s=>Date.parse(s.start)<Date.parse(query.from)||Date.parse(s.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
      send(res,200,{ok:true,data:data.data});return;
+    }
+    if(req.method==='POST'&&['/api/detailing-flow-sessions/mock-payment','/api/detailing-flow-sessions/confirm'].includes(url.pathname)){
+     if(!options.detailingPublication||!options.detailingPaymentApi)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(url.search)throw new FlowError('INVALID_REQUEST');
+     const origin=req.headers.origin;if(typeof origin!=='string'||!options.customerOrigins.includes(origin))throw new FlowError('FORBIDDEN');
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     z.object({}).strict().parse(await jsonBody(req));
+     const value=await (url.pathname.endsWith('/mock-payment')?options.detailingPaymentApi.mockPayment:options.detailingPaymentApi.confirm)(tokenHash(token),origin),data=DetailingPaymentReceipt.safeParse(value);if(!data.success)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data:data.data});return;
     }
     if(url.pathname==='/api/detailing-flow-sessions/request'||url.pathname==='/api/detailing-flow-sessions/hold'){
      if(!options.detailingPublication||!options.detailingReservationApi)throw new FlowError('UNSUPPORTED_CONFIG');
