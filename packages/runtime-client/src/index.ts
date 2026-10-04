@@ -31,6 +31,7 @@ export class BusinessOnboardingError extends Error {constructor(readonly deliver
 export type BusinessCreationState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateBusiness}|{phase:'created';attempt:CreateBusiness;profile:BusinessProfile}|{phase:'unavailable'};
 export type SimpleOfferState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateSimpleOffer}|{phase:'created';attempt:CreateSimpleOffer;receipt:SimpleOfferReceipt};
 export interface SimpleOfferContext {readonly tenantId:string;readonly currency:string;readonly timezone:string}
+export interface OwnerBusinessContext {readonly tenantId:string;readonly name:string;readonly slug:string;readonly timezone:string;readonly currency:string;readonly status:'active'}
 export type OfferSchedulingState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateOfferScheduling}|{phase:'configured';attempt:CreateOfferScheduling;receipt:OfferSchedulingReceipt};
 export type {CreateOfferScheduling,OfferSchedulingReceipt,CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
 export type BusinessProfileInitializationInput=InitializeBusinessProfile;
@@ -805,6 +806,22 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessCreation={phase:'unknown',attempt:body};throw new BusinessOnboardingError('unknown','Business creation remains unverified. This response does not prove an earlier attempt failed; retry only the same frozen key and details.');
  }
  const offerBody=(input:CreateSimpleOffer)=>JSON.stringify({name:input.name,description:input.description,price:{amount:input.price.amount,currency:input.price.currency},durationMinutes:input.durationMinutes,idempotencyKey:input.idempotencyKey});
+ async function ownerBusinessContext(tenantId:string):Promise<OwnerBusinessContext>{
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose a verified business.');
+  tenantId=tenantId.toLowerCase();const at=generation,actor=userId,credential=token;
+  const current=()=>at===generation&&actor===userId&&credential===token;
+  let memberships:Record<string,unknown>[];
+  try{memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));}catch{throw new BusinessOnboardingError('not_sent','Owner membership could not be verified.');}
+  if(!current())throw new BusinessOnboardingError('not_sent','The signed-in account changed. Check this business again.');
+  if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(member=>String(member.tenant_id).toLowerCase()===tenantId&&member.role==='BUSINESS_OWNER'))throw new BusinessOnboardingError('not_sent','Fresh owner membership for this exact business is required.');
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/profile?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new BusinessOnboardingError('not_sent','The business profile could not be verified.');}
+  if(!current())throw new BusinessOnboardingError('not_sent','The signed-in account changed. Check this business again.');
+  if(response.status===401){signOut();throw new BusinessOnboardingError('not_sent','Please sign in again.');}
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined,profile=exact(data,['schemaVersion','profile'])&&data.schemaVersion===1?data.profile:undefined;
+  if(response.status!==200||!exact(profile,['id','name','slug','timezone','currency','status'])||typeof profile.id!=='string'||profile.id.toLowerCase()!==tenantId||typeof profile.name!=='string'||!profile.name.trim()||typeof profile.slug!=='string'||!profile.slug||!BusinessTimezone.safeParse(profile.timezone).success||!CurrencyCode.safeParse(profile.currency).success||profile.status!=='active')throw new BusinessOnboardingError('not_sent','The active business profile could not be verified.');
+  return Object.freeze({tenantId,name:profile.name,slug:profile.slug,timezone:profile.timezone as string,currency:profile.currency as string,status:'active'});
+ }
  async function simpleOfferContext(tenantId:string):Promise<SimpleOfferContext>{
   if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose a verified business.');
   tenantId=tenantId.toLowerCase();const at=generation,actor=userId,credential=token;
@@ -965,7 +982,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  return {
   createBusiness,businessProfile,initializeBusinessProfile,businessProfileInitializationState,
   businessProfileInitializationLocked:profileInitializationLocked,
-  simpleOfferContext,createSimpleOffer,createOfferScheduling,detailingOfferContext,createDetailingOffer,readDetailingOffer,
+  ownerBusinessContext,simpleOfferContext,createSimpleOffer,createOfferScheduling,detailingOfferContext,createDetailingOffer,readDetailingOffer,
   detailingOfferState(tenantId:string):DetailingOfferState {if(!uuid(tenantId))return fail('Invalid business selection.');const state=detailingOffers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingOfferState:{phase:'ready'};},
   offerSchedulingState(tenantId:string,serviceId:string):OfferSchedulingState {const state=scheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as OfferSchedulingState:{phase:'ready'};},
   simpleOfferState(tenantId:string):SimpleOfferState {const state=offers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as SimpleOfferState:{phase:'ready'};},
