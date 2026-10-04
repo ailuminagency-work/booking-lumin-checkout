@@ -1,3 +1,5 @@
+import type {BusinessProfileInitializer} from './existing-business-profile';
+import {InitializeBusinessProfile} from '@lumin/contracts';
 import {attachRequestId} from './request-id';
 import {readReleaseMetadata,serveReleaseMetadata,type ReleaseEnvironment} from './release-metadata';
 import {CustomerFieldRollbackReadReceipt,type CustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
@@ -42,6 +44,7 @@ export interface FlowHttpOptions{
  catalogAuthoring?:boolean;
  simpleOfferCreate?:SimpleOfferCreator;
  businessOnboarding?:boolean;
+ businessProfileInitialize?:BusinessProfileInitializer;
  businessCreate?:BusinessCreator;
  businessProfile?:BusinessProfileReader;
  tenantProfile?:TenantProfileReader;
@@ -223,6 +226,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
     const body=CreateSimpleOffer.parse(await jsonBody(req)),result=SimpleOfferReceipt.safeParse(await options.simpleOfferCreate(actor,tenant,body));
     if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.service.name!==body.name||result.data.service.description!==body.description||result.data.service.price.amount!==body.price.amount||result.data.service.price.currency!==body.price.currency||result.data.service.durationMinutes!==body.durationMinutes)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==="/api/business-profile/initialize"){
+    if(!options.businessOnboarding||!options.businessProfileInitialize)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const body=InitializeBusinessProfile.parse(await jsonBody(req));
+    const result=BusinessProfile.safeParse(await options.businessProfileInitialize(actor,tenant,body));
+    if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==="/api/business-profile"){

@@ -1,3 +1,4 @@
+import {createBusinessProfileInitializer} from './existing-business-profile';
 import {attachRequestId} from './request-id';
 import {readReleaseMetadata,serveReleaseMetadata} from './release-metadata';
 import {createCustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
@@ -126,7 +127,7 @@ function main(): void {
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     tenantProfile: createTenantProfileReader(pool),
-    ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read}:{}),
+    ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool)}:{}),
     ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool)}:{}),
     availability: createAvailabilityReader(pool),
