@@ -577,3 +577,17 @@ Hosted service capacity and simulated-payment concurrency:
 - Builder191API tests, typecheck,39SQLfile fresh replay,26SQLsecurity suites, actual local HTTP persistence/conflict/concurrency/tenant/role/eligibility tests passed. Root integrated191/191 andtypecheck passed; root CI adds SQL suite and dedicated fresh-database actualHTTP integration.
 - Runtime Guardian: financial/booking/tenant authority preserved. Release Governor permits exact CI then additive isolated-staging migration and API staging deployment only. Parent database and production prohibited.
 - Draft UI /root/customer_availability_ui_builder remains in progress; saved draft is not a published/customer-visible design. Hosted owner acceptance unverified; no score increase.
+
+### Draft API staging promotion 785351a
+- Exact CI37182355072 SUCCESS at785351ac1d6186585392229a48cd74fb00444163, including dedicated draftSQL and actualHTTP/concurrent-revision integration.
+- Additive0038 paid_simple_drafts applied ONLY isolated development branchbooking-lumin-staging / hqgtjztrsizjrsidtlqt, parentpplwyfbxrnodimhzlvdl read-only branchidentity inspection. Branch metadata ACTIVE_HEALTHY/with_datafalse.
+- Hosted catalog: RLSenabled/forced true; anon/authenticated/service_role directtableaccess false; onlyservice_role RPCexecution true. Transactional hostedRPC save/read/update/stale/forgedowner checks passed; rollbackleft0draftrows. This is hostedSQLproof, not authenticated browserAPIcertification.
+- Renderdep-db0v0mou01pc73c2ma80LIVE exact785351a, health200ok/ready200ready; hosted draftGETmissingJWT401/foreignorigin403.
+- Netlify exact785ready: Checkout6ac1ef623913cd0008c47a6d, Portal6ac1ef625b191500082f2c0a, CommandCenter6ac1ef623a83170008c2a253.
+- OwnerUIcell still inprogress; ownerlogin gate persists. Scoresunchanged. Next explicitdraftpublicationAPI /root/customer_hold_builder and rootisolated customer-draft-renderer-cell ownedcheckoutfiles; UIbuilder retains runtime-client/Portal only.
+
+### Immutable published presentation renderer
+- Sharedschema builder /root/customer_hold_builder exact1b0c5c8, independentlyreviewed /root/booking_list_review with99workflowtestsPASS; rootintegrated1e31ccd.
+- Renderer builder /root in isolatedcustomer-draft-renderer-cell exactc60b36849a914c77c53ff5d69a077f1a4a2b3891; independentreviewer /root/booking_list_review acceptedexact3filediff and29HostedFlowtestsPASS. Rootfullcheckout64/64, typecheck, build, diffcheckPASS.
+- Optional strict immutablepublicationmetadata accepts boundedname,5safeaccentcolors,2layouts, safepositive draftrevision; oldV3 remainscompatible. Customer form uses only validatedpublishedmetadata and displays actualservice/price; escapedtitle/CSSURLrejection tested. Responsivecheckout-root wrapper restores centereddesktopcard. Financial/hold/paymentpaths unchanged.
+- Saved-draft publishRPC is separate nextcell, not yet deployed. OwnerdraftUI remountP2 returnedto builder forfix/tests beforeintegration. No useracceptance/scoreincrease claimed from localrenderer tests.
