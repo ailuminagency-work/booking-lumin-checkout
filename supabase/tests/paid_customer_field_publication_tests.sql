@@ -1,0 +1,47 @@
+\set ON_ERROR_STOP on
+begin;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+select pg_temp.assert(not has_function_privilege('anon','public.publish_paid_customer_field_draft(uuid,uuid,uuid,bigint,uuid,uuid,jsonb)','EXECUTE') and not has_function_privilege('authenticated','public.submit_customer_field_request(text,text,text,jsonb,jsonb,timestamptz)','EXECUTE') and has_function_privilege('service_role','public.submit_customer_field_request(text,text,text,jsonb,jsonb,timestamptz)','EXECUTE'),'server only new RPCs');
+select pg_temp.assert(not has_function_privilege('service_role','public.issue_flow_session_v1234(uuid,text,text)','EXECUTE') and not has_function_privilege('service_role','public.customer_flow_availability_scope_v1234(text,text)','EXECUTE'),'no direct delegate bypass');
+select pg_temp.assert((select bool_and(prosecdef and proconfig=array['search_path=pg_catalog']) from pg_proc where oid in('public.publish_paid_customer_field_draft(uuid,uuid,uuid,bigint,uuid,uuid,jsonb)'::regprocedure,'public.submit_customer_field_request(text,text,text,jsonb,jsonb,timestamptz)'::regprocedure,'public.issue_flow_session(uuid,text,text)'::regprocedure,'public.customer_flow_availability_scope(text,text)'::regprocedure)),'fixed definer paths');
+select pg_temp.assert(not has_table_privilege('service_role','public.flow_requests','SELECT') and not has_table_privilege('authenticated','public.flow_requests','INSERT') and (select relrowsecurity and relforcerowsecurity from pg_class where oid='public.flow_requests'::regclass),'private provenance closed');
+insert into auth.users(id,email) values('51000000-0000-4000-8000-000000000001','v5-sql-owner@example.test'),('51000000-0000-4000-8000-000000000009','v5-sql-foreign@example.test');
+insert into public.tenants(id,name,slug,timezone,currency) values('51000000-0000-4000-8000-000000000002','V5','v5-sql','UTC','USD');
+insert into public.tenant_members(tenant_id,user_id,role) values('51000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000001','BUSINESS_OWNER');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('51000000-0000-4000-8000-000000000003','51000000-0000-4000-8000-000000000002','Cleaning','simple','USD',12500,60);
+create function pg_temp.publish_fields(rev bigint default 1,ver uuid default '51000000-0000-4000-8000-000000000005',installation uuid default '51000000-0000-4000-8000-000000000006',origins jsonb default '["https://checkout.example.test"]') returns jsonb language sql as $$select public.publish_paid_customer_field_draft('51000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000004',rev,ver,installation,origins)$$;
+select public.save_paid_customer_field_draft('51000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000004','51000000-0000-4000-8000-000000000003',0,'Saved cleaning','#0e7490','compact','[{"id":"custom_access","kind":"text","label":"Entry","required":true,"maxLength":4},{"id":"custom_notes","kind":"text","label":"Notes","required":false,"maxLength":20}]');
+select pg_temp.assert((pg_temp.publish_fields()->>'renderSchemaVersion')='5','explicit V5 publication');
+select pg_temp.assert((pg_temp.publish_fields(1,'51000000-0000-4000-8000-000000000007','51000000-0000-4000-8000-000000000008')->>'replayed')='true','same saved revision exact replay');
+select pg_temp.assert((select count(*)=1 from public.flow_versions),'no duplicate replay version');
+select pg_temp.assert(not lumin.customer_field_snapshot_valid((select paid_snapshot||'{"price":1}'::jsonb from public.flow_versions),1),'no snapshot authority widening');
+select pg_temp.assert(not lumin.customer_field_snapshot_valid((select jsonb_set(paid_snapshot,'{service,name}',to_jsonb(repeat('😀',101))) from public.flow_versions),1),'snapshot UTF16 service bound');
+select pg_temp.assert(not lumin.customer_field_snapshot_valid((select jsonb_set(paid_snapshot,'{service,price,amount}','0') from public.flow_versions),1),'snapshot positive server price');
+select pg_temp.reject('select pg_temp.publish_fields(2)','40001');
+select pg_temp.reject($q$select pg_temp.publish_fields(1,'51000000-0000-4000-8000-000000000007','51000000-0000-4000-8000-000000000008','["https://foreign.example.test"]')$q$,'40001');
+select pg_temp.reject($q$select public.publish_paid_customer_field_draft('51000000-0000-4000-8000-000000000009','51000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000004',1,'51000000-0000-4000-8000-000000000007','51000000-0000-4000-8000-000000000008','["https://checkout.example.test"]')$q$,'42501');
+select public.issue_flow_session('51000000-0000-4000-8000-000000000006',repeat('a',64),'https://checkout.example.test');
+create function pg_temp.submit_fields(answers jsonb default '{"custom_access":"😀😀","custom_notes":" Optional "}',key text default 'v5-sql-request-key-001') returns jsonb language sql as $$select public.submit_customer_field_request(repeat('a',64),'https://checkout.example.test',key,answers,'{"name":"Customer","email":"v5-customer@example.test"}',date_trunc('day',now())+interval '1 day 10 hours')$$;
+do $$declare answers jsonb;begin for answers in select value from jsonb_array_elements('[{}, {"custom_access":""},{"custom_access":"  "},{"custom_access":"12345"},{"custom_access":4},{"custom_access":"Door","price":"1"},{"custom_access":"Door","custom_unknown":"x"},{"custom_access":"bad\n"}]') loop perform pg_temp.reject(format('select pg_temp.submit_fields(%L::jsonb)',answers::text),'22023');end loop;end$$;
+select pg_temp.assert(not exists(select 1 from public.bookings),'invalid answers do not write');
+select pg_temp.submit_fields();select pg_temp.submit_fields();
+select pg_temp.assert((select count(*)=1 from public.bookings),'deterministic request replay');
+select pg_temp.assert((select selection=jsonb_build_object('serviceId','51000000-0000-4000-8000-000000000003'::uuid) and pricing='{}'::jsonb from public.bookings),'informational answers excluded from financial selection');
+select pg_temp.assert((select customer_answers='{"custom_access":"😀😀","custom_notes":" Optional "}'::jsonb and option_answers is null from public.flow_requests),'exact independent answer provenance');
+select pg_temp.reject($q$select pg_temp.submit_fields('{"custom_access":"Door"}')$q$,'40001');
+select pg_temp.reject($q$update public.flow_requests set customer_answers='{"custom_access":"Door"}'$q$,'55000');
+select pg_temp.reject($q$select public.submit_flow_request(repeat('a',64),'https://checkout.example.test','v5-sql-request-key-001','{}','{"name":"Customer","email":"v5-customer@example.test"}',now()+interval '1 day')$q$,'0A000');
+-- Booking tampering cannot pass existing hold/payment capability target.
+update public.bookings set selection=selection||'{"total":1}'::jsonb;
+select pg_temp.reject($q$select public.customer_flow_hold_target(repeat('a',64),'https://checkout.example.test')$q$,'0A000');
+update public.bookings set selection=jsonb_build_object('serviceId','51000000-0000-4000-8000-000000000003'::uuid);
+select public.customer_flow_hold_target(repeat('a',64),'https://checkout.example.test');
+update public.services set base_price=13000;
+select pg_temp.reject($q$select public.customer_flow_availability_scope(repeat('a',64),'https://checkout.example.test')$q$,'0A000');
+update public.services set base_price=12500;
+update public.flow_sessions set expires_at=clock_timestamp()-interval '1 second';
+select pg_temp.reject($q$select public.customer_flow_hold_target(repeat('a',64),'https://checkout.example.test')$q$,'42501');
+select pg_temp.assert(not exists(select 1 from public.payments) and not exists(select 1 from public.capacity_holds),'SQL publication/submission never invokes financial writers');
+rollback;
+\echo PASS V5 publication strict saved revision replay/private ACL/immutable fields/informational answers/UTF16/request hash/tenant/catalog/capability attacks

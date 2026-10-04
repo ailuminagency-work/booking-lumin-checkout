@@ -1,7 +1,7 @@
 import { CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { PaidCustomerFieldRender,CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -47,6 +47,7 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ publish_paid_customer_field_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(5),replayed:z.boolean()}).strict(),
  publish_paid_option_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(4)}).strict(),
  publish_paid_simple_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3),replayed:z.boolean()}).strict(),
  save_paid_simple_draft:z.object({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
@@ -65,7 +66,8 @@ export const RpcResults={
  flow_owner_requests:z.object({requests:z.array(z.object({id:Uuid,reference:z.string().min(1).max(100),state:z.literal("draft"),slotStart:z.string(),createdAt:z.string()}).strict()).max(100)}).strict(),
  save_bound_flow_draft:z.object({flowId:Uuid,revision:Version}).strict(),
  publish_bound_flow:z.object({versionId:Uuid,installationId:Uuid}).strict(),
- issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender,PaidOptionRender])}).strict(),
+ issue_flow_session:z.object({expiresAt:z.string().datetime({offset:true}),render:z.union([Render,ConfigurableRender,PaidSimpleRender,PaidOptionRender,PaidCustomerFieldRender])}).strict(),
+ submit_customer_field_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
  submit_flow_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
 };
 export type FlowRpc=keyof typeof RpcResults;
