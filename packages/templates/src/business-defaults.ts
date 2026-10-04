@@ -6,7 +6,8 @@ export interface BusinessTemplateDefaults {
  readonly businessType:BusinessType;
  readonly serviceTemplateKey:string;
  readonly archetype:ServiceArchetype;
- readonly primaryNavigation:readonly {readonly id:"overview"|"bookings"|"catalog"|"resources"|"design";readonly label:string}[];
+ readonly primaryNavigation:readonly {readonly id:"home"|"bookings"|"booking-form"|"services-pricing"|"settings";readonly label:string}[];
+ readonly context:{readonly bookingLabel:string;readonly resourceLabel:string};
  readonly catalog:{readonly singular:string;readonly plural:string;readonly optionsLabel:string};
  readonly booking:{readonly steps:readonly {readonly id:"service"|"options"|"schedule"|"customer"|"review";readonly label:string;readonly fieldIds:readonly string[]}[]};
  /** Descriptive resource defaults only. Capacity and allocation require owner configuration. */
@@ -41,7 +42,8 @@ function freeze<T>(value:T):T{if(value&&typeof value==="object"){for(const child
 export function getBusinessTemplateDefaults(profile:unknown):BusinessTemplateDefaults {
  const authoritative=BusinessProfile.parse(profile),p=presets[authoritative.businessType];
  return freeze({templateVersion:authoritative.templateVersion,businessType:authoritative.businessType,serviceTemplateKey:p.key,archetype:getTemplate(p.key).archetype,
-  primaryNavigation:[{id:"overview",label:"Overview"},{id:"bookings",label:p.bookingLabel},{id:"catalog",label:p.plural},{id:"resources",label:p.resourceLabel},{id:"design",label:"Design"}],
+  primaryNavigation:[{id:"home",label:"Home"},{id:"bookings",label:"Bookings"},{id:"booking-form",label:"Booking Form"},{id:"services-pricing",label:"Services & Pricing"},{id:"settings",label:"Settings"}],
+  context:{bookingLabel:p.bookingLabel,resourceLabel:p.resourceLabel},
   catalog:{singular:p.singular,plural:p.plural,optionsLabel:p.optionsLabel},
   booking:{steps:[{id:"service",label:p.singular,fieldIds:["serviceId"]},{id:"options",label:p.optionsLabel,fieldIds:[...p.fields]},{id:"schedule",label:"Date and time",fieldIds:["requestedStart"]},{id:"customer",label:"Contact details",fieldIds:["customer.name","customer.email"]},{id:"review",label:"Review",fieldIds:[]}]},
   resourceModel:{...p.resource}});
