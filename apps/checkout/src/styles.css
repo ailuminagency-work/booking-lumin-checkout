@@ -728,3 +728,20 @@ a:focus-visible {
 .paid-form-layout-compact fieldset { display: grid; gap: 8px; }
 .paid-form-layout-stacked fieldset label,
 .paid-form-layout-compact fieldset label { min-width: 0; }
+
+/* The hosted booking route uses the same usable touch targets as the main checkout. */
+.hosted-flow-card fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 16px; }
+.hosted-flow-card.paid-form-layout-compact fieldset { gap: 8px; }
+.hosted-flow-card label { display: grid; gap: 6px; min-width: 0; }
+.hosted-flow-card input, .hosted-flow-card select {
+  box-sizing: border-box; min-height: 44px; max-width: 100%; min-width: 0;
+  padding: 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit;
+}
+.hosted-flow-card button {
+  min-height: 44px; max-width: 100%; margin-top: 12px; padding: 10px 16px;
+  border: 1px solid var(--accent); border-radius: 8px; font: inherit;
+  background: var(--accent); color: #fff; cursor: pointer; white-space: normal;
+}
+.hosted-flow-card button:disabled { opacity: .55; cursor: not-allowed; }
+.hosted-flow-card input:focus-visible, .hosted-flow-card select:focus-visible,
+.hosted-flow-card button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
