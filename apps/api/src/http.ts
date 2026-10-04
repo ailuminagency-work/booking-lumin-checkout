@@ -1,3 +1,4 @@
+import {CustomerFieldVersionHistory,type CustomerFieldVersionHistoryReader} from './customer-field-version-history';
 import {PaidInstallHealth} from '@lumin/contracts';
 import {CustomerFieldPublicationReceipt,type CustomerFieldPublicationReader} from './customer-field-publication-reader';
 import type {PaidInstallHealthReader} from './paid-install-health';
@@ -49,6 +50,7 @@ export interface FlowHttpOptions{
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
+ paidCustomerFieldVersionHistory?:CustomerFieldVersionHistoryReader;
  paidInstallHealth?:PaidInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
  reservation?:ReservationWriter;
@@ -282,6 +284,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!options.paidSimplePublication||!options.paidInstallHealth)throw new FlowError("UNSUPPORTED_CONFIG");
     if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
     const flow=Uuid.parse(installHealth[1]),parsed=PaidInstallHealth.safeParse(await options.paidInstallHealth(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const customerFieldHistory=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/versions$/);
+   if(customerFieldHistory){
+    if(!options.paidSimplePublication||!options.paidCustomerFieldVersionHistory)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(customerFieldHistory[1]);const parsed=CustomerFieldVersionHistory.safeParse(await options.paidCustomerFieldVersionHistory(actor,tenant,flow));
     if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
