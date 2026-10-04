@@ -4,11 +4,12 @@ import {formatMoney} from '@lumin/contracts';
 import type {RuntimeClient,ConnectedBookingDetail,ServiceRow} from '@lumin/runtime-client';
 
 export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{client:Pick<RuntimeClient,'bookingDetail'>;tenantId:string;bookingId:string;services:ServiceRow[]}){
- const [result,setResult]=useState<{tenant:string;id:string;data:ConnectedBookingDetail|null}|null>(null);
- const [error,setError]=useState(''),[retry,setRetry]=useState(0);
- useEffect(()=>{let active=true;setResult(null);setError('');void client.bookingDetail(tenantId,bookingId).then(data=>{if(active)setResult({tenant:tenantId,id:bookingId,data})},()=>{if(active)setError('Booking details could not be loaded. Check your connection or sign in again.')});return()=>{active=false}},[client,tenantId,bookingId,retry]);
- // Never render the previous business or route record, even before effects run.
- const current=result?.tenant===tenantId&&result.id===bookingId?result:null;
+ const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;data:ConnectedBookingDetail|null;error:string}|null>(null);
+ const [retry,setRetry]=useState(0);
+ useEffect(()=>{let active=true;setResult(null);void client.bookingDetail(tenantId,bookingId).then(data=>{if(active)setResult({client,tenant:tenantId,id:bookingId,data,error:''})},()=>{if(active)setResult({client,tenant:tenantId,id:bookingId,data:null,error:'Booking details could not be loaded. Check your connection or sign in again.'})});return()=>{active=false}},[client,tenantId,bookingId,retry]);
+ // Withhold the old connection's private record and error before passive effects.
+ const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId?result:null;
+ const error=current?.error??'';
  const detail=current?.data;
  const when=(v:string)=>new Date(v).toLocaleString();
  const show=(v:unknown):string=>v===null?'Not provided':typeof v==='object'?JSON.stringify(v):String(v);
