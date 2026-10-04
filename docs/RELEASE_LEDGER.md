@@ -615,3 +615,17 @@ Hosted service capacity and simulated-payment concurrency:
 - UIbuilder /root/customer_availability_ui_builder91d7864 integrated575bbe7, independentlyaccepted /root/booking_list_review with38Publisher/52clienttests. BuilderRuntime71/Portal134/types/buildPASS; rootintegratedRuntime71/Publisher38PASS. Explicitpristineverifieddraftpublication, strictnestedreceipt, byteidenticalsame-revisionuncertainretry, legacylockpreserved, lateidentitysuppression andremountsessionreconciliation.
 - RootCI private discovery SQLsuite andfresh lumin_phase_a_draft_list_ci HTTPintegration independentlyaccepted. Migration0040 addsowner-recheckedfixedreadRPConly withclosedprivate-tablegrants andforcedRLS unchanged. RuntimeGuardian accepts staging-only promotion afterexactCI; no customer/financialwriteauthority added.
 - Authenticatedhostedownerworkflow remainsunverified; scoresunchanged. Goal1 optionV4API boundedcell alreadyactive /root/customer_hold_builder; draftlistselectionUIcellalreadyactive /root/customer_availability_ui_builder. No LeadGate/production/money actions.
+
+### Exact private draft and owner publication promotion fd679ba
+- Candidatefd679ba01832d2c770ab3e7ef5042455158b1018 pushedphase-a/staging-operationalization; CI37184549811SUCCESS includingnewprivate discoverySQL+actualHTTPfreshDBsuite. PR97OPEN/DRAFT exacthead; mainunchanged.
+- Isolatedhqgtjztrsizjrsidtlqt additive0040 applied. HostedACL inspection: RLSenabled/forcedtrue; anon/authenticated/service_role directdraftSELECTfalse; RPCexecuteanon/authenticatedfalse, service_roletrue. Hostedownerreadreturnedexistingprivatedraftrevision2; nofinancial/customerwrites.
+- Renderdep-db0vkovavr4c739ib76gLIVE exactfd; health200ok/ready200ready; discoverymissingJWT401/foreignorigin403.
+- CanonicalNetlifyREADY exactfd: Checkout6ac1f9cc4faf37000861f3be, Portal6ac1f9cce88c900008446cff, CommandCenter6ac1f9cca804550008880a93. Browsercustomerformrefreshedcorrectimmutablepublishedname/service/$125; Portalbookingdetaildeep-linkopensconnectedSTAGINGsign-in. Actualowneracceptance remainsunverified.
+- Runtime-onlynpmaudit0vulnerabilities. NoLeadGate, parentdatabase, production orrealpaymentchange. Scoresunchanged; completeGoal1/Goal2+Goals3-13unfinished.
+- Currentnextcellsalreadyactive: APIboundedzero-pricehousekeepingchoiceV4 /root/customer_hold_builder; saveddraftdiscoveryselectionUI /root/customer_availability_ui_builder. PreservelegacyV3/soleconfirmationauthority/unknownretrylocks.
+
+### Connected owner saved-draft selection
+- UIbuilder /root/customer_availability_ui_builder e0a97737a4d38060cf7c047a28ff188e87b78c21 integrated6b6ff2f; independentreview /root/booking_list_review accepted exactsource with48Publisher/63clienttests.
+- Explicitrefresh privatelyreadsboundedorderedmax50drafts. Selecting a draft alwaysusesfresh individualGET; listmetadata neverhydrates editing/publish/retryauthority. Unknownsave permitsonlysame-draftread; unknownsavedpublication blocksselection; legacylocks preserved. Late tenant/client/sessionresponses rejected and remount safelyresets discovery.
+- BuilderRuntime82/Portal144/types/buildPASS; rootintegratedRuntime82/Publisher48/Portaltypecheck+buildPASS. ExistingAPI238 andunchanged0040 passedexactCI inpreviouscandidate. No migrationornewfinancialwriter.
+- NextGoal1API/V4catalogoption andcustomeroptionUI cellsalreadyactive withexclusiveownership. FullGoal1andGoal2notcertified; ownerloginacceptancepending. ReleaseGovernor permitsstaging-only exactCIpromotion. Scoresunchanged; noproduction/LeadGateaction.
