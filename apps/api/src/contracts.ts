@@ -19,6 +19,7 @@ export const SavePaidSimpleDraft=z.object({expectedRevision:Version,serviceId:Uu
 const PaidSimpleDraftRevision=z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 export const PublishPaidSimpleDraft=z.object({expectedDraftRevision:PaidSimpleDraftRevision,allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export const PaidSimpleDraft=SavePaidSimpleDraft.omit({expectedRevision:true}).extend({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict();
+export const PaidSimpleDraftList=z.object({drafts:z.array(PaidSimpleDraft).max(50)}).strict().refine(list=>list.drafts.every((d,i)=>i===0||list.drafts[i-1]!.flowId<d.flowId));
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 const Render=z.object({versionId:Uuid,config:BoundConfig,service:ServiceRender}).strict();

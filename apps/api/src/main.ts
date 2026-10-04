@@ -1,3 +1,4 @@
+import {createPaidDraftListReader} from './paid-draft-list-reader';
 import {createPaidPublicationListReader,createPaidPublicationReader} from './paid-publication-reader';
 import {createCustomerConfirmation,createCustomerMockPayment} from './customer-payment';
 import {createMockPaymentWriter,mockPaymentsEnabled} from './mock-payment';
@@ -118,7 +119,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidPublication:createPaidPublicationReader(pool),paidPublications:createPaidPublicationListReader(pool)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidPublication:createPaidPublicationReader(pool),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,
