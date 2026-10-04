@@ -19,6 +19,7 @@
     "@lumin/resources": "*",
     "@lumin/templates": "*",
     "@lumin/workflow": "*",
+    "qrcode": "1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.0"
@@ -26,10 +27,14 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
+    "@types/pngjs": "6.0.5",
+    "@types/qrcode": "1.5.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.7.0",
     "jsdom": "^25.0.1",
+    "jsqr": "1.4.0",
+    "pngjs": "7.0.0",
     "typescript": "~5.6.3",
     "vite": "^6.4.3",
     "vitest": "^4.1.11"
