@@ -88,7 +88,8 @@ jobs:
             paid_simple_draft_tests \
             publish_paid_simple_draft_tests \
             paid_simple_draft_list_tests \
-            paid_option_publication_tests; do
+            paid_option_publication_tests \
+            paid_simple_version_history_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -189,3 +190,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           npx tsx apps/api/src/paid-option-publication.integration.ts
+      - name: Immutable owner publication history and tenant isolation
+        env:
+          PAID_HISTORY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_history_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_history_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-version-history.integration.ts
