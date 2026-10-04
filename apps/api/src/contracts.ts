@@ -1,7 +1,7 @@
 import { RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
-import { PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
+import { PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
@@ -14,9 +14,10 @@ export const SaveDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.
 export const PublishDraft=z.object({expectedRevision:Version.refine(n=>n>0),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export {PaidSimpleRender};
 export const PublishPaidSimple=z.object({serviceId:Uuid,name:z.string().trim().min(1).max(200),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
-export const PaidSimplePresentation=z.object({accentColor:z.enum(['#4f46e5','#0e7490','#0f766e','#2563eb','#be123c']),layout:z.enum(['stacked','compact'])}).strict();
+export {PaidSimplePresentation};
 export const SavePaidSimpleDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),presentation:PaidSimplePresentation}).strict();
 const PaidSimpleDraftRevision=z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+export const PublishPaidSimpleDraft=z.object({expectedDraftRevision:PaidSimpleDraftRevision,allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export const PaidSimpleDraft=SavePaidSimpleDraft.omit({expectedRevision:true}).extend({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict();
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
@@ -38,6 +39,7 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ publish_paid_simple_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3),replayed:z.boolean()}).strict(),
  save_paid_simple_draft:z.object({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
  get_paid_simple_draft:PaidSimpleDraft,
  publish_paid_simple_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3)}).strict(),

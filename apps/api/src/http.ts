@@ -12,7 +12,7 @@ import { createServer,type IncomingMessage,type ServerResponse } from "node:http
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
-import { Uuid,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { Uuid,PublishPaidSimpleDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -207,6 +207,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const receipt=PaidPublicationReceipt.safeParse(existing);
     if(!receipt.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:receipt.data});return;
+   }
+   const publishSaved=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/publish-draft$/);
+   if(publishSaved){
+    if(!options.paidSimplePublication)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(publishSaved[1]);const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");
+    const body=PublishPaidSimpleDraft.parse(raw);if(body.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError("FORBIDDEN");
+    const data=RpcResults.publish_paid_simple_draft.parse(await call("publish_paid_simple_draft",[actor,tenant,flow,body.expectedDraftRevision,randomUUID(),randomUUID(),body.allowedOrigins]));
+    if(data.flowId!==flow||data.draftRevision!==body.expectedDraftRevision)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:{flowId:data.flowId,draftRevision:data.draftRevision,publication:{versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:3,hostedPath:`/checkout/flow/${data.installationId}`}}});return;
    }
    const paid=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/publish$/);
    if(paid){
