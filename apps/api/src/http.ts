@@ -1,3 +1,4 @@
+import {attachRequestId} from './request-id';
 import {readReleaseMetadata,serveReleaseMetadata,type ReleaseEnvironment} from './release-metadata';
 import {CustomerFieldRollbackReadReceipt,type CustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {CustomerFieldRollbackInput,CustomerFieldRollbackReceipt,type CustomerFieldRollback} from './customer-field-rollback';
@@ -97,6 +98,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
  const trustProxy=options.trustProxy===true;
  const now=options.now??Date.now;const limits=new Map<string,{start:number;count:number}>();
  const server=createServer({maxHeaderSize:16384},async(req,res)=>{
+  attachRequestId(req,res);
   try{
    const address=req.socket.remoteAddress??"";if(!trustProxy&&!["127.0.0.1","::1","::ffff:127.0.0.1"].includes(address))throw new FlowError("FORBIDDEN");
    const instant=now();let rate=limits.get(address);if(!rate||instant-rate.start>=60000){rate={start:instant,count:0};limits.set(address,rate);}if(++rate.count>120)throw new FlowError("RATE_LIMITED");

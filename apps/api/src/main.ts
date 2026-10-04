@@ -1,3 +1,4 @@
+import {attachRequestId} from './request-id';
 import {readReleaseMetadata,serveReleaseMetadata} from './release-metadata';
 import {createCustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {createCustomerFieldRollback} from './customer-field-rollback';
@@ -154,6 +155,7 @@ function main(): void {
   };
 
   const server = createServer({ maxHeaderSize: 16384 }, (req: IncomingMessage, res: ServerResponse) => {
+    attachRequestId(req, res);
     let path = "/";
     try {
       path = new URL(req.url ?? "/", "http://localhost").pathname;
