@@ -1,3 +1,5 @@
+import {DetailingAvailabilityQuery,DetailingAvailabilityReceipt} from '@lumin/contracts';
+import type {DetailingAvailabilityReader} from './detailing-availability';
 import {SaveDetailingDraft,DetailingDraft,PublishDetailingDraft,DetailingPublicationReceipt,DetailingQuoteInput} from '@lumin/contracts';
 import {DetailingSessionResult,DetailingQuoteReceipt,type DetailingPublicationApi} from './detailing-publication';
 import {CreateDetailingOffer,DetailingOfferReceipt,buildDetailingService} from '@lumin/contracts';
@@ -54,6 +56,7 @@ export interface FlowHttpOptions{
  releaseEnvironment?:ReleaseEnvironment;
  repository:FlowRepository;
  detailingPublication?:boolean;
+ detailingAvailability?:DetailingAvailabilityReader;
  detailingPublicationApi?:DetailingPublicationApi;
  schedulingAuthoring?:boolean;
  offerSchedulingCreate?:OfferSchedulingCreator;
@@ -142,6 +145,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==='/api/detailing-flow-sessions/availability'){
+     if(!options.detailingPublication||!options.detailingAvailability)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='GET'||[...url.searchParams.keys()].some(k=>k!=='from'&&k!=='to')||url.searchParams.getAll('from').length!==1||url.searchParams.getAll('to').length!==1)throw new FlowError('INVALID_REQUEST');
+     const query=DetailingAvailabilityQuery.parse({from:url.searchParams.get('from'),to:url.searchParams.get('to')});
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     const data=DetailingAvailabilityReceipt.safeParse(await options.detailingAvailability(tokenHash(token),origin,query));
+     if(!data.success||data.data.slots.some(s=>Date.parse(s.start)<Date.parse(query.from)||Date.parse(s.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:data.data});return;
+    }
     if(url.pathname.startsWith('/api/detailing-')){
      if(!options.detailingPublication||!options.detailingPublicationApi)throw new FlowError('UNSUPPORTED_CONFIG');
      if(req.method!=='POST'||[...url.searchParams].length)throw new FlowError('INVALID_REQUEST');
