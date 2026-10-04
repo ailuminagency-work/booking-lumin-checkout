@@ -79,7 +79,8 @@ jobs:
             outbox_tests \
             mode_installations_tests \
             mode_flow_session_tests \
-            customer_session_availability_tests; do
+            customer_session_availability_tests \
+            customer_session_hold_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -92,3 +93,14 @@ jobs:
         env:
           CUSTOMER_SCOPE_LOCAL_TEST: '1'
         run: npx tsx apps/api/src/customer-availability.integration.ts
+      - name: Customer reservation hold concurrency and expiry
+        env:
+          CUSTOMER_HOLD_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_hold_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_hold_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/customer-hold.integration.ts
