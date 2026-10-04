@@ -1,21 +1,46 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import {ConnectedPortal} from './ConnectedPortal';
 const tenant='11111111-1111-4111-8111-111111111111',user='22222222-2222-4222-8222-222222222222',service='33333333-3333-4333-8333-333333333333';
 const config={url:'https://example.supabase.co',publishableKey:'sb_publishable_synthetic',tenantId:'',bookingApiOrigin:'https://api.example.test'};
 const json=(value:unknown)=>new Response(JSON.stringify(value));
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
-function setup(role:string,publish:()=>Promise<Response>){
- const fetcher=vi.fn(async(input:RequestInfo|URL,_options?:RequestInit)=>{const url=String(input);if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});if(url.includes('/auth/v1/user'))return json({id:user});if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role}]);if(url.includes('/services?'))return json([{id:service,tenant_id:tenant,name:'Housekeeping',currency:'USD',duration_minutes:60,base_price:12500,active:true}]);if(url.includes('/bookings?'))return json([]);if(url.includes('/publish?'))return publish();throw Error('unexpected');});
+const catalog=()=>json([{id:service,tenant_id:tenant,name:'Housekeeping',currency:'USD',duration_minutes:60,base_price:12500,active:true}]);
+function setup(role:string,publish:()=>Promise<Response>,readCatalog:()=>Promise<Response>=async()=>catalog()){
+ const fetcher=vi.fn(async(input:RequestInfo|URL,_options?:RequestInit)=>{const url=String(input);if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});if(url.includes('/auth/v1/user'))return json({id:user});if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role}]);if(url.includes('/services?'))return readCatalog();if(url.includes('/bookings?'))return json([]);if(url.includes('/publish?'))return publish();throw Error('unexpected');});
  vi.stubGlobal('fetch',fetcher);render(<MemoryRouter initialEntries={['/embed']}><ConnectedPortal config={config} staging/></MemoryRouter>);return fetcher;
 }
 async function login(){fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.change(screen.getByLabelText('Password'),{target:{value:'fixture-only'}});fireEvent.click(screen.getByText('Sign in'));await screen.findByText('Sign out');}
+async function showPublication(){
+ // Complete lazy editor mount effects before choosing its visible panel.
+ await screen.findByRole('tab',{name:'Publish'});
+ await act(async()=>{});
+ fireEvent.click(screen.getByRole('tab',{name:'Publish'}));
+ return screen.findByRole('button',{name:'Publish staging test form'});
+}
+async function fillReadyPublication(){
+ await showPublication();
+ const select=await screen.findByLabelText('Simple service');
+ await screen.findByRole('option',{name:/^Housekeeping - /});
+ await waitFor(()=>expect(select).toBeEnabled());
+ fireEvent.change(select,{target:{value:service}});
+ fireEvent.change(screen.getByLabelText('Form name'),{target:{value:'Owner test booking'}});
+ expect(select).toHaveValue(service);
+ expect(screen.getByLabelText('Form name')).toHaveValue('Owner test booking');
+ await waitFor(()=>expect(screen.getByRole('button',{name:'Publish staging test form'})).toBeEnabled());
+}
 it('connects canonical /embed publication to the closure-held signed-in owner token',async()=>{
- const fetcher=setup('BUSINESS_OWNER',async()=>json({ok:true,data:{versionId:user,installationId:service,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+service}}));await login();await screen.findByText('Publish staging test form');fireEvent.change(screen.getByLabelText('Simple service'),{target:{value:service}});fireEvent.change(screen.getByLabelText('Form name'),{target:{value:'Owner test booking'}});fireEvent.click(screen.getByText('Publish staging test form'));await screen.findByText('Staging form published');const call=fetcher.mock.calls.find(([url])=>String(url).includes('/publish?'));expect(call).toBeDefined();expect(call?.[1]?.headers).toMatchObject({Authorization:'Bearer synthetic-owner-private-token'});expect(document.body.textContent).not.toContain('synthetic-owner-private-token');expect(screen.queryByText('This section is not available yet.')).toBeNull();
+ let finishCatalog!:(response:Response)=>void;
+ const fetcher=setup('BUSINESS_OWNER',async()=>json({ok:true,data:{versionId:user,installationId:service,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+service}}),()=>new Promise(resolve=>finishCatalog=resolve));
+ await login();const publish=await showPublication();
+ expect(screen.getByLabelText('Simple service')).toBeDisabled();expect(publish).toBeDisabled();
+ fireEvent.click(publish);expect(fetcher.mock.calls.some(([url])=>String(url).includes('/publish?'))).toBe(false);
+ await waitFor(()=>expect(finishCatalog).toBeTypeOf('function'));finishCatalog(catalog());
+ await fillReadyPublication();fireEvent.click(publish);await screen.findByText('Staging form published');const call=fetcher.mock.calls.find(([url])=>String(url).includes('/publish?'));expect(call).toBeDefined();expect(call?.[1]?.headers).toMatchObject({Authorization:'Bearer synthetic-owner-private-token'});expect(document.body.textContent).not.toContain('synthetic-owner-private-token');expect(screen.queryByText('This section is not available yet.')).toBeNull();
 });
 it('keeps staff out of publication and clears pending publication on sign-out',async()=>{
- const staff=setup('BUSINESS_STAFF',async()=>{throw Error('unexpected');});await login();await screen.findByText('Only a business owner can publish a staging paid form.');expect(staff.mock.calls.some(([url])=>String(url).includes('/publish?'))).toBe(false);cleanup();let resolve!:(response:Response)=>void;setup('BUSINESS_OWNER',()=>new Promise<Response>(r=>resolve=r));await login();await screen.findByText('Publish staging test form');fireEvent.change(screen.getByLabelText('Simple service'),{target:{value:service}});fireEvent.change(screen.getByLabelText('Form name'),{target:{value:'Owner test booking'}});fireEvent.click(screen.getByText('Publish staging test form'));await waitFor(()=>expect(resolve).toBeTypeOf('function'));fireEvent.click(screen.getByText('Sign out'));resolve(json({ok:true,data:{versionId:user,installationId:service,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+service}}));await screen.findByText('Sign in to your business');expect(screen.queryByText('Staging form published')).toBeNull();expect(screen.queryByRole('link',{name:'Open staging booking form'})).toBeNull();
+ const staff=setup('BUSINESS_STAFF',async()=>{throw Error('unexpected');});await login();await screen.findByText('Only a business owner can publish a staging paid form.');expect(staff.mock.calls.some(([url])=>String(url).includes('/publish?'))).toBe(false);cleanup();let resolve!:(response:Response)=>void;setup('BUSINESS_OWNER',()=>new Promise<Response>(r=>resolve=r));await login();await fillReadyPublication();fireEvent.click(screen.getByRole('button',{name:'Publish staging test form'}));await waitFor(()=>expect(resolve).toBeTypeOf('function'));fireEvent.click(screen.getByText('Sign out'));resolve(json({ok:true,data:{versionId:user,installationId:service,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+service}}));await screen.findByText('Sign in to your business');expect(screen.queryByText('Staging form published')).toBeNull();expect(screen.queryByRole('link',{name:'Open staging booking form'})).toBeNull();
 });
 
 function businessSetup(memberAfterCreate:'owner'|'staff'|'missing'='owner'){
