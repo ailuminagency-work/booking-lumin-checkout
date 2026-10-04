@@ -1,4 +1,6 @@
 import {z} from 'zod';
+import {PaidConditionalCustomerFieldRender} from '@lumin/workflow';
+export {PaidConditionalCustomerFieldRender,isPaidConditionalCustomerFieldRender,validatePaidConditionalCustomerFieldAnswers} from '@lumin/workflow';
 import {ConfigurableAuthoringV2,ConfigurableCatalog,PaidSimpleRender,PaidOptionRender,PaidCustomerFieldRender,validatePaidOptionAnswers,normalizeConfigurablePublication,validateConfigurableAnswers} from '@lumin/workflow';
 import {type Answers,PinnedRender} from './types';
 export {ConfigurableAuthoringV2,normalizeConfigurablePublication};
@@ -11,6 +13,8 @@ export type SessionRender=z.infer<typeof SessionRender>;
 // Explicit opt-in keeps existing renderers fail-closed until they support V5.
 export const CustomerFieldSessionRender=z.union([SessionRender,PaidCustomerFieldRender]);
 export type CustomerFieldSessionRender=z.infer<typeof CustomerFieldSessionRender>;
+export const ConditionalCustomerFieldSessionRender=z.union([CustomerFieldSessionRender,PaidConditionalCustomerFieldRender]);
+export type ConditionalCustomerFieldSessionRender=z.infer<typeof ConditionalCustomerFieldSessionRender>;
 export const isConfigurable=(render:SessionRender):render is ConfigurableRender=>'renderSchemaVersion' in render&&render.renderSchemaVersion===2;
 export function visibleSteps(render:ConfigurableRender,answers:Answers){return render.config.steps.filter(step=>{const rule=step.visibleWhen;if(!rule)return true;const a=Object.hasOwn(answers,rule.field)?answers[rule.field]:undefined;return rule.op==='eq'?a?.choiceIds?.length===1&&a.choiceIds[0]===rule.value:a?.choiceIds?.includes(rule.value)===true;});}
 export function clearHiddenAnswers(render:ConfigurableRender,answers:Answers):Answers{const visible=new Set(visibleSteps(render,answers).map(s=>s.questionKey));return Object.fromEntries(Object.entries(answers).filter(([key])=>visible.has(key)));}

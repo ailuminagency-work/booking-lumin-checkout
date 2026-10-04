@@ -1,4 +1,7 @@
 import {z} from 'zod';
+import {PaidConditionalCustomerFieldRender,validatePaidConditionalCustomerFieldAnswers} from '@lumin/workflow';
+import {ConditionalCustomerFieldAnswers} from '@lumin/contracts';
+import {ConditionalCustomerFieldSessionRender} from './configurable';
 import {PaidCustomerFieldRender,validatePaidCustomerFieldAnswers,type CustomerFieldAnswers} from '@lumin/workflow';
 import {Draft,FlowList,ServiceRender,type FlowConfig,type Answers} from './types';
 import {ConfigurableDraft,ConfigurableAuthoringV2,SessionRender,CustomerFieldSessionRender} from './configurable';
@@ -10,6 +13,26 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  if(url.origin!==base||url.username||url.password||!(url.protocol==='https:'||(localHarness&&url.protocol==='http:'&&['localhost','127.0.0.1'].includes(url.hostname))))throw new FlowError('INVALID_REQUEST');
  let generation=0;
  const customerFieldSessions=new Map<string,{render:PaidCustomerFieldRender;expiresAt:number;request?:string;reference?:string}>();
+ const conditionalSessions=new Map<string,{render:PaidConditionalCustomerFieldRender;expiresAt:number;request?:string;reference?:string}>();
+ const conditionalRequest=z.object({schemaVersion:z.literal(3),idempotencyKey:z.string().min(16).max(128),answers:z.object({}).strict(),customerAnswers:ConditionalCustomerFieldAnswers,customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(value=>new Date(value).toISOString())}).strict();
+ async function submitConditionalCustomerFields(token:string,input:z.infer<typeof conditionalRequest>){
+  const session=conditionalSessions.get(token);
+  if(!session||session.expiresAt<=Date.now())throw new FlowError('UNAUTHENTICATED');
+  let body:z.infer<typeof conditionalRequest>;
+  try{
+   if(!input||![Object.prototype,null].includes(Object.getPrototypeOf(input))||!['schemaVersion','idempotencyKey','answers','customerAnswers','customer','requestedStart'].every(key=>Object.hasOwn(input,key)))throw Error('Invalid request');
+   if(!input.answers||![Object.prototype,null].includes(Object.getPrototypeOf(input.answers)))throw Error('Invalid priced answers');
+   body=conditionalRequest.parse(input);
+   body.customerAnswers=validatePaidConditionalCustomerFieldAnswers(session.render,input.customerAnswers);
+  }catch{throw new FlowError('INVALID_REQUEST');}
+  const frozen=JSON.stringify(body);
+  if(session.request!==undefined&&session.request!==frozen)throw new FlowError('CONFLICT');
+  session.request=frozen;
+  const result=await call('/api/flow-sessions/request',z.object({reference:z.string().regex(/^LMN-[0-9A-F]{32}$/),state:z.literal('draft'),confirmed:z.literal(false)}).strict(),token,JSON.parse(frozen));
+  if(session.expiresAt<=Date.now()||conditionalSessions.get(token)!==session)throw new FlowError('UNAUTHENTICATED');
+  if(session.reference!==undefined&&session.reference!==result.reference)throw new FlowError('INTERNAL_ERROR');
+  session.reference=result.reference;return result;
+ }
  const customerFieldRequest=z.object({schemaVersion:z.literal(2),idempotencyKey:z.string().min(16).max(128),answers:z.object({}).strict(),customerAnswers:z.record(z.string()),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(value=>new Date(value).toISOString())}).strict();
  async function submitCustomerFields(token:string,input:{schemaVersion:2;idempotencyKey:string;answers:Record<string,never>;customerAnswers:CustomerFieldAnswers;customer:{name:string;email:string};requestedStart:string}){
   const session=customerFieldSessions.get(token);
@@ -54,7 +77,8 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   // Slots starting within the day may legitimately finish after midnight.
   return {...value,slots:value.slots.filter(slot=>Date.parse(slot.start)<end)};
  }
- return {invalidate(){generation++;customerFieldSessions.clear();},
+ return {invalidate(){generation++;customerFieldSessions.clear();conditionalSessions.clear();},
+ submitConditionalCustomerFields,
  submitCustomerFields,
  availability,
  hold:(token:string)=>{
@@ -81,12 +105,30 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   const value=await call('/api/installations/'+uuid(installation)+'/sessions',z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:CustomerFieldSessionRender}).strict(),undefined,{});
   if(at!==generation||Date.parse(value.expiresAt)<=Date.now())throw new FlowError('UNAUTHENTICATED');
   if(!('renderSchemaVersion' in value.render)||value.render.renderSchemaVersion!==5)return value;
+  if(conditionalSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
   const prior=customerFieldSessions.get(value.sessionToken);
   if(prior&&(JSON.stringify(prior.render)!==JSON.stringify(value.render)||prior.expiresAt!==Date.parse(value.expiresAt)))throw new FlowError('INTERNAL_ERROR');
   if(!prior)customerFieldSessions.set(value.sessionToken,{render:structuredClone(value.render),expiresAt:Date.parse(value.expiresAt)});
   return value;
  },
-  submit:(token:string,body:{idempotencyKey:string;answers:Answers;customer:{name:string;email:string};requestedStart:string})=>{if(customerFieldSessions.has(token))throw new FlowError('UNSUPPORTED_CONFIG');return call('/api/flow-sessions/request',z.object({reference:z.string(),state:z.literal('draft'),confirmed:z.literal(false)}).strict(),token,body);}
+ conditionalCustomerFieldSession:async(installation:string)=>{
+  const at=generation;
+  const value=await call('/api/installations/'+uuid(installation)+'/sessions',z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:ConditionalCustomerFieldSessionRender}).strict(),undefined,{});
+  if(at!==generation||Date.parse(value.expiresAt)<=Date.now())throw new FlowError('UNAUTHENTICATED');
+  if('renderSchemaVersion' in value.render&&value.render.renderSchemaVersion===6){
+   if(customerFieldSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
+   const prior=conditionalSessions.get(value.sessionToken);
+   if(prior&&(JSON.stringify(prior.render)!==JSON.stringify(value.render)||prior.expiresAt!==Date.parse(value.expiresAt)))throw new FlowError('INTERNAL_ERROR');
+   if(!prior)conditionalSessions.set(value.sessionToken,{render:structuredClone(value.render),expiresAt:Date.parse(value.expiresAt)});
+  }else if('renderSchemaVersion' in value.render&&value.render.renderSchemaVersion===5){
+   if(conditionalSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
+   const prior=customerFieldSessions.get(value.sessionToken);
+   if(prior&&(JSON.stringify(prior.render)!==JSON.stringify(value.render)||prior.expiresAt!==Date.parse(value.expiresAt)))throw new FlowError('INTERNAL_ERROR');
+   if(!prior)customerFieldSessions.set(value.sessionToken,{render:structuredClone(value.render),expiresAt:Date.parse(value.expiresAt)});
+  }else if(conditionalSessions.has(value.sessionToken)||customerFieldSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
+  return value;
+ },
+  submit:(token:string,body:{idempotencyKey:string;answers:Answers;customer:{name:string;email:string};requestedStart:string})=>{if(customerFieldSessions.has(token)||conditionalSessions.has(token))throw new FlowError('UNSUPPORTED_CONFIG');return call('/api/flow-sessions/request',z.object({reference:z.string(),state:z.literal('draft'),confirmed:z.literal(false)}).strict(),token,body);}
  };
 }
 export type FlowClient=ReturnType<typeof createFlowClient>;
