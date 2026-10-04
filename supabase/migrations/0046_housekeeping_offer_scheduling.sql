@@ -33,10 +33,16 @@ begin
   day:=(w->>'weekday')::integer;start_at:=(w->>'startMinute')::integer;end_at:=(w->>'endMinute')::integer;
   if day<=last_day or start_at not between 0 and 1439 or end_at not between 1 and 1440 or end_at-start_at<c.creation_duration then raise exception 'INVALID_REQUEST' using errcode='22023';end if;last_day:=day;
  end loop;
+ -- Fence same-tenant reassignment from an unrelated service as well as updates
+ -- to matching rows. The tenant lock fences new rows and moves into this tenant;
+ -- these ordered row locks fence service_id changes, including tenant-wide NULL.
+ perform 1 from public.availability_rules where tenant_id=p_tenant order by id for share;
+ perform 1 from public.availability_overrides where tenant_id=p_tenant order by id for share;
+ perform 1 from public.scheduling_policies where tenant_id=p_tenant order by id for share;
  select * into s from public.owner_offer_scheduling where tenant_id=p_tenant and (service_id=p_service or (actor_id=p_actor and idempotency_key=p_key));
  if found then
   if s.service_id<>p_service or s.actor_id<>p_actor or s.idempotency_key<>p_key or s.timezone<>p_timezone or s.windows<>p_windows or s.lead_time_minutes<>p_lead or s.horizon_days<>p_horizon or s.slot_interval_minutes<>p_interval then raise exception 'CONFLICT' using errcode='40001';end if;
-  -- Tenant lock fences all new FK-bound rows; row locks fence existing updates.
+  -- All existing tenant rows were locked before both fresh and replay checks.
   perform 1 from public.availability_rules where tenant_id=p_tenant and (service_id=p_service or service_id is null) for share;
   perform 1 from public.availability_overrides where tenant_id=p_tenant and (service_id=p_service or service_id is null) for share;
   perform 1 from public.scheduling_policies where tenant_id=p_tenant and (service_id=p_service or service_id is null) for share;
