@@ -20,6 +20,8 @@ import {CustomerFieldPublicationReceipt,type CustomerFieldPublicationReader} fro
 import type {PaidInstallHealthReader} from './paid-install-health';
 import {CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
 import type {OfferSchedulingCreator} from './owner-scheduling';
+import {CreateDetailingScheduling,DetailingSchedulingReceipt,detailingSchedulingReceiptMatches} from '@lumin/contracts';
+import type {DetailingSchedulingCreator} from './detailing-scheduling';
 import {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
 import type {SimpleOfferCreator} from './owner-catalog';
 import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
@@ -51,6 +53,7 @@ export interface FlowHttpOptions{
  repository:FlowRepository;
  schedulingAuthoring?:boolean;
  offerSchedulingCreate?:OfferSchedulingCreator;
+ detailingSchedulingCreate?:DetailingSchedulingCreator;
  catalogAuthoring?:boolean;
  simpleOfferCreate?:SimpleOfferCreator;
  businessOnboarding?:boolean;
@@ -228,6 +231,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const data=HoldReceipt.parse(await options.reservation(actor,tenant,body.bookingId));
     if(data.bookingId!==body.bookingId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:{schemaVersion:1,...data}});return;
+   }
+   const detailingSchedule=url.pathname.match(/^\/api\/catalog\/detailing-offers\/([^/]+)\/scheduling$/);
+   if(detailingSchedule){
+    if(!options.schedulingAuthoring||!options.detailingSchedulingCreate)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const service=Uuid.parse(detailingSchedule[1]).toLowerCase(),body=CreateDetailingScheduling.parse(await jsonBody(req)),result=DetailingSchedulingReceipt.safeParse(await options.detailingSchedulingCreate(actor,tenant,service,body));
+    if(!result.success||result.data.tenantId!==tenant.toLowerCase()||result.data.serviceId!==service||!detailingSchedulingReceiptMatches(result.data,body))throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
    }
    const scheduling=url.pathname.match(/^\/api\/catalog\/simple-offers\/([^/]+)\/scheduling$/);
    if(scheduling){
