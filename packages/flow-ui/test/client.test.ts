@@ -57,3 +57,16 @@ it('accepts actual core full-day output, retains cross-midnight ends and filters
  const result=await client.availability('t'.repeat(43),from,to);
  expect(result.slots).toEqual(slots.filter(slot=>slot.start>=from&&slot.start<to));expect(result.slots).toContainEqual(crossMidnight);expect(result.slots.some(slot=>slot.start===to)).toBe(false);
 });
+it('holds the persisted session request with an empty body and strict receipt',async()=>{
+ const token='t'.repeat(43),receipt={bookingId:id,holdId:'22222222-2222-4222-8222-222222222222',status:'active',expiresAt:'2030-01-01T10:05:00Z'};
+ const fetcher=vi.fn(async()=>new Response(JSON.stringify({ok:true,data:receipt})));const client=createFlowClient('https://api.example',false,fetcher);expect(await client.hold(token)).toEqual(receipt);
+ const [url,options]=fetcher.mock.calls[0] as unknown as [string,RequestInit];expect(url).toBe('https://api.example/api/flow-sessions/hold');expect(options.method).toBe('POST');expect(options.body).toBe('{}');expect(options.headers).toMatchObject({Authorization:'Bearer '+token});expect(options.credentials).toBe('omit');
+ expect(()=>client.hold('bad-token')).toThrow();expect(fetcher).toHaveBeenCalledTimes(1);
+ for(const change of [{bookingId:'invalid'},{holdId:'invalid'},{status:'confirmed'},{expiresAt:'invalid'},{confirmed:true},{tenantId:id}]){
+  const bad=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{...receipt,...change}})));await expect(bad.hold(token)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+ }
+});
+it('discards a hold receipt when the customer session is invalidated',async()=>{
+ let resolve!:(value:unknown)=>void;const body=new Promise(r=>resolve=r);const client=createFlowClient('https://api.example',false,async()=>({ok:true,json:()=>body} as Response));
+ const request=client.hold('t'.repeat(43));client.invalidate();resolve({ok:true,data:{bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'}});await expect(request).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+});
