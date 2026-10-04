@@ -93,7 +93,8 @@ jobs:
             paid_simple_publication_rollback_tests \
             staging_business_type_tests \
             housekeeping_simple_offer_tests \
-            housekeeping_offer_scheduling_tests; do
+            housekeeping_offer_scheduling_tests \
+            paid_install_health_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -249,3 +250,14 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/owner-scheduling.integration.ts
+      - name: Private owner installation evidence and read immutability
+        env:
+          PAID_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_health_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_health_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/paid-install-health.integration.ts
