@@ -553,3 +553,11 @@ Hosted service capacity and simulated-payment concurrency:
 - Previous exact candidate a9d170aaf79814f32c8c1777371d479a0704e335: CI37180993096 SUCCESS; Render dep-db0uj60u01pc73c0v9o0 LIVE with health200/ready200; Netlify Checkout6ac1e8ed9cb4f40008036df1, Portal6ac1e8ed6192b00008bba7da, CommandCenter6ac1e8ed82be5d00081a013c READY sameSHA.
 - Isolated hqgtjztrsizjrsidtlqt public Auth settings read: signup enabled, email enabled, email auto-confirm false. Existing controlled owner password unavailable; no authenticated owner-browser certification and no automatic email-confirmation bypass. Owner Portal handoff remains open on confirmed test booking f1146524-e76a-4230-a698-c72e7a96e54c.
 - Scores unchanged; Goal1 and Goal2 remain incomplete. PR97 remains draft. No production/LeadGate/parent-database change or real payment.
+
+### Connected saved Booking Form discovery
+- Builder: /root/customer_availability_ui_builder, source b1ce4483184c25c591e6cccb9374d4ccc61c3f3e; integrated as 984b13d.
+- Independent reviewer: /root/booking_list_review; accepted without outstanding findings. Root performed integration/runtime gates.
+- Changed runtime-client and Portal PaidSimplePublisher plus their tests: explicit bounded owner-only saved form refresh, fresh receipt verification on selection, session/tenant response guards, and preserved unknown-publication locks. Listing never authorizes a retry or invokes a publication writer.
+- Builder verification: runtime-client 56/56, Portal 113/113, typechecks and Portal build passed. Root integration: runtime-client 56/56 and publisher 17/17 passed. API prior exact source 158/158 and typecheck passed; this batch does not change API code.
+- Hosted owner usability remains uncertified pending controlled staging owner login. No score increase. Paid draft persistence is already in progress in /root/customer_hold_builder on codex/paid-simple-drafts.
+- Candidate push, exact CI and hosted deployment evidence will be recorded after verification. Main, production, and LeadGate remain untouched.
