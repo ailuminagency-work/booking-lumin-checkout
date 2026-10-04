@@ -78,3 +78,22 @@ it('accepts the actual customer hold HTTP response envelope',async()=>{
   expect(await client.hold(token)).toEqual({schemaVersion:1,bookingId:id,holdId:id,status:'active',expiresAt:'2030-01-01T10:05:00Z'});
  }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
+it('validates committed paid V3 sessions without falling back to question render versions',async()=>{
+ const render={versionId:id,renderSchemaVersion:3,submissionMode:'paid_service_request',paymentMode:'staging_mock',simulated:true,service:{id,name:'Housekeeping',durationMinutes:60,price:{amount:12500,currency:'USD'}}};
+ for(const value of [render,{...render,renderSchemaVersion:4},{...render,simulated:false},{...render,paymentMode:'stripe'},{...render,config:{steps:[]}},{...render,service:{...render.service,price:{amount:0,currency:'USD'}}}]){
+  const client=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{sessionToken:'t'.repeat(43),expiresAt:'2035-01-01T00:00:00Z',render:value}})));
+  if(value===render)expect((await client.session(id)).render).toEqual(render);else await expect(client.session(id)).rejects.toMatchObject({code:'INTERNAL_ERROR'});
+ }
+});
+it('accepts the actual staging test-payment HTTP envelope with bearer-only empty-body authority',async()=>{
+ const {createFlowHttpServer}=await import('../../../apps/api/src/http');const token='t'.repeat(43),origin='https://checkout.example.test';const writer=vi.fn(async()=>({bookingId:id,paymentId:id,state:'confirmed' as const,replayed:false,provider:'staging_mock' as const,simulated:true as const}));
+ const server=createFlowHttpServer({repository:{call:async()=>{throw Error('unexpected');}},ownerOrigins:[],customerOrigins:[origin],customerMockPayment:writer});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{const address=server.address() as {port:number};const transport=vi.fn((input:RequestInfo|URL,options?:RequestInit)=>fetch(input,{...options,headers:{...options?.headers,Origin:origin}}));const client=createFlowClient('http://127.0.0.1:'+address.port,true,transport);
+  expect(await client.mockPayment(token)).toEqual({schemaVersion:1,bookingId:id,paymentId:id,state:'confirmed',replayed:false,provider:'staging_mock',simulated:true});expect(writer).toHaveBeenCalledTimes(1);const [url,options]=transport.mock.calls[0]!;expect(url).toBe('http://127.0.0.1:'+address.port+'/api/flow-sessions/mock-payment');expect(options?.body).toBe('{}');expect(options?.headers).toMatchObject({Authorization:'Bearer '+token});expect(options?.credentials).toBe('omit');
+ }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
+});
+it('rejects widened or unconfirmed test-payment receipts and invalidated responses',async()=>{
+ const receipt={schemaVersion:1,bookingId:id,paymentId:id,state:'confirmed',replayed:false,provider:'staging_mock',simulated:true};
+ for(const change of [{schemaVersion:2},{schemaVersion:undefined},{bookingId:'invalid'},{paymentId:'invalid'},{state:'draft'},{provider:'stripe'},{simulated:false},{replayed:undefined},{amount:12500}]){const client=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{...receipt,...change}})));await expect(client.mockPayment('t'.repeat(43))).rejects.toMatchObject({code:'INTERNAL_ERROR'});}
+ let resolve!:(value:unknown)=>void;const body=new Promise(r=>resolve=r);const client=createFlowClient('https://api.example',false,async()=>({ok:true,json:()=>body} as Response));const pending=client.mockPayment('t'.repeat(43));client.invalidate();resolve({ok:true,data:receipt});await expect(pending).rejects.toMatchObject({code:'UNAUTHENTICATED'});
+});

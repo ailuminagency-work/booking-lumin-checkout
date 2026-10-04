@@ -36,6 +36,10 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('INVALID_REQUEST');
   return call('/api/flow-sessions/hold',z.object({schemaVersion:z.literal(1),bookingId:z.string().uuid(),holdId:z.string().uuid(),status:z.literal('active'),expiresAt:z.string().datetime({offset:true}).refine(value=>Number.isFinite(Date.parse(value)))}).strict(),token,{});
  },
+ mockPayment:(token:string)=>{
+  if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('INVALID_REQUEST');
+  return call('/api/flow-sessions/mock-payment',z.object({schemaVersion:z.literal(1),bookingId:z.string().uuid(),paymentId:z.string().uuid(),state:z.literal('confirmed'),replayed:z.boolean(),provider:z.literal('staging_mock'),simulated:z.literal(true)}).strict(),token,{});
+ },
  services:(token:string,id:string)=>call('/api/services'+tenant(id),z.object({services:z.array(ServiceRender).max(100)}).strict(),token),
  flows:(token:string,id:string)=>call('/api/flows'+tenant(id),FlowList,token),
  draft:(token:string,id:string,flow:string)=>call('/api/flows/'+uuid(flow)+'/draft'+tenant(id),Draft,token),
