@@ -18,6 +18,10 @@ jobs:
       - run: npm ci
       - name: Hosted customer concurrency harness safety regressions
         run: node --test scripts/customer-paid-concurrency.test.mjs
+      - name: Staging deployment configuration safety regressions
+        run: |
+          node scripts/validate-staging-frontend-config.test.mjs
+          node scripts/validate-staging-frontend-config.mjs --self-test
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
