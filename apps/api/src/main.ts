@@ -1,3 +1,4 @@
+import {createPaidPublicationRollback} from './paid-publication-rollback';
 import {createPaidVersionHistoryReader} from './paid-version-history-reader';
 import {createPaidDraftListReader} from './paid-draft-list-reader';
 import {createPaidPublicationListReader,createPaidPublicationReader} from './paid-publication-reader';
@@ -120,7 +121,7 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidPublication:createPaidPublicationReader(pool),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins)}:{}),
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidPublication:createPaidPublicationReader(pool),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,

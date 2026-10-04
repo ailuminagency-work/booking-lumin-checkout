@@ -1,3 +1,4 @@
+import {PaidRollbackInput,PaidRollbackReceipt,type PaidPublicationRollback} from './paid-publication-rollback';
 import {PaidVersionHistory,type PaidVersionHistoryReader} from './paid-version-history-reader';
 import {type PaidDraftListReader} from './paid-draft-list-reader';
 import {PaidPublicationList,PaidPublicationReceipt,type PaidPublicationReader,type PaidPublicationListReader} from './paid-publication-reader';
@@ -31,6 +32,7 @@ export interface FlowHttpOptions{
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
+ paidRollback?:PaidPublicationRollback;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -207,6 +209,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!existing)throw new FlowError("FORBIDDEN");
     const result=PaidPublicationList.safeParse(existing);if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const rollback=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/rollback$/);
+   if(rollback){
+    if(!options.paidSimplePublication||!options.paidRollback)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(rollback[1]).toLowerCase(),body=PaidRollbackInput.parse(await jsonBody(req));
+    const parsed=PaidRollbackReceipt.safeParse(await options.paidRollback(actor,tenant,flow,body));
+    if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
    }
    const versionHistory=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/versions$/);
    if(versionHistory){
