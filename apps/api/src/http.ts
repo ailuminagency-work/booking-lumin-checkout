@@ -1,4 +1,4 @@
-import {PaidPublicationReceipt,type PaidPublicationReader} from './paid-publication-reader';
+import {PaidPublicationList,PaidPublicationReceipt,type PaidPublicationReader,type PaidPublicationListReader} from './paid-publication-reader';
 import {type CustomerConfirmation,type CustomerMockPayment} from './customer-payment';
 import {MockPaymentInput,MockPaymentReceipt,type MockPaymentWriter} from './mock-payment';
 import {RentalMockPaymentInput,RentalMockPaymentReceipt,type RentalMockPaymentWriter} from './rental-mock-payment';
@@ -26,6 +26,7 @@ export interface FlowHttpOptions{
  /** Explicit staging test-publication gate; owner identity remains required. */
  paidSimplePublication?:boolean;
  paidPublication?:PaidPublicationReader;
+ paidPublications?:PaidPublicationListReader;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -176,6 +177,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
+   }
+   if(url.pathname==="/api/paid-simple-flows"){
+    if(!options.paidSimplePublication||!options.paidPublications)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const existing=await options.paidPublications(actor,tenant);
+    if(!existing)throw new FlowError("FORBIDDEN");
+    const result=PaidPublicationList.safeParse(existing);if(!result.success)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:result.data});return;
    }
    const recovery=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/publication$/);
    if(recovery){
