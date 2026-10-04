@@ -57,3 +57,5 @@ export * from './customer-draft-fields';
 
 export * from './customer-field-install-health';
 export * from './conditional-customer-fields';
+
+export * from './detailing-catalog';
