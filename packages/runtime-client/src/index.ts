@@ -37,6 +37,11 @@ export interface PaidSimpleSavedDraftPublicationReceipt {readonly flowId:string;
 export type PaidSimpleSavedDraftPublicationState={phase:'ready'}|{phase:'publishing'|'unknown';flowId:string;draftRevision:number;checkoutOrigin:string}|{phase:'published';flowId:string;draftRevision:number;checkoutOrigin:string;receipt:PaidSimpleSavedDraftPublicationReceipt};
 export interface PaidCustomerFieldPublicationReceipt {readonly flowId:string;readonly draftRevision:number;readonly publication:{readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:5;readonly hostedPath:string}}
 export type PaidCustomerFieldPublicationState={phase:'ready'}|{phase:'publishing'|'unknown';flowId:string;draftRevision:number;checkoutOrigin?:string}|{phase:'published';flowId:string;draftRevision:number;checkoutOrigin?:string;receipt:PaidCustomerFieldPublicationReceipt};
+export interface CustomerFieldInstallReceipt {readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:3|5;readonly hostedPath:string}
+export type CustomerFieldVersion= {readonly versionId:string;readonly draftRevision:number;readonly name:string;readonly presentation:PaidSimplePresentation;readonly current:boolean;readonly publication:CustomerFieldInstallReceipt|null}&({readonly renderSchemaVersion:3;readonly customerFields?:never}|{readonly renderSchemaVersion:5;readonly customerFields:readonly Readonly<CustomerDraftTextField>[]});
+export interface CustomerFieldVersionHistory {readonly flowId:string;readonly versions:readonly CustomerFieldVersion[]}
+export interface CustomerFieldRollbackReceipt extends CustomerFieldInstallReceipt {readonly flowId:string}
+export type CustomerFieldRollbackState={phase:'ready'}|{phase:'rolling_back'|'unknown';flowId:string;expectedCurrentVersionId:string;targetVersionId:string;targetPublication:CustomerFieldInstallReceipt}|{phase:'verified';flowId:string;receipt:CustomerFieldRollbackReceipt};
 export class PublicationError extends Error {
  constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}
 }
@@ -74,7 +79,16 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rollbacks=new Map<string,Exclude<PaidSimpleRollbackState,{phase:'ready'}>>();
  const rollbackReads=new Set<string>();
  const histories=new Map<string,PaidSimpleVersionHistory>();
- const rollbackLocked=(tenantId:string)=>{const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='rolling_back'||state?.phase==='unknown';};
+ let fieldHistorySequence=0;
+ const fieldHistoryReads=new Map<string,number>();
+ const fieldHistories=new Map<string,CustomerFieldVersionHistory>();
+ const fieldRollbacks=new Map<string,Exclude<CustomerFieldRollbackState,{phase:'ready'}>>();
+ const fieldRollbackReads=new Set<string>();
+ // Frozen actor-bound operation identity survives auth resets, never a bearer.
+ const fieldRollbackAttempts=new Map<string,{actor:string;tenantId:string;flowId:string;expectedCurrentVersionId:string;targetVersionId:string;targetPublication:CustomerFieldInstallReceipt}>();
+ const fieldRollbackLocked=(tenantId:string)=>[...fieldRollbackAttempts.values()].some(attempt=>attempt.tenantId===tenantId.toLowerCase());
+ const requireNoFieldRollback=(tenantId:string)=>{if(fieldRollbackLocked(tenantId))throw new PublicationError('not_sent','Rollback outcome is pending or unverified. Check the same frozen target receipt before another writer action.');};
+ const rollbackLocked=(tenantId:string)=>{const state=rollbacks.get(tenantId.toLowerCase());return fieldRollbackLocked(tenantId)||state?.phase==='rolling_back'||state?.phase==='unknown';};
  const customerPublications=new Map<string,Exclude<PaidCustomerFieldPublicationState,{phase:'ready'}>>();
  const customerPublicationReads=new Set<string>();
  // Actor-bound uncertainty survives sign-out in memory; it never stores a bearer.
@@ -91,7 +105,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -100,14 +114,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear();
+  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
-  try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;for(const attempt of customerPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())customerPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const uncertain of uncertainOffers.values()){if(uncertain.actor===userId)offers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainScheduling.values()){if(uncertain.actor===userId){scheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});offers.set(uncertain.tenantId,uncertain.offer);}}return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
+  try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;for(const attempt of fieldRollbackAttempts.values()){if(attempt.actor===userId.toLowerCase())fieldRollbacks.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId,targetPublication:attempt.targetPublication});}for(const attempt of customerPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())customerPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const uncertain of uncertainOffers.values()){if(uncertain.actor===userId)offers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainScheduling.values()){if(uncertain.actor===userId){scheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});offers.set(uncertain.tenantId,uncertain.offer);}}return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear()}
+ function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();scheduling.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
  const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
@@ -452,13 +466,77 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }finally{if(current===generation)customerPublicationReads.delete(tenantId);}
  }
 
+ const fieldInstallReceipt=(value:unknown):CustomerFieldInstallReceipt|undefined=>{
+  if(!exact(value,['versionId','installationId','renderSchemaVersion','hostedPath'])||!uuid(value.versionId)||!uuid(value.installationId)||value.versionId!==value.versionId.toLowerCase()||value.installationId!==value.installationId.toLowerCase()||(value.renderSchemaVersion!==3&&value.renderSchemaVersion!==5)||value.hostedPath!=='/checkout/flow/'+value.installationId)return;
+  return Object.freeze({versionId:value.versionId,installationId:value.installationId,renderSchemaVersion:value.renderSchemaVersion,hostedPath:value.hostedPath});
+ };
+ const sameFieldInstallation=(left:CustomerFieldInstallReceipt,right:CustomerFieldInstallReceipt)=>left.versionId===right.versionId&&left.installationId===right.installationId&&left.renderSchemaVersion===right.renderSchemaVersion&&left.hostedPath===right.hostedPath;
+ const fieldRollbackReceipt=(response:Response,value:unknown,flowId:string):CustomerFieldRollbackReceipt|undefined=>{
+  const data=response.status===200&&exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(!exact(data,['flowId','versionId','installationId','renderSchemaVersion','hostedPath'])||data.flowId!==flowId)return;
+  const receipt=fieldInstallReceipt({versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:data.renderSchemaVersion,hostedPath:data.hostedPath});
+  return receipt?Object.freeze({flowId,...receipt}):undefined;
+ };
+ async function customerFieldVersionHistory(tenantId:string,flowId:string):Promise<CustomerFieldVersionHistory>{
+  if(!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Choose a valid business and form.');tenantId=tenantId.toLowerCase();flowId=flowId.toLowerCase();rollbackAuthority(tenantId,flowId);
+  const key=tenantId+'|'+flowId,sequence=++fieldHistorySequence;fieldHistoryReads.set(key,sequence);fieldHistories.delete(key);
+  const at=generation,credential=token!;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin!+'/api/paid-customer-field-flows/'+flowId+'/versions?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new PublicationError('not_sent','Version history remains unverified. This read does not resolve any uncertain action.');}
+  if(at!==generation||fieldHistoryReads.get(key)!==sequence)throw new PublicationError('not_sent','The session or history selection changed. Refresh the selected form history.');
+  if(response.status===401&&exact(value,['ok','code'])&&value.ok===false&&value.code==='UNAUTHENTICATED')signOut();
+  const data=response.status===200&&exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(!exact(data,['flowId','versions'])||data.flowId!==flowId||!Array.isArray(data.versions)||data.versions.length<1||data.versions.length>50)throw new PublicationError('not_sent','The mixed version history could not be validated.');
+  const versions:CustomerFieldVersion[]=[],ids=new Set<string>(),installs=new Set<string>();let previous:number|undefined,currentCount=0,v5=false;
+  for(const entry of data.versions){
+   const fields=entry&&typeof entry==='object'&&!Array.isArray(entry)&&entry.renderSchemaVersion===5;
+   if(!exact(entry,['versionId','renderSchemaVersion','draftRevision','name','presentation','current','publication',...(fields?['customerFields']:[])])||!uuid(entry.versionId)||entry.versionId!==entry.versionId.toLowerCase()||ids.has(entry.versionId)||(entry.renderSchemaVersion!==3&&entry.renderSchemaVersion!==5)||!draftRevision(entry.draftRevision)||previous!==undefined&&entry.draftRevision>=previous||typeof entry.name!=='string'||entry.name.length<1||entry.name.length>200||!presentation(entry.presentation)||typeof entry.current!=='boolean')throw new PublicationError('not_sent','The mixed version history could not be validated.');
+   const receipt=entry.publication===null?null:fieldInstallReceipt(entry.publication);
+   if(receipt===undefined||receipt&&(receipt.versionId!==entry.versionId||receipt.renderSchemaVersion!==entry.renderSchemaVersion||installs.has(receipt.installationId)))throw new PublicationError('not_sent','The history installation binding could not be validated.');
+   if(receipt)installs.add(receipt.installationId);ids.add(entry.versionId);previous=entry.draftRevision;if(entry.current)currentCount++;
+   const common={versionId:entry.versionId,draftRevision:entry.draftRevision,name:entry.name,presentation:Object.freeze({...entry.presentation}),current:entry.current,publication:receipt};
+   if(entry.renderSchemaVersion===5){const parsed=CustomerDraftFields.safeParse(entry.customerFields);if(!parsed.success)throw new PublicationError('not_sent','Pinned informational fields could not be validated.');v5=true;versions.push(Object.freeze({...common,renderSchemaVersion:5,customerFields:Object.freeze(parsed.data.map(field=>Object.freeze({...field})))}));}
+   else versions.push(Object.freeze({...common,renderSchemaVersion:3}));
+  }
+  if(!v5||currentCount!==1)throw new PublicationError('not_sent','Choose a verified form history with one current publication.');
+  const result=Object.freeze({flowId,versions:Object.freeze(versions)});fieldHistories.set(key,result);return result;
+ }
+ async function rollbackCustomerFieldPublication(tenantId:string,flowId:string,input:{expectedCurrentVersionId:string;targetVersionId:string}):Promise<CustomerFieldRollbackReceipt>{
+  if(!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Choose a valid business and form.');tenantId=tenantId.toLowerCase();flowId=flowId.toLowerCase();rollbackAuthority(tenantId,flowId);requireNoRollback(tenantId);
+  if(writerUncertain(tenantId))throw new PublicationError('not_sent','Verify uncertain draft and publication operations before rollback.');
+  if(!exact(input,['expectedCurrentVersionId','targetVersionId'])||!uuid(input.expectedCurrentVersionId)||!uuid(input.targetVersionId))throw new PublicationError('not_sent','Review a verified current and prior target version.');
+  const expected=input.expectedCurrentVersionId.toLowerCase(),targetId=input.targetVersionId.toLowerCase(),history=fieldHistories.get(tenantId+'|'+flowId),current=history?.versions.find(v=>v.current),target=history?.versions.find(v=>v.versionId===targetId);
+  if(!current?.publication||current.versionId!==expected||!target?.publication||target.current||target.draftRevision>=current.draftRevision)throw new PublicationError('not_sent','Refresh mixed version history and review a prior version with a verified installation.');
+  const attempt={actor:userId!.toLowerCase(),tenantId,flowId,expectedCurrentVersionId:expected,targetVersionId:targetId,targetPublication:target.publication},key=attempt.actor+':'+tenantId,at=generation,credential=token!;
+  const previous=fieldRollbacks.get(tenantId);fieldRollbackAttempts.set(key,attempt);fieldRollbacks.set(tenantId,{phase:'rolling_back',flowId,expectedCurrentVersionId:expected,targetVersionId:targetId,targetPublication:target.publication});fieldHistories.delete(tenantId+'|'+flowId);fieldHistoryReads.delete(tenantId+'|'+flowId);
+  const unknown=()=>{if(at===generation&&fieldRollbackAttempts.get(key)===attempt)fieldRollbacks.set(tenantId,{phase:'unknown',flowId,expectedCurrentVersionId:expected,targetVersionId:targetId,targetPublication:attempt.targetPublication});};
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin!+'/api/paid-customer-field-flows/'+flowId+'/rollback?tenantId='+encodeURIComponent(tenantId),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:JSON.stringify({expectedCurrentVersionId:expected,targetVersionId:targetId})});value=await response.json();}catch{unknown();throw new PublicationError('unknown','Rollback outcome is unverified. Do not repeat the action; explicitly check this frozen target receipt.');}
+  if(at!==generation||fieldRollbackAttempts.get(key)!==attempt)throw new PublicationError('unknown','The session changed. Check this same rollback after fresh sign-in.');
+  const receipt=fieldRollbackReceipt(response,value,flowId);
+  if(receipt&&sameFieldInstallation(receipt,attempt.targetPublication)){fieldRollbackAttempts.delete(key);fieldRollbacks.set(tenantId,{phase:'verified',flowId,receipt});return receipt;}
+  const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422};
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&response.status===codes[value.code]){fieldRollbackAttempts.delete(key);if(previous?.phase==='verified')fieldRollbacks.set(tenantId,previous);else fieldRollbacks.delete(tenantId);throw new PublicationError('rejected','Rollback was rejected. Refresh history and review eligibility before any new explicit action.');}
+  unknown();if(response.status===401&&exact(value,['ok','code'])&&value.ok===false&&value.code==='UNAUTHENTICATED')signOut();throw new PublicationError('unknown','Rollback outcome remains unverified. Check the frozen target receipt without repeating rollback.');
+ }
+ async function reconcileCustomerFieldRollback(tenantId:string):Promise<CustomerFieldRollbackReceipt>{
+  if(!uuid(tenantId)||!userId)throw new PublicationError('not_sent','Sign in with the same account and business.');tenantId=tenantId.toLowerCase();const key=userId.toLowerCase()+':'+tenantId,attempt=fieldRollbackAttempts.get(key),state=fieldRollbacks.get(tenantId);
+  if(!attempt||state?.phase!=='unknown')throw new PublicationError('not_sent','Only a settled uncertain rollback can be checked by the same actor.');rollbackAuthority(tenantId,attempt.flowId);
+  if(fieldRollbackReads.has(tenantId))throw new PublicationError('not_sent','The rollback receipt is already being checked.');const at=generation,credential=token!;fieldRollbackReads.add(tenantId);
+  try{
+   let response:Response,value:unknown;try{response=await transport(bookingApiOrigin!+'/api/paid-customer-field-flows/'+attempt.flowId+'/rollback-receipt?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new PublicationError('unknown','The current rollback receipt is unavailable. The frozen operation remains locked.');}
+   if(at!==generation||fieldRollbackAttempts.get(key)!==attempt)throw new PublicationError('unknown','The session changed. The rollback remains unverified.');
+   const receipt=fieldRollbackReceipt(response,value,attempt.flowId);
+   if(receipt&&sameFieldInstallation(receipt,attempt.targetPublication)){fieldRollbackAttempts.delete(key);fieldRollbacks.set(tenantId,{phase:'verified',flowId:attempt.flowId,receipt});return receipt;}
+   if(response.status===401&&exact(value,['ok','code'])&&value.ok===false&&value.code==='UNAUTHENTICATED')signOut();throw new PublicationError('unknown','The current receipt does not verify the frozen target and installation. Rollback remains locked; do not repeat the writer.');
+  }finally{if(at===generation)fieldRollbackReads.delete(tenantId);}
+ }
  const rollbackAuthority=(tenantId:string,flowId:string)=>{
   if(!token||!userId||!bookingApiOrigin)throw new PublicationError('not_sent','Sign in with the configured publication service.');
   if(!uuid(tenantId)||tenantId!==tenantId.toLowerCase()||!uuid(flowId)||flowId!==flowId.toLowerCase())throw new PublicationError('not_sent','Choose the exact business and form ID.');
  };
  const writerUncertain=(tenantId:string)=>{
   const matches=(id:string)=>id.toLowerCase()===tenantId;
-  return customerPublicationLocked(tenantId)||[...recovering].some(matches)||[...publications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...savedDraftPublications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...ownerDrafts].some(([id,state])=>matches(id)&&state.phase!=='saved'&&state.phase!=='loaded');
+  return fieldRollbackLocked(tenantId)||customerPublicationLocked(tenantId)||[...recovering].some(matches)||[...publications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...savedDraftPublications].some(([id,state])=>matches(id)&&state.phase!=='published')||[...ownerDrafts].some(([id,state])=>matches(id)&&state.phase!=='saved'&&state.phase!=='loaded');
  };
  const samePublication=(left:PaidSimplePublicationReceipt,right:PaidSimplePublicationReceipt)=>left.versionId===right.versionId&&left.installationId===right.installationId&&left.renderSchemaVersion===right.renderSchemaVersion&&left.hostedPath===right.hostedPath;
  async function rollbackPaidSimplePublication(tenantId:string,flowId:string,input:{expectedCurrentVersionId:string;targetVersionId:string}):Promise<PaidSimpleRollbackReceipt>{
@@ -506,7 +584,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(prior.phase==='unavailable')throw new BusinessOnboardingError('unavailable','Business onboarding is unavailable. The server capability must be enabled in staging.');
   if(prior.phase==='unknown'&&creationBody(prior.attempt)!==creationBody(body))throw new BusinessOnboardingError('not_sent','The uncertain attempt is locked to its original key and all original business details.');
   if(offerLocked())throw new BusinessOnboardingError('not_sent','Offer creation is pending or unverified. Finish the frozen offer attempt first.');
-  if([...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase())))throw new BusinessOnboardingError('not_sent','Verify pending or uncertain drafts, publications and rollbacks before creating a different business.');
+  if(fieldRollbackAttempts.size>0||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase())))throw new BusinessOnboardingError('not_sent','Verify pending or uncertain drafts, publications and rollbacks before creating a different business.');
   const at=generation,actor=userId,credential=token;businessAttempts.set(body.idempotencyKey,{actor,body:creationBody(body)});
   businessCreation={phase:'checking',attempt:body};
   try{
@@ -553,7 +631,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(binding&&(binding.actor!==actor||binding.tenantId!==tenantId||binding.body!==serialized))throw new BusinessOnboardingError('not_sent','The offer key is bound to its original account, business and reviewed details.');
   if(prior&&prior.phase!=='unknown')throw new BusinessOnboardingError('not_sent','This session offer is already pending or created.');
   if(prior?.phase==='unknown'&&offerBody(prior.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','The uncertain offer is locked to its unchanged details and original key.');
-  if(schedulingLocked()||businessCreationLocked()||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...offers.entries()].some(([id,state])=>id!==tenantId&&state.phase!=='created'))throw new BusinessOnboardingError('not_sent','Resolve pending or uncertain business, draft, publication or rollback actions first.');
+  if(fieldRollbackAttempts.size>0||schedulingLocked()||businessCreationLocked()||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...offers.entries()].some(([id,state])=>id!==tenantId&&state.phase!=='created'))throw new BusinessOnboardingError('not_sent','Resolve pending or uncertain business, draft, publication or rollback actions first.');
   offerAttempts.set(body.idempotencyKey,{actor,tenantId,body:serialized});offers.set(tenantId,{phase:'checking',attempt:body});
   try{const context=await simpleOfferContext(tenantId);if(context.currency!==body.price.currency)throw new BusinessOnboardingError('not_sent','The reviewed currency no longer matches the current business.');if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The account changed before sending.');}catch(error){if(at===generation){if(prior)offers.set(tenantId,prior);else offers.delete(tenantId);}throw error;}
   offers.set(tenantId,{phase:'creating',attempt:body});uncertainOffers.set(actor+':'+tenantId,{actor,tenantId,attempt:body});let response:Response,value:unknown;
@@ -577,7 +655,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(binding&&(binding.actor!==actor||binding.tenantId!==tenantId||binding.serviceId!==serviceId||binding.body!==serialized))throw new BusinessOnboardingError('not_sent','This scheduling key is bound to its original account, business, offer and reviewed settings.');
   if(prior&&prior.phase!=='unknown')throw new BusinessOnboardingError('not_sent','Scheduling is already pending or configured for this session offer.');
   if(prior?.phase==='unknown'&&schedulingBody(prior.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','The uncertain scheduling attempt is locked to its original key and unchanged settings.');
-  if(businessCreationLocked()||[...offers.values()].some(state=>state.phase!=='created')||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...scheduling.entries()].some(([id,state])=>id!==key&&state.phase!=='configured'))throw new BusinessOnboardingError('not_sent','Resolve uncertain offers, drafts, publications, rollbacks or other scheduling before this action.');
+  if(fieldRollbackAttempts.size>0||businessCreationLocked()||[...offers.values()].some(state=>state.phase!=='created')||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...scheduling.entries()].some(([id,state])=>id!==key&&state.phase!=='configured'))throw new BusinessOnboardingError('not_sent','Resolve uncertain offers, drafts, publications, rollbacks or other scheduling before this action.');
   schedulingAttempts.set(body.idempotencyKey,{actor,tenantId,serviceId,body:serialized});scheduling.set(key,{phase:'checking',attempt:body});
   try{const context=await simpleOfferContext(tenantId);if(context.timezone!==body.timezone)throw new BusinessOnboardingError('not_sent','The reviewed timezone no longer matches the current business.');if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The account changed before sending scheduling.');}catch(error){if(at===generation){if(prior)scheduling.set(key,prior);else scheduling.delete(key);}throw error;}
   scheduling.set(key,{phase:'creating',attempt:body});uncertainScheduling.set(actor+':'+key,{actor,tenantId,serviceId,attempt:body,offer});let response:Response,value:unknown;
@@ -615,6 +693,8 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   simpleOfferRecoveryTenant():string|undefined {return [...offers.entries()].find(([,state])=>state.phase==='unknown')?.[0]??[...scheduling.entries()].find(([,state])=>state.phase==='unknown')?.[0].split(':')[0];},
   businessCreationState():BusinessCreationState{return businessCreation.phase==='created'?{...businessCreation,attempt:{...businessCreation.attempt},profile:{...businessCreation.profile}}:businessCreation.phase==='ready'||businessCreation.phase==='unavailable'?{...businessCreation}:{...businessCreation,attempt:{...businessCreation.attempt}};},
   signIn,signOut,
+  customerFieldVersionHistory,rollbackCustomerFieldPublication,reconcileCustomerFieldRollback,
+  customerFieldRollbackState(tenantId:string):CustomerFieldRollbackState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=fieldRollbacks.get(tenantId.toLowerCase());return state?.phase==='verified'?{...state,receipt:{...state.receipt}}:state?{...state,targetPublication:{...state.targetPublication}}:{phase:'ready'};},
   rollbackPaidSimplePublication,reconcilePaidSimpleRollback,
   paidSimpleRollbackState(tenantId:string):PaidSimpleRollbackState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='verified'?{...state,receipt:{...state.receipt}}:state?{...state,targetPublication:{...state.targetPublication}}:{phase:'ready'};},
   publishPaidCustomerFieldDraft,recoverPaidCustomerFieldPublication,
@@ -628,6 +708,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    return result.map(r=>{if(r.tenant_id!==tenantId||!uuid(r.id)||typeof r.name!=='string'||typeof r.currency!=='string'||!Number.isSafeInteger(r.duration_minutes)||Number(r.duration_minutes)<5||!Number.isSafeInteger(r.base_price)||Number(r.base_price)<0||typeof r.active!=='boolean')return fail('Catalog data is invalid.');return r as unknown as ServiceRow});
   },
   async saveDraft(input:DraftInput):Promise<{booking_id:string;reference:string}>{
+   requireNoFieldRollback(config.tenantId);
    if(!uuid(config.tenantId))return fail('A valid business is required before submitting a booking.');
    if(!uuid(input.serviceId)||input.idempotencyKey.length<16||!Number.isFinite(Date.parse(input.slotStart))||Date.parse(input.slotEnd)<=Date.parse(input.slotStart)||!Number.isFinite(Date.parse(input.slotEnd)))return fail('Check the requested service and date.');
    const result=rows(await request('/rest/v1/rpc/create_booking_draft','POST',{p_tenant_id:config.tenantId,p_idempotency_key:input.idempotencyKey,p_selection:{serviceId:input.serviceId,archetype:'simple'},p_slot_start:input.slotStart,p_slot_end:input.slotEnd,p_customer:input.customer}))[0];
@@ -644,7 +725,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    return parseBookingDetail(await request(`/rest/v1/bookings?select=${encodeURIComponent(select)}&tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(bookingId)}&limit=1`,'GET',undefined,true),tenantId,bookingId);
   },
   async drafts(tenantId:string):Promise<DraftRow[]>{return rows(await request(`/rest/v1/bookings?select=id,reference,state,slot_start,created_at&tenant_id=eq.${tenant(tenantId)}&state=eq.draft&order=created_at.desc&limit=100`,'GET',undefined,true)).map(r=>{if(!uuid(r.id)||typeof r.reference!=='string'||r.state!=='draft'||typeof r.slot_start!=='string'||typeof r.created_at!=='string')return fail();return r as unknown as DraftRow})},
-  async setServiceActive(tenantId:string,id:string,active:boolean){requireNoCustomerPublication(tenantId);if(offerLocked())throw new BusinessOnboardingError('not_sent','Offer creation is pending or unverified. Finish the frozen attempt before changing the catalog.');await request(`/rest/v1/services?tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(id)}`,'PATCH',{active},true)},
+  async setServiceActive(tenantId:string,id:string,active:boolean){requireNoFieldRollback(tenantId);requireNoCustomerPublication(tenantId);if(offerLocked())throw new BusinessOnboardingError('not_sent','Offer creation is pending or unverified. Finish the frozen attempt before changing the catalog.');await request(`/rest/v1/services?tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(id)}`,'PATCH',{active},true)},
   async isPlatformAdmin(){if(!userId)return false;return rows(await request(`/rest/v1/platform_admins?select=user_id&user_id=eq.${tenant(userId)}`,'GET',undefined,true)).some(r=>r.user_id===userId)},
   async aggregates(){
    // No generic table accessor: the platform surface is aggregate-only.
