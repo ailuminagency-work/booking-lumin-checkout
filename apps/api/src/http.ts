@@ -12,7 +12,7 @@ import { createServer,type IncomingMessage,type ServerResponse } from "node:http
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
-import { Uuid,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { Uuid,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -177,6 +177,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    }
    if(url.pathname==="/api/roster"||url.pathname.startsWith("/api/roster/")){
     const data=await handleRosterRoute(req,url.pathname,actor,tenant,call,()=>jsonBody(req));send(res,200,{ok:true,data});return;
+   }
+   const paidDraft=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/draft$/);
+   if(paidDraft){
+    if(!options.paidSimplePublication)throw new FlowError("UNSUPPORTED_CONFIG");
+    const flow=Uuid.parse(paidDraft[1]);
+    if(req.method==="GET"){send(res,200,{ok:true,data:await call("get_paid_simple_draft",[actor,tenant,flow])});return;}
+    if(req.method==="POST"){
+     const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError("INVALID_REQUEST");const body=SavePaidSimpleDraft.parse(raw);
+     const data=await call("save_paid_simple_draft",[actor,tenant,flow,body.serviceId,body.expectedRevision,body.name,body.presentation.accentColor,body.presentation.layout]);
+     send(res,200,{ok:true,data});return;
+    }throw new FlowError("NOT_AVAILABLE");
    }
    if(url.pathname==="/api/paid-simple-flows"){
     if(!options.paidSimplePublication||!options.paidPublications)throw new FlowError("UNSUPPORTED_CONFIG");

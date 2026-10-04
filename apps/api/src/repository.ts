@@ -15,7 +15,7 @@ export interface TenantProfile{
 }
 export type TenantProfileReader=(actor:string,tenant:string)=>Promise<TenantProfile|null>;
 export type AvailabilityReader=(actor:string,tenant:string,service:string,from:string,to:string)=>Promise<{serviceId:string;durationMinutes:number;slots:Slot[]}|null>;
-const signatures:Record<FlowRpc,string[]>={publish_paid_simple_flow:["uuid","uuid","uuid","uuid","text","uuid","uuid","jsonb"],owner_roster_snapshot:["uuid","uuid"],roster_provision:["uuid","uuid"],roster_worker_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_member_set:["uuid","uuid","bigint","uuid","uuid","boolean"],roster_eligibility_put:["uuid","uuid","bigint","uuid","uuid","boolean","boolean"],roster_shift_put:["uuid","uuid","bigint","uuid","uuid","text","timestamptz","timestamptz","text","boolean","boolean"],flow_owner_configurable_list:["uuid","uuid"],get_configurable_flow_draft:["uuid","uuid","uuid"],save_configurable_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_configurable_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],flow_owner_services:["uuid","uuid"],flow_owner_list:["uuid","uuid"],flow_owner_draft:["uuid","uuid","uuid"],flow_owner_requests:["uuid","uuid"],save_bound_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_bound_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],issue_flow_session:["uuid","text","text"],submit_flow_request:["text","text","text","jsonb","jsonb","timestamptz"]};
+const signatures:Record<FlowRpc,string[]>={save_paid_simple_draft:["uuid","uuid","uuid","uuid","bigint","text","text","text"],get_paid_simple_draft:["uuid","uuid","uuid"],publish_paid_simple_flow:["uuid","uuid","uuid","uuid","text","uuid","uuid","jsonb"],owner_roster_snapshot:["uuid","uuid"],roster_provision:["uuid","uuid"],roster_worker_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_put:["uuid","uuid","bigint","uuid","text","boolean","boolean"],roster_crew_member_set:["uuid","uuid","bigint","uuid","uuid","boolean"],roster_eligibility_put:["uuid","uuid","bigint","uuid","uuid","boolean","boolean"],roster_shift_put:["uuid","uuid","bigint","uuid","uuid","text","timestamptz","timestamptz","text","boolean","boolean"],flow_owner_configurable_list:["uuid","uuid"],get_configurable_flow_draft:["uuid","uuid","uuid"],save_configurable_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_configurable_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],flow_owner_services:["uuid","uuid"],flow_owner_list:["uuid","uuid"],flow_owner_draft:["uuid","uuid","uuid"],flow_owner_requests:["uuid","uuid"],save_bound_flow_draft:["uuid","uuid","uuid","uuid","bigint","text","jsonb"],publish_bound_flow:["uuid","uuid","uuid","bigint","uuid","uuid","jsonb"],issue_flow_session:["uuid","text","text"],submit_flow_request:["text","text","text","jsonb","jsonb","timestamptz"]};
 function mapped(error:unknown,name:FlowRpc):FlowError{
  const code=(error as {code?:unknown})?.code;
  if(name==="owner_roster_snapshot"){
@@ -42,7 +42,12 @@ export function createFlowRepository(pool:Pool):FlowRepository{return {async cal
   const safe=RpcResults[name].parse(result.rows[0]?.result);
   if(name.startsWith("roster_")&&name!=="roster_provision"&&safe!==Number(params[2])+1)throw new FlowError("INTERNAL_ERROR");
   // Bind fixed RPC receipts to this request before committing side effects.
-  if(name==="publish_paid_simple_flow"){
+  if(name==="save_paid_simple_draft"){
+   const receipt=RpcResults.save_paid_simple_draft.parse(safe);
+   if(receipt.flowId!==params[2]||receipt.revision!==Number(params[4])+1)throw new FlowError("INTERNAL_ERROR");
+  }else if(name==="get_paid_simple_draft"){
+   if(RpcResults.get_paid_simple_draft.parse(safe).flowId!==params[2])throw new FlowError("INTERNAL_ERROR");
+  }else if(name==="publish_paid_simple_flow"){
    const receipt=RpcResults.publish_paid_simple_flow.parse(safe);
    if(receipt.versionId!==params[5]||receipt.installationId!==params[6])throw new FlowError("INTERNAL_ERROR");
   }else if(name==="save_configurable_flow_draft"){

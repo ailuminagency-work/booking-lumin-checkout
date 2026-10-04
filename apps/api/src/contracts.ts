@@ -14,6 +14,10 @@ export const SaveDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.
 export const PublishDraft=z.object({expectedRevision:Version.refine(n=>n>0),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
 export {PaidSimpleRender};
 export const PublishPaidSimple=z.object({serviceId:Uuid,name:z.string().trim().min(1).max(200),allowedOrigins:z.array(Origin).min(1).max(20)}).strict();
+export const PaidSimplePresentation=z.object({accentColor:z.enum(['#4f46e5','#0e7490','#0f766e','#2563eb','#be123c']),layout:z.enum(['stacked','compact'])}).strict();
+export const SavePaidSimpleDraft=z.object({expectedRevision:Version,serviceId:Uuid,name:z.string().trim().min(1).max(200),presentation:PaidSimplePresentation}).strict();
+const PaidSimpleDraftRevision=z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+export const PaidSimpleDraft=SavePaidSimpleDraft.omit({expectedRevision:true}).extend({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict();
 export const RequestInput=z.object({idempotencyKey:z.string().min(16).max(128),answers:z.record(Key,z.union([z.object({quantity:z.number().int().min(0).max(10000)}).strict(),z.object({choiceIds:z.array(Key).max(50).refine(v=>new Set(v).size===v.length)}).strict()])).refine(v=>Object.keys(v).length<=50),customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(s=>new Date(s).toISOString())}).strict();
 const Draft=z.object({flowId:Uuid,name:z.string(),revision:Version,serviceId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
 const Render=z.object({versionId:Uuid,config:BoundConfig,service:ServiceRender}).strict();
@@ -34,6 +38,8 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ save_paid_simple_draft:z.object({flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
+ get_paid_simple_draft:PaidSimpleDraft,
  publish_paid_simple_flow:z.object({versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(3)}).strict(),
  owner_roster_snapshot:z.unknown().transform((v,ctx)=>{try{return parseRosterSnapshot(v);}catch{ctx.addIssue({code:"custom",message:"Invalid roster snapshot"});return z.NEVER;}}),
  roster_provision:RosterVersion,roster_worker_put:RosterVersion,roster_crew_put:RosterVersion,roster_crew_member_set:RosterVersion,roster_eligibility_put:RosterVersion,roster_shift_put:RosterVersion,
