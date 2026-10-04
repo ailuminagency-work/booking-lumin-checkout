@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {Slot} from './availability';
 import {BusinessTimezone} from './business-profile';
 
-const Instant=z.string().datetime().refine(v=>new Date(v).toISOString()===v);
+const Instant=z.string().datetime().refine(v=>Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v);
 const Id=z.string().uuid().regex(/^[0-9a-f-]+$/);
 export const DetailingAvailabilityQuery=z.object({from:Instant,to:Instant}).strict().refine(q=>{
  const range=Date.parse(q.to)-Date.parse(q.from);
@@ -16,5 +16,3 @@ export const DetailingAvailabilityReceipt=z.object({
 }).strict().refine(r=>r.slots.every((s,i)=>Date.parse(s.end)-Date.parse(s.start)===r.durationMinutes*60000&&
  (i===0||Date.parse(r.slots[i-1]!.start)<Date.parse(s.start))));
 export type DetailingAvailabilityReceipt=z.infer<typeof DetailingAvailabilityReceipt>;
-
-
