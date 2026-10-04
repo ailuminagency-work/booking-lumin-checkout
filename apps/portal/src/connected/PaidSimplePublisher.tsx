@@ -1,0 +1,30 @@
+import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {formatMoney} from '@lumin/contracts';
+import {PublicationError,type RuntimeClient,type ServiceRow,type PaidSimplePublicationState} from '@lumin/runtime-client';
+export const STAGING_CHECKOUT_ORIGIN='https://booking-lumin-checkout-staging.netlify.app';
+type PublisherClient=Pick<RuntimeClient,'publishPaidSimple'|'paidSimplePublicationState'>;
+export function PaidSimplePublisher({client,tenantId,role,services,staging,catalogLoading=false}:{client:PublisherClient;tenantId:string;role?:string;services:ServiceRow[];staging:boolean;catalogLoading?:boolean}){
+ const [name,setName]=useState(''),[serviceId,setServiceId]=useState(''),[error,setError]=useState('');
+ const [snapshot,setSnapshot]=useState<{client:PublisherClient;tenantId:string;publication:PaidSimplePublicationState}>(()=>({client,tenantId,publication:client.paidSimplePublicationState(tenantId)}));
+ const generation=useRef(0),inFlight=useRef(false);
+ useEffect(()=>{generation.current++;inFlight.current=false;setName('');setServiceId('');setError('');setSnapshot({client,tenantId,publication:client.paidSimplePublicationState(tenantId)});return()=>{generation.current++;}},[client,tenantId,role,staging]);
+ const publication=snapshot.client===client&&snapshot.tenantId===tenantId?snapshot.publication:{phase:'ready'} as const;
+ const available=services.filter(service=>service.tenant_id===tenantId&&service.active&&Number.isSafeInteger(service.base_price)&&service.base_price>0&&service.duration_minutes>=5&&service.duration_minutes<=1440&&/^[A-Z]{3}$/.test(service.currency));
+ async function publish(event:FormEvent){
+  event.preventDefault();if(!staging||role!=='BUSINESS_OWNER'||publication.phase!=='ready'||catalogLoading||inFlight.current)return;
+  if(!available.some(service=>service.id===serviceId)||!name.trim()||name.trim().length>200){setError('Choose an active simple service and enter a form name.');return;}
+  const at=generation.current,flowId=crypto.randomUUID();inFlight.current=true;setError('');setSnapshot({client,tenantId,publication:{phase:'publishing',flowId}});
+  try{const receipt=await client.publishPaidSimple(tenantId,flowId,{serviceId,name:name.trim(),checkoutOrigin:STAGING_CHECKOUT_ORIGIN});if(at===generation.current)setSnapshot({client,tenantId,publication:{phase:'published',flowId,receipt}});}
+  catch(error){if(at===generation.current){const unknown=!(error instanceof PublicationError)||error.delivery==='unknown';setSnapshot({client,tenantId,publication:unknown?{phase:'unknown',flowId}:{phase:'ready'}});setError(error instanceof PublicationError?error.message: 'Publication status is unverified. The request may have been saved. Recovery and replay are unavailable.');}}
+  finally{if(at===generation.current)inFlight.current=false;}
+ }
+ if(!staging)return <section><h1>Booking Form</h1><p>Paid form publication is available only in the staging test workspace.</p></section>;
+ if(role!=='BUSINESS_OWNER')return <section><h1>Booking Form</h1><p role="status">Only a business owner can publish a staging paid form.</p></section>;
+ const receipt=publication.phase==='published'?publication.receipt:undefined;
+ const hostedUrl=receipt?STAGING_CHECKOUT_ORIGIN+receipt.hostedPath:'';
+ const iframe=receipt?`<iframe src="${hostedUrl}" title="Booking Lumin staging test booking" width="100%" height="720" style="border:0"></iframe>`:'';
+ return <section style={{minWidth:0,overflowWrap:'anywhere'}}><h1>Booking Form</h1><p>Staging paid simple-service form. Payment is simulated; no real money is charged.</p>
+  {receipt?<><h2>Staging form published</h2><dl><dt>Published version</dt><dd>{receipt.versionId}</dd><dt>Installation</dt><dd>{receipt.installationId}</dd><dt>Hosted path</dt><dd>{receipt.hostedPath}</dd></dl><p>This installation points to the immutable published version.</p><p><a href={hostedUrl} target="_blank" rel="noopener noreferrer">Open staging booking form</a></p><label>Website iframe code<textarea readOnly value={iframe} rows={5} style={{width:'100%',maxWidth:'100%',minWidth:0}}/></label><p>Use this code for a staging test installation. The receipt is kept in this signed-in session; reloading cannot recover it here.</p></>:publication.phase==='unknown'?<><p role="alert">Publication status is unverified. The request may have been saved. Publishing again is locked for this business in this session.</p><p>Do not submit another publication to recover this attempt. Reloading cannot retrieve its outcome here; contact the business administrator to verify it.</p><p>Publication attempt: {publication.flowId}</p></>:publication.phase==='publishing'?<><p role="status">Publishing the staging form…</p><button type="button" onClick={()=>setSnapshot({client,tenantId,publication:client.paidSimplePublicationState(tenantId)})}>Check this session's receipt</button><p>This checks the receipt held in this session. It does not repeat publication.</p></>:<form onSubmit={publish}><fieldset disabled={catalogLoading} className="form-stack" style={{minWidth:0}}><label>Simple service<select required value={serviceId} onChange={event=>setServiceId(event.target.value)}><option value="">Choose a service</option>{available.map(service=><option key={service.id} value={service.id}>{service.name} · {formatMoney({amount:service.base_price,currency:service.currency})}</option>)}</select></label><label>Form name<input required maxLength={200} value={name} onChange={event=>setName(event.target.value)}/></label><label>Checkout origin<input readOnly value={STAGING_CHECKOUT_ORIGIN}/></label><p>The server verifies that the service has a positive price and no questions, items, add-ons or resource requirements, then pins its current catalog in a new version.</p>{!catalogLoading&&!available.length&&<p>No active simple services with a positive price are available.</p>}<button disabled={catalogLoading||!available.length}>Publish staging test form</button></fieldset></form>}
+  {error&&publication.phase!=='unknown'&&<p role="alert">{error}</p>}
+ </section>;
+}

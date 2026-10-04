@@ -1,0 +1,30 @@
+import {afterEach,expect,it,vi} from 'vitest';
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {createRuntimeClient,type ServiceRow} from '@lumin/runtime-client';
+import {PaidSimplePublisher,STAGING_CHECKOUT_ORIGIN} from './PaidSimplePublisher';
+const tenant='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222',serviceId='33333333-3333-4333-8333-333333333333';
+const service:ServiceRow={id:serviceId,tenant_id:tenant,name:'Housekeeping',currency:'USD',duration_minutes:60,base_price:12500,active:true};
+const receipt={versionId:other,installationId:serviceId,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+serviceId};
+const json=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
+async function fixture(publish:()=>Promise<Response>){
+ const calls=vi.fn<typeof fetch>(async(input)=>String(input).includes('/auth/v1/token')?json({access_token:'synthetic-owner-private-token'}):String(input).includes('/auth/v1/user')?json({id:other}):publish());
+ const client=createRuntimeClient({url:'https://example.supabase.co',publishableKey:'sb_publishable_synthetic',tenantId:tenant,bookingApiOrigin:'https://api.example.test'},calls);await client.signIn('owner@example.test','fixture');return{client,calls};
+}
+function fill(){fireEvent.change(screen.getByLabelText('Simple service'),{target:{value:serviceId}});fireEvent.change(screen.getByLabelText('Form name'),{target:{value:'Housekeeping booking'}});}
+it('publishes only on an explicit owner action and shows the immutable canonical link and iframe receipt',async()=>{
+ const {client,calls}=await fixture(async()=>json({ok:true,data:receipt}));render(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service,{...service,id:other,active:false},{...service,id:tenant,base_price:0},{...service,id:tenant,tenant_id:other}]} staging/>);
+ expect(calls).toHaveBeenCalledTimes(2);expect(screen.getByLabelText('Checkout origin')).toHaveValue(STAGING_CHECKOUT_ORIGIN);expect(Array.from((screen.getByLabelText('Simple service') as HTMLSelectElement).options)).toHaveLength(2);fill();fireEvent.click(screen.getByText('Publish staging test form'));await screen.findByText('Staging form published');expect(calls).toHaveBeenCalledTimes(3);expect(screen.getByRole('link',{name:'Open staging booking form'})).toHaveAttribute('href',STAGING_CHECKOUT_ORIGIN+receipt.hostedPath);expect(screen.getByLabelText('Website iframe code')).toHaveValue(`<iframe src="${STAGING_CHECKOUT_ORIGIN+receipt.hostedPath}" title="Booking Lumin staging test booking" width="100%" height="720" style="border:0"></iframe>`);expect(screen.getByText(receipt.versionId)).toBeTruthy();expect(screen.queryByText('Publish staging test form')).toBeNull();expect(document.body.textContent).not.toContain('synthetic-owner-private-token');
+});
+it.each([{role:'BUSINESS_STAFF',staging:true},{role:'BUSINESS_OWNER',staging:false}])('blocks staff or nonstaging publication in the UI: %j',async(props)=>{
+ const {client,calls}=await fixture(async()=>{throw Error('unexpected');});render(<PaidSimplePublisher client={client} tenantId={tenant} services={[service]} {...props}/>);expect(screen.queryByText('Publish staging test form')).toBeNull();expect(screen.queryByLabelText('Form name')).toBeNull();expect(calls).toHaveBeenCalledTimes(2);
+});
+it('keeps unknown delivery locked after remount, with no new identity or automatic replay',async()=>{
+ const {client,calls}=await fixture(async()=>{throw Error('private-server-token');});const first=render(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service]} staging/>);fill();fireEvent.click(screen.getByText('Publish staging test form'));await screen.findByText(/Publishing again is locked/);expect(screen.queryByText('Publish staging test form')).toBeNull();const attempt=client.paidSimplePublicationState(tenant);expect(attempt.phase).toBe('unknown');first.unmount();render(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service]} staging/>);await screen.findByText(/Publishing again is locked/);expect(client.paidSimplePublicationState(tenant)).toEqual(attempt);expect(calls).toHaveBeenCalledTimes(3);expect(document.body.textContent).not.toContain('private-server-token');expect(screen.queryByRole('button')).toBeNull();
+});
+it('clears the form and discards a late receipt when the selected business changes',async()=>{
+ let resolve!:(response:Response)=>void;const {client,calls}=await fixture(()=>new Promise<Response>(r=>resolve=r));const {rerender}=render(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service]} staging/>);fill();fireEvent.click(screen.getByText('Publish staging test form'));await waitFor(()=>expect(resolve).toBeTypeOf('function'));rerender(<PaidSimplePublisher client={client} tenantId={other} role="BUSINESS_OWNER" services={[{...service,tenant_id:other}]} staging/>);expect(screen.getByLabelText('Form name')).toHaveValue('');resolve(json({ok:true,data:receipt}));await waitFor(()=>expect(client.paidSimplePublicationState(tenant).phase).toBe('published'));expect(screen.queryByText('Staging form published')).toBeNull();expect(screen.queryByText(receipt.versionId)).toBeNull();expect(calls).toHaveBeenCalledTimes(3);
+});
+it('shows definitive rejection without fabricating publication, and preserves unknown server outcomes',async()=>{
+ const {client}=await fixture(async()=>json({ok:false,code:'UNSUPPORTED_CONFIG'},422));render(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service]} staging/>);fill();fireEvent.click(screen.getByText('Publish staging test form'));await screen.findByText('This service does not support the staging paid form.');expect(screen.queryByText('Staging form published')).toBeNull();expect(screen.getByText('Publish staging test form')).toBeEnabled();
+});

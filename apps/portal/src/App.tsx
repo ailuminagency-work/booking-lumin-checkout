@@ -50,7 +50,8 @@ export function PortalApplication() {
       url: runtime.supabaseUrl,
       publishableKey: runtime.supabasePublishableKey,
       tenantId: runtime.tenantId,
-    }} /> : <PortalProvider><Layout><PortalRoutes mode="demo" /></Layout></PortalProvider>}</>;
+      bookingApiOrigin: runtime.flowApiOrigin,
+    }} staging={runtime.environment === 'staging'} /> : <PortalProvider><Layout><PortalRoutes mode="demo" /></Layout></PortalProvider>}</>;
 }
 
 export function App() {

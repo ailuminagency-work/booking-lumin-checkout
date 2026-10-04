@@ -1,16 +1,18 @@
-import {useMemo,useRef,useState,type FormEvent} from 'react';
+import {useEffect,useMemo,useRef,useState,type FormEvent} from 'react';
 import {createRuntimeClient,type RuntimeConfig,type Membership,type BookingRow,type ServiceRow} from '@lumin/runtime-client';
 import { PortalShell } from "../components/Layout";
 import { PortalRoutes } from "../components/PortalRoutes";
 import {Link} from 'react-router-dom';
 import {ConnectedBookingDetail} from './ConnectedBookingDetail';
-export function ConnectedPortal({config}:{config:RuntimeConfig}){
- const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId]);
+import {PaidSimplePublisher} from './PaidSimplePublisher';
+export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
+ const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId,config.bookingApiOrigin]);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
- const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0);
+ const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0);
+ useEffect(()=>{generation.current++;sessionGeneration.current++;setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false);return()=>{generation.current++;sessionGeneration.current++;client?.signOut();}},[client]);
  async function load(id:string){if(!client)return;const current=++generation.current;setBusy(true);setError('');setDrafts([]);setServices([]);try{const [d,s]=await Promise.all([client.bookings(id),client.services(id,true)]);if(current===generation.current){setDrafts(d);setServices(s)}}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to refresh.')}finally{if(current===generation.current)setBusy(false)}}
- async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;setBusy(true);setError('');try{await client.signIn(email,password);const own=await client.memberships();setMembers(own);setSignedIn(true);const first=own[0]?.tenant_id??'';setTenant(first);if(first)await load(first)}catch(e){client.signOut();setError(e instanceof Error?e.message:'Unable to sign in.')}finally{setPassword('');setBusy(false)}}
- function logout(){generation.current++;client?.signOut();setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false)}
+ async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;const at=++sessionGeneration.current;setBusy(true);setError('');try{await client.signIn(email,password);const own=await client.memberships();if(at!==sessionGeneration.current)return;setMembers(own);setSignedIn(true);const first=own[0]?.tenant_id??'';setTenant(first);if(first)await load(first)}catch(e){if(at===sessionGeneration.current){client.signOut();setError(e instanceof Error?e.message:'Unable to sign in.')}}finally{if(at===sessionGeneration.current){setPassword('');setBusy(false)}}}
+ function logout(){generation.current++;sessionGeneration.current++;client?.signOut();setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false)}
  async function toggle(s:ServiceRow){if(!client||busy)return;const current=generation.current;setBusy(true);setError('');try{await client.setServiceActive(tenant,s.id,!s.active);if(current===generation.current)await load(tenant)}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to update service.')}finally{if(current===generation.current)setBusy(false)}}
  const role = members.find(member => member.tenant_id === tenant)?.role;
  const bookingLabels:Record<string,string>={draft:'Unconfirmed request',pending_payment:'Awaiting payment',confirmed:'Confirmed',completed:'Completed',cancelled:'Cancelled',refunded:'Refunded',failed:'Failed'};
@@ -39,7 +41,7 @@ export function ConnectedPortal({config}:{config:RuntimeConfig}){
     {members.length > 0 && <><label>Business<select disabled={busy} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id} · {m.role}</option>)}
     </select></label><button disabled={busy} onClick={() => void load(tenant)}>Refresh</button></>}
-   </div>{members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} />}</>}
+   </div>{members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} catalogLoading={busy}/>:undefined} />}</>}
   {error && <p role="alert">{error}</p>}
  </PortalShell>;
 }
