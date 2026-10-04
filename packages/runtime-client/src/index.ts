@@ -1,10 +1,13 @@
-import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
+import {BusinessProfile,CreateBusiness,CreateSimpleOffer,SimpleOfferReceipt,CurrencyCode} from '@lumin/contracts';
 export type {BusinessProfile,CreateBusiness,BusinessType} from '@lumin/contracts';
 /** Browser-only public Supabase interface. No provider credentials or service role. */
 import {parseBookingDetail,type ConnectedBookingDetail} from './bookingDetail';
 export type {ConnectedBookingDetail} from './bookingDetail';
 export class BusinessOnboardingError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unavailable'|'unknown',message:string){super(message);}}
 export type BusinessCreationState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateBusiness}|{phase:'created';attempt:CreateBusiness;profile:BusinessProfile}|{phase:'unavailable'};
+export type SimpleOfferState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateSimpleOffer}|{phase:'created';attempt:CreateSimpleOffer;receipt:SimpleOfferReceipt};
+export interface SimpleOfferContext {readonly tenantId:string;readonly currency:string}
+export type {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
 export type BusinessProfileRead={status:'initialized';profile:BusinessProfile}|{status:'uninitialized';tenantId:string};
 export interface RuntimeConfig { url: string; publishableKey: string; tenantId: string; allowMembershipDiscovery?: boolean; bookingApiOrigin?: string }
 export interface PaidSimplePublicationReceipt { readonly versionId:string; readonly installationId:string; readonly renderSchemaVersion:3; readonly hostedPath:string }
@@ -44,6 +47,9 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const bookingApiOrigin=config.bookingApiOrigin;
  if(bookingApiOrigin!==undefined&&!httpsOrigin(bookingApiOrigin))return fail('Connected mode configuration is missing or invalid.');
  let token:string|undefined;let generation=0;let userId:string|undefined;let businessCreation:BusinessCreationState={phase:'ready'};
+ const offers=new Map<string,Exclude<SimpleOfferState,{phase:'ready'}>>();
+ const offerAttempts=new Map<string,{actor:string;tenantId:string;body:string}>();
+ const offerLocked=()=>[...offers.values()].some(state=>state.phase==='checking'||state.phase==='creating'||state.phase==='unknown');
  const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
@@ -52,7 +58,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rollbackReads=new Set<string>();
  const histories=new Map<string,PaidSimpleVersionHistory>();
  const rollbackLocked=(tenantId:string)=>{const state=rollbacks.get(tenantId.toLowerCase());return state?.phase==='rolling_back'||state?.phase==='unknown';};
- const requireNoRollback=(tenantId:string)=>{if(businessCreationLocked())throw new PublicationError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing publications.');if(rollbackLocked(tenantId))throw new PublicationError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing drafts or publications.');};
+ const requireNoRollback=(tenantId:string)=>{if(offerLocked())throw new PublicationError('not_sent','Offer creation is pending or unverified. Finish the frozen offer attempt first.');if(businessCreationLocked())throw new PublicationError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing publications.');if(rollbackLocked(tenantId))throw new PublicationError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing drafts or publications.');};
  const savedDraftPublications=new Map<string,Exclude<PaidSimpleSavedDraftPublicationState,{phase:'ready'}>>();
  const ownerDrafts=new Map<string,Exclude<PaidSimpleDraftState,{phase:'ready'}>>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
@@ -61,7 +67,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -70,14 +76,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};
+  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
   try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'}}
+ function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();ownerDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();businessCreation={phase:'ready'};offers.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
  const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
@@ -234,7 +240,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  async function loadPaidSimpleDraft(tenantId:string,flowId:string):Promise<PaidSimpleOwnerDraft>{
   draftAuthority(tenantId,flowId);
-  if(businessCreationLocked())throw new PaidSimpleDraftError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing draft fields.');
+  if(offerLocked())throw new PaidSimpleDraftError('not_sent','Offer creation is pending or unverified. Finish the frozen attempt first.');if(businessCreationLocked())throw new PaidSimpleDraftError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing draft fields.');
   if(rollbackLocked(tenantId))throw new PaidSimpleDraftError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing draft fields.');
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
   const previous=ownerDrafts.get(tenantId);
@@ -254,7 +260,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  async function savePaidSimpleDraft(tenantId:string,flowId:string,input:{serviceId:string;name:string;presentation:PaidSimplePresentation;expectedRevision:number}):Promise<PaidSimpleDraftReceipt>{
   draftAuthority(tenantId,flowId);
-  if(businessCreationLocked())throw new PaidSimpleDraftError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing draft fields.');
+  if(offerLocked())throw new PaidSimpleDraftError('not_sent','Offer creation is pending or unverified. Finish the frozen attempt first.');if(businessCreationLocked())throw new PaidSimpleDraftError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing draft fields.');
   if(rollbackLocked(tenantId))throw new PaidSimpleDraftError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing draft fields.');
   const publicationAttempt=savedDraftPublications.get(tenantId);if(publicationAttempt&&publicationAttempt.phase!=='published')throw new PaidSimpleDraftError('not_sent','Saved-draft publication status is unverified. Verify that same publication before changing or loading draft fields.');
   if(!exact(input,['serviceId','name','presentation','expectedRevision'])||!uuid(input.serviceId)||typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>200||!presentation(input.presentation)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0||input.expectedRevision>=Number.MAX_SAFE_INTEGER)throw new PaidSimpleDraftError('not_sent','Check the draft service, name, design choices and expected revision.');
@@ -359,6 +365,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(prior.phase==='created')throw new BusinessOnboardingError('not_sent','This session already has a created business. Open its verified owner membership.');
   if(prior.phase==='unavailable')throw new BusinessOnboardingError('unavailable','Business onboarding is unavailable. The server capability must be enabled in staging.');
   if(prior.phase==='unknown'&&creationBody(prior.attempt)!==creationBody(body))throw new BusinessOnboardingError('not_sent','The uncertain attempt is locked to its original key and all original business details.');
+  if(offerLocked())throw new BusinessOnboardingError('not_sent','Offer creation is pending or unverified. Finish the frozen offer attempt first.');
   if([...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys()].some(id=>writerUncertain(id.toLowerCase())))throw new BusinessOnboardingError('not_sent','Verify pending or uncertain drafts, publications and rollbacks before creating a different business.');
   const at=generation,actor=userId,credential=token;businessAttempts.set(body.idempotencyKey,{actor,body:creationBody(body)});
   businessCreation={phase:'checking',attempt:body};
@@ -382,6 +389,44 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }
   businessCreation={phase:'unknown',attempt:body};throw new BusinessOnboardingError('unknown','Business creation remains unverified. This response does not prove an earlier attempt failed; retry only the same frozen key and details.');
  }
+ const offerBody=(input:CreateSimpleOffer)=>JSON.stringify({name:input.name,description:input.description,price:{amount:input.price.amount,currency:input.price.currency},durationMinutes:input.durationMinutes,idempotencyKey:input.idempotencyKey});
+ async function simpleOfferContext(tenantId:string):Promise<SimpleOfferContext>{
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose the created business.');
+  tenantId=tenantId.toLowerCase();const at=generation,actor=userId,credential=token;
+  if(businessCreation.phase!=='created'||businessCreation.profile.tenantId!==tenantId||businessCreation.profile.businessType!=='HOUSEKEEPING')throw new BusinessOnboardingError('not_sent','Offer setup is available only for this session newly created housekeeping business.');
+  const memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));
+  if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string'))throw new BusinessOnboardingError('not_sent','Owner membership data is invalid.');
+  if(!memberships.some(member=>String(member.tenant_id).toLowerCase()===tenantId&&member.role==='BUSINESS_OWNER'))throw new BusinessOnboardingError('not_sent','Fresh owner membership for this exact business is required.');
+  const business=await businessProfile(tenantId);
+  if(business.status!=='initialized'||business.profile.businessType!=='HOUSEKEEPING')throw new BusinessOnboardingError('not_sent','The current housekeeping profile could not be verified.');
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/profile?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new BusinessOnboardingError('not_sent','Business currency remains unverified.');}
+  if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The signed-in account changed. Check the business again.');
+  if(response.status===401){signOut();throw new BusinessOnboardingError('not_sent','Please sign in again.');}
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined,profile=exact(data,['schemaVersion','profile'])&&data.schemaVersion===1?data.profile:undefined;
+  if(response.status!==200||!exact(profile,['id','name','slug','timezone','currency','status'])||typeof profile.id!=='string'||profile.id.toLowerCase()!==tenantId||typeof profile.name!=='string'||!profile.name.trim()||typeof profile.slug!=='string'||!profile.slug||typeof profile.timezone!=='string'||!profile.timezone||profile.status!=='active'||!CurrencyCode.safeParse(profile.currency).success)throw new BusinessOnboardingError('not_sent','The active business currency profile could not be verified.');
+  return Object.freeze({tenantId,currency:profile.currency as string});
+ }
+ async function createSimpleOffer(tenantId:string,input:CreateSimpleOffer):Promise<SimpleOfferReceipt>{
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose the created business.');
+  tenantId=tenantId.toLowerCase();const parsed=CreateSimpleOffer.safeParse(input);if(!parsed.success)throw new BusinessOnboardingError('not_sent','Use a positive safe integer price in minor units and a duration from 5 to 1440 minutes.');
+  const body=Object.freeze({...parsed.data,price:Object.freeze({...parsed.data.price})}),serialized=offerBody(body),actor=userId,at=generation,credential=token,prior=offers.get(tenantId),binding=offerAttempts.get(body.idempotencyKey);
+  if(binding&&(binding.actor!==actor||binding.tenantId!==tenantId||binding.body!==serialized))throw new BusinessOnboardingError('not_sent','The offer key is bound to its original account, business and reviewed details.');
+  if(prior&&prior.phase!=='unknown')throw new BusinessOnboardingError('not_sent','This session offer is already pending or created.');
+  if(prior?.phase==='unknown'&&offerBody(prior.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','The uncertain offer is locked to its unchanged details and original key.');
+  if(businessCreationLocked()||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys()].some(id=>writerUncertain(id.toLowerCase()))||[...offers.entries()].some(([id,state])=>id!==tenantId&&state.phase!=='created'))throw new BusinessOnboardingError('not_sent','Resolve pending or uncertain business, draft, publication or rollback actions first.');
+  offerAttempts.set(body.idempotencyKey,{actor,tenantId,body:serialized});offers.set(tenantId,{phase:'checking',attempt:body});
+  try{const context=await simpleOfferContext(tenantId);if(context.currency!==body.price.currency)throw new BusinessOnboardingError('not_sent','The reviewed currency no longer matches the current business.');if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The account changed before sending.');}catch(error){if(at===generation){if(prior)offers.set(tenantId,prior);else offers.delete(tenantId);}throw error;}
+  offers.set(tenantId,{phase:'creating',attempt:body});let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/catalog/simple-offers?tenantId='+encodeURIComponent(tenantId),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:serialized});value=await response.json();}catch{if(at===generation)offers.set(tenantId,{phase:'unknown',attempt:body});throw new BusinessOnboardingError('unknown','Offer creation is unverified. Retry only the same account, business, key and reviewed details.');}
+  if(at!==generation||actor!==userId)throw new BusinessOnboardingError('unknown','The account changed. This offer outcome cannot be verified here.');
+  const result=response.status===200&&exact(value,['ok','data'])&&value.ok===true?SimpleOfferReceipt.safeParse(value.data):undefined;
+  if(result?.success&&result.data.tenantId===tenantId&&result.data.service.name===body.name&&result.data.service.description===body.description&&result.data.service.price.amount===body.price.amount&&result.data.service.price.currency===body.price.currency&&result.data.service.durationMinutes===body.durationMinutes){const receipt=Object.freeze({...result.data,service:Object.freeze({...result.data.service,price:Object.freeze({...result.data.service.price})})});offers.set(tenantId,{phase:'created',attempt:body,receipt});return receipt;}
+  if(response.status===401&&exact(value,['ok','code'])&&value.code==='UNAUTHENTICATED'){signOut();throw new BusinessOnboardingError('unknown','Sign in again with the same account to check the frozen attempt.');}
+  const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+  if(!prior&&exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&response.status===codes[value.code]){offers.delete(tenantId);throw new BusinessOnboardingError(value.code==='UNSUPPORTED_CONFIG'?'unavailable':'rejected',value.code==='UNSUPPORTED_CONFIG'?'Offer authoring is unavailable. The server staging capability is disabled.':'Offer creation was rejected. Check current owner access and reviewed details.');}
+  offers.set(tenantId,{phase:'unknown',attempt:body});throw new BusinessOnboardingError('unknown','Offer creation remains unverified. This response does not prove an earlier attempt failed. Keep the original frozen details and key.');
+ }
  async function businessProfile(tenantId:string):Promise<BusinessProfileRead>{
   if(!token||!userId||!bookingApiOrigin)throw new BusinessOnboardingError('not_sent','Sign in with the configured business profile service.');
   if(!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Choose a valid business.');const at=generation,credential=token;let response:Response,value:unknown;
@@ -400,6 +445,9 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
 
  return {
   createBusiness,businessProfile,
+  simpleOfferContext,createSimpleOffer,
+  simpleOfferState(tenantId:string):SimpleOfferState {const state=offers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as SimpleOfferState:{phase:'ready'};},
+  simpleOfferLocked:offerLocked,
   businessCreationState():BusinessCreationState{return businessCreation.phase==='created'?{...businessCreation,attempt:{...businessCreation.attempt},profile:{...businessCreation.profile}}:businessCreation.phase==='ready'||businessCreation.phase==='unavailable'?{...businessCreation}:{...businessCreation,attempt:{...businessCreation.attempt}};},
   signIn,signOut,
   rollbackPaidSimplePublication,reconcilePaidSimpleRollback,
@@ -429,7 +477,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    return parseBookingDetail(await request(`/rest/v1/bookings?select=${encodeURIComponent(select)}&tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(bookingId)}&limit=1`,'GET',undefined,true),tenantId,bookingId);
   },
   async drafts(tenantId:string):Promise<DraftRow[]>{return rows(await request(`/rest/v1/bookings?select=id,reference,state,slot_start,created_at&tenant_id=eq.${tenant(tenantId)}&state=eq.draft&order=created_at.desc&limit=100`,'GET',undefined,true)).map(r=>{if(!uuid(r.id)||typeof r.reference!=='string'||r.state!=='draft'||typeof r.slot_start!=='string'||typeof r.created_at!=='string')return fail();return r as unknown as DraftRow})},
-  async setServiceActive(tenantId:string,id:string,active:boolean){await request(`/rest/v1/services?tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(id)}`,'PATCH',{active},true)},
+  async setServiceActive(tenantId:string,id:string,active:boolean){if(offerLocked())throw new BusinessOnboardingError('not_sent','Offer creation is pending or unverified. Finish the frozen attempt before changing the catalog.');await request(`/rest/v1/services?tenant_id=eq.${tenant(tenantId)}&id=eq.${tenant(id)}`,'PATCH',{active},true)},
   async isPlatformAdmin(){if(!userId)return false;return rows(await request(`/rest/v1/platform_admins?select=user_id&user_id=eq.${tenant(userId)}`,'GET',undefined,true)).some(r=>r.user_id===userId)},
   async aggregates(){
    // No generic table accessor: the platform surface is aggregate-only.
