@@ -980,6 +980,8 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
+  /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
+  authContextRevision():number{return generation;},
   createBusiness,businessProfile,initializeBusinessProfile,businessProfileInitializationState,
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerBusinessContext,simpleOfferContext,createSimpleOffer,createOfferScheduling,detailingOfferContext,createDetailingOffer,readDetailingOffer,
