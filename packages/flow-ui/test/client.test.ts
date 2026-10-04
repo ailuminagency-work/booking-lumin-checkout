@@ -47,3 +47,13 @@ it('invalidates availability responses after JSON resolves',async()=>{
  let resolve!:(value:unknown)=>void;const body=new Promise(r=>resolve=r);const client=createFlowClient('https://api.example',false,async()=>({ok:true,json:()=>body} as Response));
  const request=client.availability('t'.repeat(43),'2030-01-01T00:00:00Z','2030-01-02T00:00:00Z');client.invalidate();resolve({ok:true,data:{schemaVersion:1,serviceId:id,durationMinutes:30,slots:[]}});await expect(request).rejects.toMatchObject({code:'UNAUTHENTICATED'});
 });
+it('accepts actual core full-day output, retains cross-midnight ends and filters next-midnight starts',async()=>{
+ const {createAvailabilityEngine}=await import('@lumin/core');
+ const from='2030-01-01T00:00:00.000Z',to='2030-01-02T00:00:00.000Z';
+ const slots=createAvailabilityEngine().getSlots({tenantTimezone:'America/Los_Angeles',serviceId:id,durationMinutes:30,policy:{leadTimeMinutes:0,horizonDays:60,slotIntervalMinutes:15},rules:Array.from({length:7},(_,weekday)=>({id,tenantId:id,serviceId:id,weekday,startMinute:0,endMinute:1440,capacity:1})),overrides:[],existing:[],now:'2029-12-31T00:00:00.000Z',from,to});
+ expect(slots.some(slot=>slot.start===to)).toBe(true);
+ const crossMidnight=slots.find(slot=>slot.start<to&&slot.end>to);expect(crossMidnight).toBeDefined();
+ const client=createFlowClient('https://api.example',false,async()=>new Response(JSON.stringify({ok:true,data:{schemaVersion:1,serviceId:id,durationMinutes:30,slots}})));
+ const result=await client.availability('t'.repeat(43),from,to);
+ expect(result.slots).toEqual(slots.filter(slot=>slot.start>=from&&slot.start<to));expect(result.slots).toContainEqual(crossMidnight);expect(result.slots.some(slot=>slot.start===to)).toBe(false);
+});

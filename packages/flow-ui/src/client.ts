@@ -23,9 +23,12 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   if(!/^[A-Za-z0-9_-]{43}$/.test(token)||!instant.safeParse(from).success||!instant.safeParse(to).success||!Number.isFinite(end-start)||end<=start||end-start>7*86400000)throw new FlowError('INVALID_REQUEST');
   const schema=z.object({schemaVersion:z.literal(1),serviceId:z.string().uuid(),durationMinutes:z.number().int().min(5).max(1440),slots:z.array(z.object({start:instant,end:instant,remainingCapacity:z.number().int().positive()}).strict()).max(10080)}).strict().superRefine((value,ctx)=>{
    const seen=new Set<string>();
-   for(const slot of value.slots){const a=Date.parse(slot.start),b=Date.parse(slot.end);if(!Number.isFinite(a)||!Number.isFinite(b)||a<start||a>=end||b>end||b-a!==value.durationMinutes*60000||seen.has(new Date(a).toISOString()))ctx.addIssue({code:'custom',message:'Invalid availability'});else seen.add(new Date(a).toISOString());}
+   for(const slot of value.slots){const a=Date.parse(slot.start),b=Date.parse(slot.end);if(!Number.isFinite(a)||!Number.isFinite(b)||a<start||a>end||b-a!==value.durationMinutes*60000||seen.has(new Date(a).toISOString()))ctx.addIssue({code:'custom',message:'Invalid availability'});else seen.add(new Date(a).toISOString());}
   });
-  return call('/api/flow-sessions/availability?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),schema,token);
+  const value=await call('/api/flow-sessions/availability?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to),schema,token);
+  // The core includes a start exactly at `to`; a selected day is half-open.
+  // Slots starting within the day may legitimately finish after midnight.
+  return {...value,slots:value.slots.filter(slot=>Date.parse(slot.start)<end)};
  }
  return {invalidate(){generation++;},
  availability,
