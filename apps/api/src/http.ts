@@ -1,3 +1,4 @@
+import {PaidVersionHistory,type PaidVersionHistoryReader} from './paid-version-history-reader';
 import {type PaidDraftListReader} from './paid-draft-list-reader';
 import {PaidPublicationList,PaidPublicationReceipt,type PaidPublicationReader,type PaidPublicationListReader} from './paid-publication-reader';
 import {type CustomerConfirmation,type CustomerMockPayment} from './customer-payment';
@@ -29,6 +30,7 @@ export interface FlowHttpOptions{
  paidPublication?:PaidPublicationReader;
  paidPublications?:PaidPublicationListReader;
  paidDrafts?:PaidDraftListReader;
+ paidVersionHistory?:PaidVersionHistoryReader;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -205,6 +207,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!existing)throw new FlowError("FORBIDDEN");
     const result=PaidPublicationList.safeParse(existing);if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const versionHistory=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/versions$/);
+   if(versionHistory){
+    if(!options.paidSimplePublication||!options.paidVersionHistory)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(versionHistory[1]);const parsed=PaidVersionHistory.safeParse(await options.paidVersionHistory(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
    }
    const recovery=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/publication$/);
    if(recovery){

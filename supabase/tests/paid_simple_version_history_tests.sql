@@ -1,0 +1,35 @@
+\set ON_ERROR_STOP on
+begin;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+insert into auth.users(id,email) values('43000000-0000-4000-8000-000000000001','history-sql@example.test');
+insert into public.tenants(id,name,slug,timezone,currency) values('43000000-0000-4000-8000-000000000002','History','history-sql','UTC','USD');
+insert into public.tenant_members(tenant_id,user_id,role) values('43000000-0000-4000-8000-000000000002','43000000-0000-4000-8000-000000000001','BUSINESS_OWNER');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('43000000-0000-4000-8000-000000000003','43000000-0000-4000-8000-000000000002','Housekeeping','simple','USD',12500,60);
+select public.save_paid_simple_draft('43000000-0000-4000-8000-000000000001','43000000-0000-4000-8000-000000000002','43000000-0000-4000-8000-000000000004','43000000-0000-4000-8000-000000000003',0,'Pinned SQL','#4f46e5','stacked');
+select public.publish_paid_simple_draft('43000000-0000-4000-8000-000000000001','43000000-0000-4000-8000-000000000002','43000000-0000-4000-8000-000000000004',1,'43000000-0000-4000-8000-000000000005','43000000-0000-4000-8000-000000000006','["https://checkout.example.test"]');
+create function pg_temp.history(a uuid default '43000000-0000-4000-8000-000000000001',t uuid default '43000000-0000-4000-8000-000000000002',f uuid default '43000000-0000-4000-8000-000000000004') returns jsonb language sql as $$select public.owner_paid_simple_version_history(a,t,f)$$;
+select pg_temp.assert((select prosecdef and proconfig=array['search_path=pg_catalog'] from pg_proc where oid='public.owner_paid_simple_version_history(uuid,uuid,uuid)'::regprocedure),'fixed definer search path');
+select pg_temp.assert(not has_table_privilege('service_role','public.bound_flow_versions','SELECT'),'private binding table stays closed');
+select pg_temp.assert((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.bound_flow_versions'::regclass),'private binding forces RLS');
+select pg_temp.assert(not has_function_privilege('anon','public.owner_paid_simple_version_history(uuid,uuid,uuid)','EXECUTE') and not has_function_privilege('authenticated','public.owner_paid_simple_version_history(uuid,uuid,uuid)','EXECUTE'),'browser cannot call history RPC');
+set local role anon;
+select pg_temp.reject($q$select pg_temp.history()$q$,'42501');
+reset role;
+set local role authenticated;
+select pg_temp.reject($q$select pg_temp.history()$q$,'42501');
+reset role;
+set local role service_role;
+select pg_temp.assert(pg_temp.history()->>'currentVersionId'='43000000-0000-4000-8000-000000000005','current binding');
+select pg_temp.assert(pg_temp.history()#>>'{versions,0,boundSnapshot,price,amount}'='12500','private immutable service returned for API comparison');
+select pg_temp.reject($q$select pg_temp.history(a=>'43000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.history(t=>'43000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.history(f=>'43000000-0000-4000-8000-000000000099')$q$,'P0002');
+reset role;
+update public.tenant_members set role='BUSINESS_STAFF' where tenant_id='43000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.history()$q$,'42501');
+update public.tenant_members set role='BUSINESS_OWNER' where tenant_id='43000000-0000-4000-8000-000000000002';update public.tenants set status='inactive' where id='43000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.history()$q$,'42501');
+update public.tenants set status='active' where id='43000000-0000-4000-8000-000000000002';delete from public.tenant_members where tenant_id='43000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.history()$q$,'42501');
+select pg_temp.assert((select count(*)=1 and min(source_revision)=1 from public.flow_versions where flow_id='43000000-0000-4000-8000-000000000004'),'read calls preserve immutable versions');
+select pg_temp.assert((select count(*)=0 from public.bookings where tenant_id='43000000-0000-4000-8000-000000000002') and (select count(*)=0 from public.payments where tenant_id='43000000-0000-4000-8000-000000000002'),'no financial writes');
+rollback;
+\echo PASS owner version history fixed-read RPC ACL/tenant/membership/immutable binding attacks
