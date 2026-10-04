@@ -730,6 +730,7 @@ a:focus-visible {
 .paid-form-layout-compact fieldset label { min-width: 0; }
 
 /* The hosted booking route uses the same usable touch targets as the main checkout. */
+.hosted-flow-card h1 { font-size: clamp(1.375rem, 7vw, 2rem); line-height: 1.2; }
 .hosted-flow-card fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 16px; }
 .hosted-flow-card.paid-form-layout-compact fieldset { gap: 8px; }
 .hosted-flow-card label { display: grid; gap: 6px; min-width: 0; }
