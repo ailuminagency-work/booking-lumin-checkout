@@ -63,3 +63,4 @@ export * from './detailing-catalog';
 export * from "./detailing-scheduling";
 
 export * from "./detailing-publication";
+export * from './detailing-availability';
