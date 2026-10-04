@@ -97,7 +97,10 @@ jobs:
             paid_install_health_tests \
             customer_field_draft_tests \
             paid_customer_field_publication_tests \
-            customer_field_version_history_tests; do
+            customer_field_version_history_tests \
+            customer_field_publication_rollback_tests \
+            customer_field_install_health_tests \
+            customer_field_rollback_recovery_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
@@ -297,3 +300,36 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/customer-field-version-history.integration.ts
+      - name: V5 lineage rollback CAS and pinned capability isolation
+        env:
+          CUSTOMER_FIELD_ROLLBACK_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_field_rollback_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_field_rollback_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-rollback.integration.ts
+      - name: V5 installation evidence and immutable financial provenance
+        env:
+          CUSTOMER_FIELD_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_health_v5_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_health_v5_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-install-health.integration.ts
+      - name: Lost rollback response recovery without a writer retry
+        env:
+          CUSTOMER_FIELD_RECOVERY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_field_recovery_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_field_recovery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-rollback-receipt.integration.ts
