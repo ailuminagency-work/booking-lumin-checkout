@@ -1,3 +1,4 @@
+import {CustomerFieldRollbackInput,CustomerFieldRollbackReceipt,type CustomerFieldRollback} from './customer-field-rollback';
 import {CustomerFieldVersionHistory,type CustomerFieldVersionHistoryReader} from './customer-field-version-history';
 import {PaidInstallHealth} from '@lumin/contracts';
 import {CustomerFieldPublicationReceipt,type CustomerFieldPublicationReader} from './customer-field-publication-reader';
@@ -53,6 +54,7 @@ export interface FlowHttpOptions{
  paidCustomerFieldVersionHistory?:CustomerFieldVersionHistoryReader;
  paidInstallHealth?:PaidInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
+ paidCustomerFieldRollback?:CustomerFieldRollback;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -269,6 +271,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!existing)throw new FlowError("FORBIDDEN");
     const result=PaidPublicationList.safeParse(existing);if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const customerFieldRollback=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/rollback$/);
+   if(customerFieldRollback){
+    if(!options.paidSimplePublication||!options.paidCustomerFieldRollback)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(customerFieldRollback[1]).toLowerCase(),body=CustomerFieldRollbackInput.parse(await jsonBody(req));
+    const parsed=CustomerFieldRollbackReceipt.safeParse(await options.paidCustomerFieldRollback(actor,tenant,flow,body));
+    if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
    }
    const rollback=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/rollback$/);
    if(rollback){
