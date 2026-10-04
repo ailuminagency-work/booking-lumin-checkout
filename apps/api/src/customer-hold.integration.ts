@@ -3,7 +3,12 @@ import {readFile} from 'node:fs/promises';
 import {Pool} from 'pg';
 import {createCustomerHoldWriter} from './customer-hold';
 import {createReservationWriter} from './reservation';
-assert.equal(process.env.CUSTOMER_HOLD_LOCAL_TEST,'1');assert.equal(process.env.PGHOST,'127.0.0.1');assert.equal(process.env.PGPORT,'55436');assert.match(process.env.PGDATABASE??'',/^lumin_phase_a_hold_/);
+assert.equal(process.env.CUSTOMER_HOLD_LOCAL_TEST,'1');
+if(process.env.CI==='true'){
+ assert.equal(process.env.PGHOST,'localhost');assert.equal(process.env.PGPORT,'5432');assert.equal(process.env.PGDATABASE,'lumin_phase_a_hold_ci');
+}else{
+ assert.equal(process.env.PGHOST,'127.0.0.1');assert.equal(process.env.PGPORT,'55436');assert.match(process.env.PGDATABASE??'',/^lumin_phase_a_hold_/);
+}
 for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGOPTIONS'])assert.ok(!process.env[key]);
 const pool=new Pool({max:8});const hash='a'.repeat(64),origin='https://checkout.example.test',tenant='34000000-0000-4000-8000-000000000002',service='34000000-0000-4000-8000-000000000003';
 try{
