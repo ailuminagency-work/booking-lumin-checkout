@@ -1,3 +1,6 @@
+import {ConditionalCustomerFieldVersionHistory,type ConditionalCustomerFieldVersionHistoryReader} from './conditional-customer-field-version-history';
+import {ConditionalCustomerFieldRollbackInput,ConditionalCustomerFieldRollbackReceipt,type ConditionalCustomerFieldRollback} from './conditional-customer-field-rollback';
+import {ConditionalCustomerFieldRollbackReadReceipt,type ConditionalCustomerFieldRollbackReceiptReader} from './conditional-customer-field-rollback-receipt';
 import {ConditionalCustomerFieldInstallHealth,type ConditionalCustomerFieldInstallHealthReader} from './conditional-customer-field-install-health';
 import {ConditionalCustomerFieldPublicationReceipt,type ConditionalCustomerFieldPublicationReader} from './conditional-customer-field-publication-reader';
 import type {BusinessProfileInitializer} from './existing-business-profile';
@@ -64,12 +67,15 @@ export interface FlowHttpOptions{
  paidDrafts?:PaidDraftListReader;
  paidVersionHistory?:PaidVersionHistoryReader;
  paidCustomerFieldVersionHistory?:CustomerFieldVersionHistoryReader;
+ paidConditionalCustomerFieldVersionHistory?:ConditionalCustomerFieldVersionHistoryReader;
  paidInstallHealth?:PaidInstallHealthReader;
  customerFieldInstallHealth?:CustomerFieldInstallHealthReader;
  conditionalCustomerFieldInstallHealth?:ConditionalCustomerFieldInstallHealthReader;
  paidRollback?:PaidPublicationRollback;
  paidCustomerFieldRollback?:CustomerFieldRollback;
+ paidConditionalCustomerFieldRollback?:ConditionalCustomerFieldRollback;
  paidCustomerFieldRollbackReceipt?:CustomerFieldRollbackReceiptReader;
+ paidConditionalCustomerFieldRollbackReceipt?:ConditionalCustomerFieldRollbackReceiptReader;
  reservation?:ReservationWriter;
  confirmation?:BookingConfirmation;
  draft?:DraftWriter;
@@ -300,12 +306,29 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=PaidPublicationList.safeParse(existing);if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
+   const conditionalFieldRollbackReceipt=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/rollback-receipt$/);
+   if(conditionalFieldRollbackReceipt){
+    if(!options.paidSimplePublication||!options.paidConditionalCustomerFieldRollbackReceipt)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(conditionalFieldRollbackReceipt[1]);const parsed=ConditionalCustomerFieldRollbackReadReceipt.safeParse(await options.paidConditionalCustomerFieldRollbackReceipt(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
    const customerFieldRollbackReceipt=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/rollback-receipt$/);
    if(customerFieldRollbackReceipt){
     if(!options.paidSimplePublication||!options.paidCustomerFieldRollbackReceipt)throw new FlowError("UNSUPPORTED_CONFIG");
     if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
     const flow=Uuid.parse(customerFieldRollbackReceipt[1]);const parsed=CustomerFieldRollbackReadReceipt.safeParse(await options.paidCustomerFieldRollbackReceipt(actor,tenant,flow));
     if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const conditionalFieldRollback=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/rollback$/);
+   if(conditionalFieldRollback){
+    if(!options.paidSimplePublication||!options.paidConditionalCustomerFieldRollback)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(conditionalFieldRollback[1]).toLowerCase(),body=ConditionalCustomerFieldRollbackInput.parse(await jsonBody(req));
+    const parsed=ConditionalCustomerFieldRollbackReceipt.safeParse(await options.paidConditionalCustomerFieldRollback(actor,tenant,flow,body));
+    if(!parsed.success||parsed.data.flowId!==flow||parsed.data.versionId!==body.targetVersionId)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
    const customerFieldRollback=url.pathname.match(/^\/api\/paid-customer-field-flows\/([^/]+)\/rollback$/);
@@ -347,6 +370,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!options.paidSimplePublication||!options.paidInstallHealth)throw new FlowError("UNSUPPORTED_CONFIG");
     if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
     const flow=Uuid.parse(installHealth[1]),parsed=PaidInstallHealth.safeParse(await options.paidInstallHealth(actor,tenant,flow));
+    if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
+    send(res,200,{ok:true,data:parsed.data});return;
+   }
+   const conditionalFieldHistory=url.pathname.match(/^\/api\/paid-conditional-customer-field-flows\/([^/]+)\/versions$/);
+   if(conditionalFieldHistory){
+    if(!options.paidSimplePublication||!options.paidConditionalCustomerFieldVersionHistory)throw new FlowError("UNSUPPORTED_CONFIG");
+    if(req.method!=="GET")throw new FlowError("NOT_AVAILABLE");
+    const flow=Uuid.parse(conditionalFieldHistory[1]);const parsed=ConditionalCustomerFieldVersionHistory.safeParse(await options.paidConditionalCustomerFieldVersionHistory(actor,tenant,flow));
     if(!parsed.success||parsed.data.flowId!==flow)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:parsed.data});return;
    }
