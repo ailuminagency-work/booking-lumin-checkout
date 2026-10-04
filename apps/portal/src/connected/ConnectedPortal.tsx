@@ -4,7 +4,7 @@ import { PortalShell } from "../components/Layout";
 import { PortalRoutes } from "../components/PortalRoutes";
 import {Link} from 'react-router-dom';
 import {ConnectedBookingDetail} from './ConnectedBookingDetail';
-import {PaidSimplePublisher} from './PaidSimplePublisher';
+import {ConnectedBookingFormLoader} from './ConnectedBookingFormLoader';
 import {ConnectedBusinessOnboarding} from './ConnectedBusinessOnboarding';
 import type {BusinessProfile} from '@lumin/contracts';
 export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
@@ -46,7 +46,7 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
     {members.length > 0 && <><label>Business<select disabled={busy||creationLocked} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id} · {m.role}</option>)}
     </select></label><button disabled={busy} onClick={() => void load(tenant)}>Refresh</button></>}
-   </div><ConnectedBusinessOnboarding client={client} tenantId={tenant} role={role} firstBusinessEligible={members.length===0&&tenant===''} staging={staging} apiConfigured={!!config.bookingApiOrigin} contextBusy={busy} onStateChange={()=>setCreationRevision(value=>value+1)} onOpen={openCreatedBusiness}/> {members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} customerFieldPublicationAvailable={staging&&import.meta.env.VITE_CUSTOMER_FIELD_PUBLICATION_STAGING==='true'} catalogLoading={busy}/>:undefined} />}</>}
+   </div><ConnectedBusinessOnboarding client={client} tenantId={tenant} role={role} firstBusinessEligible={members.length===0&&tenant===''} staging={staging} apiConfigured={!!config.bookingApiOrigin} contextBusy={busy} onStateChange={()=>setCreationRevision(value=>value+1)} onOpen={openCreatedBusiness}/> {members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?(role!=='BUSINESS_OWNER'?<section><p role="alert">Only a business owner can publish a staging paid form.</p></section>:<ConnectedBookingFormLoader key={tenant} client={client} tenantId={tenant} role={role} services={services} staging={staging} customerFieldPublicationAvailable={staging&&import.meta.env.VITE_CUSTOMER_FIELD_PUBLICATION_STAGING==='true'} catalogLoading={busy}/>):undefined} />}</>}
   {error && <p role="alert">{error}</p>}
  </PortalShell>;
 }
