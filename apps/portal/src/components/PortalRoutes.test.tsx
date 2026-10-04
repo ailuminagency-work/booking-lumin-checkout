@@ -1,0 +1,10 @@
+import {afterEach,expect,it,vi} from 'vitest';
+import {cleanup,render,screen} from '@testing-library/react';
+import {MemoryRouter} from 'react-router-dom';
+import {PortalRoutes} from './PortalRoutes';
+const demo=vi.hoisted(()=>({mount:vi.fn()}));
+vi.mock('../pages/Settings',()=>({SettingsPage:()=>{demo.mount();return <h1>Demo settings fixture</h1>;}}));
+afterEach(()=>{cleanup();vi.clearAllMocks();});
+it.each(['/settings','/settings/business','/settings/business-type','/settings/payments','/settings/security'])('connected %s uses only supplied connected shell and never mounts mock SettingsPage',path=>{render(<MemoryRouter initialEntries={[path]}><PortalRoutes mode="connected" settings={<section><h1>Verified connected settings fixture</h1></section>}/></MemoryRouter>);expect(screen.getByRole('heading',{name:'Verified connected settings fixture'})).toBeTruthy();expect(demo.mount).not.toHaveBeenCalled();});
+it('connected settings without an authenticated composition stay honestly unavailable',()=>{render(<MemoryRouter initialEntries={['/settings/business']}><PortalRoutes mode="connected"/></MemoryRouter>);expect(screen.getByRole('status')).toHaveTextContent('not available yet');expect(demo.mount).not.toHaveBeenCalled();});
+it('demo business settings retain their separate demo component and never consume connected shell',()=>{render(<MemoryRouter initialEntries={['/settings/business']}><PortalRoutes mode="demo" settings={<p>Never connected</p>}/></MemoryRouter>);expect(screen.getByRole('heading',{name:'Demo settings fixture'})).toBeTruthy();expect(screen.queryByText('Never connected')).toBeNull();expect(demo.mount).toHaveBeenCalledTimes(1);});
