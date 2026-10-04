@@ -1,4 +1,4 @@
-import {DetailingPaymentReceipt,type DetailingPaymentApi} from './detailing-payment';
+import {DetailingPaymentReceipt,DetailingPaymentReadiness,type DetailingPaymentApi} from './detailing-payment';
 import {DetailingReservationInput,DetailingRequestReceipt,DetailingHoldReceipt} from '@lumin/contracts';
 import type {DetailingReservationApi} from './detailing-reservation';
 import {DetailingAvailabilityQuery,DetailingAvailabilityReceipt} from '@lumin/contracts';
@@ -158,6 +158,12 @@ export function createFlowHttpServer(options:FlowHttpOptions){
      const data=DetailingAvailabilityReceipt.safeParse(await options.detailingAvailability(tokenHash(token),origin,query));
      if(!data.success||data.data.slots.some(s=>Date.parse(s.start)<Date.parse(query.from)||Date.parse(s.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
      send(res,200,{ok:true,data:data.data});return;
+    }
+    if(url.pathname==='/api/detailing-flow-sessions/payment-readiness'){
+     if(!options.detailingPublication||!options.detailingPaymentApi)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='GET'||url.search||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     const data=DetailingPaymentReadiness.safeParse(await options.detailingPaymentApi.readiness(tokenHash(token),origin));if(!data.success)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data:data.data});return;
     }
     if(req.method==='POST'&&['/api/detailing-flow-sessions/mock-payment','/api/detailing-flow-sessions/confirm'].includes(url.pathname)){
      if(!options.detailingPublication||!options.detailingPaymentApi)throw new FlowError('UNSUPPORTED_CONFIG');

@@ -8,9 +8,15 @@ import {ConfirmationReceipt} from './confirmation';
 import {FlowError} from './repository';
 export const DetailingPaymentReceipt=MockPaymentReceipt.extend({schemaVersion:z.literal(1),versionId:z.string().uuid(),installationId:z.string().uuid(),serviceId:z.string().uuid()}).strict();
 export type DetailingPaymentReceipt=z.infer<typeof DetailingPaymentReceipt>;
+const ReadinessIdentity=z.object({schemaVersion:z.literal(1),versionId:z.string().uuid(),installationId:z.string().uuid(),serviceId:z.string().uuid(),bookingId:z.string().uuid(),provider:z.literal('staging_mock'),simulated:z.literal(true)}).strict();
+export const DetailingPaymentReadiness=z.discriminatedUnion('state',[
+ ReadinessIdentity.extend({state:z.literal('draft'),canPay:z.literal(true),canConfirm:z.literal(false)}).strict(),
+ ReadinessIdentity.extend({state:z.literal('confirmed'),canPay:z.literal(false),canConfirm:z.literal(true)}).strict()
+]);
+export type DetailingPaymentReadiness=z.infer<typeof DetailingPaymentReadiness>;
 const Context=z.object({service:DetailingOfferReceipt.innerType().shape.service,catalog:DetailingCatalogRender.shape.catalog,scheduling:DetailingSchedulingReceipt,render:DetailingCatalogRender,installationId:z.string().uuid(),expiresAt:z.string().datetime({offset:true})}).strict();
 const Target=z.object({context:Context,receipt:DetailingRequestReceipt,booking:z.object({id:z.string().uuid(),tenant_id:z.string().uuid(),state:z.enum(['draft','confirmed']),payment_id:z.string().uuid().nullable(),pricing:DetailingRequestReceipt.innerType().shape.pricing}).strict(),payments:z.array(z.object({id:z.string().uuid(),tenant_id:z.string().uuid(),provider:z.literal('staging_mock'),provider_intent_id:z.string(),state:z.literal('succeeded'),amount:z.union([z.string().regex(/^\d+$/),z.number().int().safe().positive()]),currency:z.string()}).strict()).max(1)}).strict();
-export interface DetailingPaymentApi{mockPayment(hash:string,origin:string):Promise<DetailingPaymentReceipt>;confirm(hash:string,origin:string):Promise<DetailingPaymentReceipt>;}
+export interface DetailingPaymentApi{readiness(hash:string,origin:string):Promise<DetailingPaymentReadiness>;mockPayment(hash:string,origin:string):Promise<DetailingPaymentReceipt>;confirm(hash:string,origin:string):Promise<DetailingPaymentReceipt>;}
 export function createDetailingPaymentApi(pool:Pool,approvedInput:readonly string[],env:Record<string,string|undefined>,clock=()=>Date.now()):DetailingPaymentApi{
  const enabled=mockPaymentsEnabled(env)&&env.BOOKING_LUMIN_ENV==='staging'&&env.BOOKING_LUMIN_DETAILING_PUBLICATION==='1',approved=PublishDetailingDraft.shape.allowedOrigins.parse([...approvedInput]);
  const target=async(c:PoolClient,hash:string,origin:string)=>{const value=Target.safeParse((await c.query('select public.detailing_payment_target($1::text,$2::text,$3::jsonb) result',[hash,origin,JSON.stringify(approved)])).rows[0]?.result);if(!value.success)throw new FlowError('INTERNAL_ERROR');const t=value.data,r=t.receipt,x=t.context;
@@ -29,5 +35,13 @@ export function createDetailingPaymentApi(pool:Pool,approvedInput:readonly strin
    const receipt=DetailingPaymentReceipt.parse({...confirmed,schemaVersion:1,versionId:after.receipt.versionId,installationId:after.receipt.installationId,serviceId:after.receipt.serviceId});await c.query('commit');return receipt;
   }catch(error){try{await c.query('rollback');}catch{broken=true;}if(error instanceof FlowError)throw error;const code=(error as {code?:string}).code;throw new FlowError(code==='42501'?'FORBIDDEN':code==='P0002'?'NOT_AVAILABLE':code==='0A000'?'UNSUPPORTED_CONFIG':['40001','40P01','55P03','57014','23505','22023'].includes(code??'')?'CONFLICT':'INTERNAL_ERROR');}finally{c.release(broken);}
  };
- return{mockPayment:(h,o)=>run(h,o,true),confirm:(h,o)=>run(h,o,false)};
+ // Read-only capability evidence. Locks serialize provenance; no payment/confirmation tail runs.
+ const readiness=async(hash:string,origin:string):Promise<DetailingPaymentReadiness>=>{
+  if(!enabled)throw new FlowError('UNSUPPORTED_CONFIG');if(!/^[0-9a-f]{64}$/.test(hash)||!approved.includes(origin))throw new FlowError('INVALID_REQUEST');
+  const c=await pool.connect();let broken=false;try{await c.query('begin isolation level read committed');await c.query("set local statement_timeout='5s'");await c.query("set local lock_timeout='3s'");await c.query('set local role service_role');
+   const before=await target(c,hash,origin),after=await target(c,hash,origin);if(!isDeepStrictEqual(before,after))throw new FlowError('CONFLICT');
+   const r=after.receipt,state=after.booking.state;const receipt=DetailingPaymentReadiness.parse({schemaVersion:1,versionId:r.versionId,installationId:r.installationId,serviceId:r.serviceId,bookingId:r.bookingId,provider:'staging_mock',simulated:true,state,canPay:state==='draft',canConfirm:state==='confirmed'});await c.query('commit');return receipt;
+  }catch(error){try{await c.query('rollback');}catch{broken=true;}if(error instanceof FlowError)throw error;const code=(error as {code?:string}).code;throw new FlowError(code==='42501'?'FORBIDDEN':code==='P0002'?'NOT_AVAILABLE':code==='0A000'?'UNSUPPORTED_CONFIG':['40001','40P01','55P03','57014','23505','22023'].includes(code??'')?'CONFLICT':'INTERNAL_ERROR');}finally{c.release(broken);}
+ };
+ return{readiness,mockPayment:(h,o)=>run(h,o,true),confirm:(h,o)=>run(h,o,false)};
 }
