@@ -1,3 +1,4 @@
+import {InitializeBusinessProfile} from '@lumin/contracts';
 import {CustomerFieldInstallHealth} from '@lumin/contracts';
 export type {CustomerFieldInstallHealth} from '@lumin/contracts';
 import {BusinessProfile,CreateBusiness,CreateSimpleOffer,SimpleOfferReceipt,CurrencyCode,BusinessTimezone,CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches,PaidInstallHealth,CustomerDraftFields,type CustomerDraftTextField} from '@lumin/contracts';
@@ -13,6 +14,8 @@ export type SimpleOfferState={phase:'ready'}|{phase:'checking'|'creating'|'unkno
 export interface SimpleOfferContext {readonly tenantId:string;readonly currency:string;readonly timezone:string}
 export type OfferSchedulingState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateOfferScheduling}|{phase:'configured';attempt:CreateOfferScheduling;receipt:OfferSchedulingReceipt};
 export type {CreateOfferScheduling,OfferSchedulingReceipt,CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
+export type BusinessProfileInitializationInput=InitializeBusinessProfile;
+export type BusinessProfileInitializationState={phase:'ready'}|{phase:'unavailable'}|{phase:'blocked'}|{phase:'checking'|'initializing'|'unknown';attempt:BusinessProfileInitializationInput}|{phase:'initialized';attempt:BusinessProfileInitializationInput;profile:BusinessProfile};
 export type BusinessProfileRead={status:'initialized';profile:BusinessProfile}|{status:'uninitialized';tenantId:string};
 export interface RuntimeConfig { url: string; publishableKey: string; tenantId: string; allowMembershipDiscovery?: boolean; bookingApiOrigin?: string }
 export interface PaidSimplePublicationReceipt { readonly versionId:string; readonly installationId:string; readonly renderSchemaVersion:3; readonly hostedPath:string }
@@ -71,7 +74,11 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const schedulingAttempts=new Map<string,{actor:string;tenantId:string;serviceId:string;body:string}>();
  const uncertainScheduling=new Map<string,{actor:string;tenantId:string;serviceId:string;attempt:CreateOfferScheduling;offer:Extract<SimpleOfferState,{phase:'created'}>}>();
  const schedulingLocked=()=>[...scheduling.values()].some(state=>state.phase!=='configured');
- const offerLocked=()=>schedulingLocked()||[...offers.values()].some(state=>state.phase==='checking'||state.phase==='creating'||state.phase==='unknown');
+ const offerOperationsLocked=()=>schedulingLocked()||[...offers.values()].some(state=>state.phase==='checking'||state.phase==='creating'||state.phase==='unknown');
+ const profileInitializations=new Map<string,{actor:string;state:Exclude<BusinessProfileInitializationState,{phase:'ready'|'blocked'}>}>();
+ const profileInitializationKeys=new Map<string,{actor:string;tenantId:string;body:string}>();
+ const profileInitializationLocked=()=>[...profileInitializations.values()].some(({state})=>state.phase==='checking'||state.phase==='initializing'||state.phase==='unknown');
+ const offerLocked=()=>offerOperationsLocked()||profileInitializationLocked();
  const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
@@ -631,7 +638,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(binding&&(binding.actor!==actor||binding.tenantId!==tenantId||binding.body!==serialized))throw new BusinessOnboardingError('not_sent','The offer key is bound to its original account, business and reviewed details.');
   if(prior&&prior.phase!=='unknown')throw new BusinessOnboardingError('not_sent','This session offer is already pending or created.');
   if(prior?.phase==='unknown'&&offerBody(prior.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','The uncertain offer is locked to its unchanged details and original key.');
-  if(fieldRollbackAttempts.size>0||schedulingLocked()||businessCreationLocked()||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...offers.entries()].some(([id,state])=>id!==tenantId&&state.phase!=='created'))throw new BusinessOnboardingError('not_sent','Resolve pending or uncertain business, draft, publication or rollback actions first.');
+  if(profileInitializationLocked()||fieldRollbackAttempts.size>0||schedulingLocked()||businessCreationLocked()||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...offers.entries()].some(([id,state])=>id!==tenantId&&state.phase!=='created'))throw new BusinessOnboardingError('not_sent','Resolve pending or uncertain business, draft, publication or rollback actions first.');
   offerAttempts.set(body.idempotencyKey,{actor,tenantId,body:serialized});offers.set(tenantId,{phase:'checking',attempt:body});
   try{const context=await simpleOfferContext(tenantId);if(context.currency!==body.price.currency)throw new BusinessOnboardingError('not_sent','The reviewed currency no longer matches the current business.');if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The account changed before sending.');}catch(error){if(at===generation){if(prior)offers.set(tenantId,prior);else offers.delete(tenantId);}throw error;}
   offers.set(tenantId,{phase:'creating',attempt:body});uncertainOffers.set(actor+':'+tenantId,{actor,tenantId,attempt:body});let response:Response,value:unknown;
@@ -655,7 +662,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(binding&&(binding.actor!==actor||binding.tenantId!==tenantId||binding.serviceId!==serviceId||binding.body!==serialized))throw new BusinessOnboardingError('not_sent','This scheduling key is bound to its original account, business, offer and reviewed settings.');
   if(prior&&prior.phase!=='unknown')throw new BusinessOnboardingError('not_sent','Scheduling is already pending or configured for this session offer.');
   if(prior?.phase==='unknown'&&schedulingBody(prior.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','The uncertain scheduling attempt is locked to its original key and unchanged settings.');
-  if(fieldRollbackAttempts.size>0||businessCreationLocked()||[...offers.values()].some(state=>state.phase!=='created')||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...scheduling.entries()].some(([id,state])=>id!==key&&state.phase!=='configured'))throw new BusinessOnboardingError('not_sent','Resolve uncertain offers, drafts, publications, rollbacks or other scheduling before this action.');
+  if(profileInitializationLocked()||fieldRollbackAttempts.size>0||businessCreationLocked()||[...offers.values()].some(state=>state.phase!=='created')||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase()))||[...scheduling.entries()].some(([id,state])=>id!==key&&state.phase!=='configured'))throw new BusinessOnboardingError('not_sent','Resolve uncertain offers, drafts, publications, rollbacks or other scheduling before this action.');
   schedulingAttempts.set(body.idempotencyKey,{actor,tenantId,serviceId,body:serialized});scheduling.set(key,{phase:'checking',attempt:body});
   try{const context=await simpleOfferContext(tenantId);if(context.timezone!==body.timezone)throw new BusinessOnboardingError('not_sent','The reviewed timezone no longer matches the current business.');if(at!==generation||actor!==userId)throw new BusinessOnboardingError('not_sent','The account changed before sending scheduling.');}catch(error){if(at===generation){if(prior)scheduling.set(key,prior);else scheduling.delete(key);}throw error;}
   scheduling.set(key,{phase:'creating',attempt:body});uncertainScheduling.set(actor+':'+key,{actor,tenantId,serviceId,attempt:body,offer});let response:Response,value:unknown;
@@ -667,6 +674,39 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
   if(!prior&&exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&response.status===codes[value.code]){uncertainScheduling.delete(actor+':'+key);scheduling.delete(key);throw new BusinessOnboardingError(value.code==='UNSUPPORTED_CONFIG'?'unavailable':'rejected',value.code==='UNSUPPORTED_CONFIG'?'Scheduling authoring is unavailable. The server staging capability is disabled.':'Scheduling was rejected. Check current owner access, hours and existing configuration.');}
   scheduling.set(key,{phase:'unknown',attempt:body});throw new BusinessOnboardingError('unknown','Scheduling remains unverified. This response does not prove an earlier attempt failed. Keep the frozen key and settings.');
+ }
+ const initializationBody=(input:BusinessProfileInitializationInput)=>JSON.stringify({businessType:input.businessType,idempotencyKey:input.idempotencyKey});
+ async function initializeBusinessProfile(tenantId:string,input:BusinessProfileInitializationInput):Promise<BusinessProfile>{
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose a verified existing business.');
+  const parsed=InitializeBusinessProfile.safeParse(input);if(!parsed.success)throw new BusinessOnboardingError('not_sent','Choose one fixed permanent business type and a valid attempt key.');
+  tenantId=tenantId.toLowerCase();const body=Object.freeze({...parsed.data}),serialized=initializationBody(body),prior=profileInitializations.get(tenantId),binding=profileInitializationKeys.get(body.idempotencyKey);
+  if(binding&&(binding.actor!==userId||binding.tenantId!==tenantId||binding.body!==serialized)||prior&&prior.actor!==userId&&prior.state.phase!=='initialized')throw new BusinessOnboardingError('not_sent','This frozen initialization belongs to its original account, business, type and key.');
+  if(prior?.state.phase==='checking'||prior?.state.phase==='initializing'||prior?.state.phase==='initialized'||prior?.state.phase==='unavailable')throw new BusinessOnboardingError('not_sent','Initialization is already in progress, verified or unavailable. Check its existing state.');
+  if(prior?.state.phase==='unknown'&&initializationBody(prior.state.attempt)!==serialized)throw new BusinessOnboardingError('not_sent','Keep the same frozen initialization key and permanent type.');
+  if([...profileInitializations].some(([id,value])=>id!==tenantId&&['checking','initializing','unknown'].includes(value.state.phase))||offerOperationsLocked()||businessCreationLocked()||fieldRollbackAttempts.size>0||[...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys(),...customerPublications.keys(),...[...customerPublicationAttempts.values()].map(attempt=>attempt.tenantId)].some(id=>writerUncertain(id.toLowerCase())))throw new BusinessOnboardingError('not_sent','Resolve other pending or uncertain owner operations before initializing this business.');
+  const at=generation,actor=userId,credential=token;profileInitializationKeys.set(body.idempotencyKey,{actor,tenantId,body:serialized});profileInitializations.set(tenantId,{actor,state:{phase:'checking',attempt:body}});
+  try{
+   const memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));
+   if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>String(row.tenant_id).toLowerCase()===tenantId&&row.role==='BUSINESS_OWNER'))throw new BusinessOnboardingError('not_sent','Fresh exact owner membership for this existing business could not be verified.');
+   if(prior?.state.phase!=='unknown'){const profile=await businessProfile(tenantId);if(profile.status!=='uninitialized')throw new BusinessOnboardingError('not_sent','This business already has a permanent initialized type. It cannot be changed here.');}
+   if(at!==generation||userId!==actor)throw new BusinessOnboardingError('not_sent','The signed-in account changed. No initialization request was sent.');
+  }catch(error){if(prior)profileInitializations.set(tenantId,prior);else if(error instanceof BusinessOnboardingError&&error.delivery==='unavailable')profileInitializations.set(tenantId,{actor,state:{phase:'unavailable'}});else profileInitializations.delete(tenantId);throw error instanceof BusinessOnboardingError?error:new BusinessOnboardingError('not_sent','Fresh owner and uninitialized business evidence could not be verified.');}
+  profileInitializations.set(tenantId,{actor,state:{phase:'initializing',attempt:body}});let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/business-profile/initialize?tenantId='+encodeURIComponent(tenantId),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:serialized});value=await response.json();}
+  catch{profileInitializations.set(tenantId,{actor,state:{phase:'unknown',attempt:body}});throw new BusinessOnboardingError('unknown','Business type initialization is unverified. Retry only this same account, business, frozen key and permanent type.');}
+  if(at!==generation||userId!==actor){profileInitializations.set(tenantId,{actor,state:{phase:'unknown',attempt:body}});throw new BusinessOnboardingError('unknown','The signed-in account changed. This initialization outcome remains unverified.');}
+  const result=exact(value,['ok','data'])&&value.ok===true&&response.status===200?BusinessProfile.safeParse(value.data):undefined;
+  if(result?.success&&result.data.tenantId===tenantId&&result.data.businessType===body.businessType){const profile=Object.freeze({...result.data});profileInitializations.set(tenantId,{actor,state:{phase:'initialized',attempt:body,profile}});return profile;}
+  profileInitializations.set(tenantId,{actor,state:{phase:'unknown',attempt:body}});
+  if(response.status===401&&exact(value,['ok','code'])&&value.ok===false&&value.code==='UNAUTHENTICATED'){signOut();throw new BusinessOnboardingError('unknown','Sign in again with the same account to verify this frozen initialization.');}
+  const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,CONFLICT:409,UNSUPPORTED_CONFIG:422};
+  if(prior?.state.phase!=='unknown'&&exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&response.status===codes[value.code]){if(value.code==='UNSUPPORTED_CONFIG')profileInitializations.set(tenantId,{actor,state:{phase:'unavailable'}});else profileInitializations.delete(tenantId);throw new BusinessOnboardingError(value.code==='UNSUPPORTED_CONFIG'?'unavailable':'rejected','Business type initialization was rejected or is unavailable. Recheck the current business type before another reviewed attempt.');}
+  throw new BusinessOnboardingError('unknown','Business type initialization remains unverified. A read or later rejection cannot prove which attempt succeeded. Keep the same frozen key and type.');
+ }
+ function businessProfileInitializationState(tenantId:string):BusinessProfileInitializationState{
+  if(!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Choose a valid business.');const entry=profileInitializations.get(tenantId.toLowerCase());if(!entry)return {phase:'ready'};
+  if(entry.actor!==userId)return ['checking','initializing','unknown'].includes(entry.state.phase)?{phase:'blocked'}:{phase:'ready'};
+  return JSON.parse(JSON.stringify(entry.state)) as BusinessProfileInitializationState;
  }
  async function businessProfile(tenantId:string):Promise<BusinessProfileRead>{
   if(!token||!userId||!bookingApiOrigin)throw new BusinessOnboardingError('not_sent','Sign in with the configured business profile service.');
@@ -685,12 +725,13 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  createBusiness,businessProfile,
+  createBusiness,businessProfile,initializeBusinessProfile,businessProfileInitializationState,
+  businessProfileInitializationLocked:profileInitializationLocked,
   simpleOfferContext,createSimpleOffer,createOfferScheduling,
   offerSchedulingState(tenantId:string,serviceId:string):OfferSchedulingState {const state=scheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as OfferSchedulingState:{phase:'ready'};},
   simpleOfferState(tenantId:string):SimpleOfferState {const state=offers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as SimpleOfferState:{phase:'ready'};},
   simpleOfferLocked:offerLocked,
-  simpleOfferRecoveryTenant():string|undefined {return [...offers.entries()].find(([,state])=>state.phase==='unknown')?.[0]??[...scheduling.entries()].find(([,state])=>state.phase==='unknown')?.[0].split(':')[0];},
+  simpleOfferRecoveryTenant():string|undefined {return [...profileInitializations.entries()].find(([,entry])=>entry.actor===userId&&entry.state.phase==='unknown')?.[0]??[...offers.entries()].find(([,state])=>state.phase==='unknown')?.[0]??[...scheduling.entries()].find(([,state])=>state.phase==='unknown')?.[0].split(':')[0];},
   businessCreationState():BusinessCreationState{return businessCreation.phase==='created'?{...businessCreation,attempt:{...businessCreation.attempt},profile:{...businessCreation.profile}}:businessCreation.phase==='ready'||businessCreation.phase==='unavailable'?{...businessCreation}:{...businessCreation,attempt:{...businessCreation.attempt}};},
   signIn,signOut,
   customerFieldVersionHistory,rollbackCustomerFieldPublication,reconcileCustomerFieldRollback,
@@ -708,6 +749,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    return result.map(r=>{if(r.tenant_id!==tenantId||!uuid(r.id)||typeof r.name!=='string'||typeof r.currency!=='string'||!Number.isSafeInteger(r.duration_minutes)||Number(r.duration_minutes)<5||!Number.isSafeInteger(r.base_price)||Number(r.base_price)<0||typeof r.active!=='boolean')return fail('Catalog data is invalid.');return r as unknown as ServiceRow});
   },
   async saveDraft(input:DraftInput):Promise<{booking_id:string;reference:string}>{
+   if(profileInitializationLocked())return fail('Business type initialization is pending or unverified. Finish that same frozen attempt first.');
    requireNoFieldRollback(config.tenantId);
    if(!uuid(config.tenantId))return fail('A valid business is required before submitting a booking.');
    if(!uuid(input.serviceId)||input.idempotencyKey.length<16||!Number.isFinite(Date.parse(input.slotStart))||Date.parse(input.slotEnd)<=Date.parse(input.slotStart)||!Number.isFinite(Date.parse(input.slotEnd)))return fail('Check the requested service and date.');
