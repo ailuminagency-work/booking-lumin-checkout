@@ -3,6 +3,7 @@ import {parseBookingDetail,type ConnectedBookingDetail} from './bookingDetail';
 export type {ConnectedBookingDetail} from './bookingDetail';
 export interface RuntimeConfig { url: string; publishableKey: string; tenantId: string; allowMembershipDiscovery?: boolean; bookingApiOrigin?: string }
 export interface PaidSimplePublicationReceipt { readonly versionId:string; readonly installationId:string; readonly renderSchemaVersion:3; readonly hostedPath:string }
+export interface SavedPaidSimplePublication {readonly flowId:string;readonly name:string;readonly publication:PaidSimplePublicationReceipt}
 export type PaidSimplePublicationState={phase:'ready'}|{phase:'publishing'|'unknown';flowId:string}|{phase:'published';flowId:string;receipt:PaidSimplePublicationReceipt};
 export class PublicationError extends Error {
  constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}
@@ -83,8 +84,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
   if(!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Enter the exact publication attempt ID for this business.');
   const previous=publications.get(tenantId);
-  if(previous&&(previous.flowId!==flowId||previous.phase==='publishing'))throw new PublicationError('not_sent','This session is bound to another publication attempt or publication is still in progress.');
-  if(previous?.phase==='published')throw new PublicationError('not_sent','This session already holds this publication receipt.');
+  if(previous&&(previous.phase==='publishing'||previous.phase==='unknown'&&previous.flowId!==flowId))throw new PublicationError('not_sent','This session is bound to another publication attempt or publication is still in progress.');
   if(recovering.has(tenantId))throw new PublicationError('not_sent','A receipt lookup is already in progress for this business.');
   const current=generation,credential=token;
   // Absence is not proof that the create-only publication did not commit.
@@ -106,9 +106,37 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }finally{if(current===generation)recovering.delete(tenantId);}
  }
 
+ async function listPaidSimplePublications(tenantId:string):Promise<readonly SavedPaidSimplePublication[]>{
+  if(!token||!userId)throw new PublicationError('not_sent','Please sign in again.');
+  if(!bookingApiOrigin)throw new PublicationError('not_sent','The Booking Lumin publication service is not configured.');
+  if(!uuid(tenantId))throw new PublicationError('not_sent','Invalid business selection.');
+  const current=generation,credential=token;
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-simple-flows?tenantId='+encodeURIComponent(tenantId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}
+  catch{throw new PublicationError('not_sent','Saved forms could not be checked. This does not verify a publication attempt or make publishing it again safe.');}
+  if(current!==generation)throw new PublicationError('not_sent','The session changed. Sign in again before checking saved forms.');
+  if(!response.ok&&exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===401&&value.code==='UNAUTHENTICATED'){signOut();throw new PublicationError('not_sent','Please sign in again to check saved forms.');}
+   if(response.status===403&&value.code==='FORBIDDEN')throw new PublicationError('not_sent','Only an authorized owner of this active business can check saved forms.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PublicationError('not_sent','Saved forms are unavailable in this workspace.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new PublicationError('not_sent','The saved form list could not be verified. Check a known attempt directly; this does not make publishing it again safe.');
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['publications'])||!Array.isArray(data.publications)||data.publications.length>50)throw new PublicationError('not_sent','The saved form list could not be validated.');
+  const result:SavedPaidSimplePublication[]=[];let previous='';
+  for(const entry of data.publications){
+   if(!exact(entry,['flowId','name','publication'])||!uuid(entry.flowId)||entry.flowId!==entry.flowId.toLowerCase()||entry.flowId<=previous||typeof entry.name!=='string'||entry.name.length<1||entry.name.length>200)throw new PublicationError('not_sent','The saved form list could not be validated.');
+   const receipt=publicationReceipt(response,{ok:true,data:entry.publication});
+   if(!receipt)throw new PublicationError('not_sent','The saved form list could not be validated.');
+   previous=entry.flowId;result.push(Object.freeze({flowId:entry.flowId,name:entry.name,publication:receipt}));
+  }
+  // A list read never changes publication state or authorizes a create-only retry.
+  return Object.freeze(result);
+ }
+
  return {
   signIn,signOut,
-  publishPaidSimple,recoverPaidSimplePublication,
+  publishPaidSimple,recoverPaidSimplePublication,listPaidSimplePublications,
   paidSimplePublicationState(tenantId:string):PaidSimplePublicationState{if(!uuid(tenantId))return fail('Invalid business selection.');const state=publications.get(tenantId);return state?.phase==='published'?{...state,receipt:{...state.receipt}}:state?{...state}:{phase:'ready'};},
   async services(tenantId=config.tenantId,member=false):Promise<ServiceRow[]>{
    const result=rows(await request(`/rest/v1/services?select=id,tenant_id,name,currency,duration_minutes,base_price,active&tenant_id=eq.${tenant(tenantId)}&archetype=eq.simple${member?'':'&active=eq.true'}&order=name`,'GET',undefined,member));
