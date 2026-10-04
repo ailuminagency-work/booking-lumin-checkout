@@ -44,6 +44,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const bookingApiOrigin=config.bookingApiOrigin;
  if(bookingApiOrigin!==undefined&&!httpsOrigin(bookingApiOrigin))return fail('Connected mode configuration is missing or invalid.');
  let token:string|undefined;let generation=0;let userId:string|undefined;let businessCreation:BusinessCreationState={phase:'ready'};
+ const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
  const recovering=new Set<string>();
@@ -352,19 +353,20 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  async function createBusiness(input:CreateBusiness):Promise<BusinessProfile>{
   if(!token||!userId||!bookingApiOrigin)throw new BusinessOnboardingError('not_sent','Sign in with the configured business onboarding service.');
   const parsed=CreateBusiness.safeParse(input);if(!parsed.success)throw new BusinessOnboardingError('not_sent','Check the business name, slug, named timezone, uppercase currency and fixed business type.');
-  const body=Object.freeze({...parsed.data}),prior=businessCreation;
+  const body=Object.freeze({...parsed.data}),prior=businessCreation,binding=businessAttempts.get(parsed.data.idempotencyKey);
+  if(binding&&(binding.actor!==userId||binding.body!==creationBody(body)))throw new BusinessOnboardingError('not_sent','This creation key is bound to its original signed-in account and reviewed details. Do not reuse it for another account or changed details.');
   if(prior.phase==='checking'||prior.phase==='creating')throw new BusinessOnboardingError('not_sent','This business creation is still in progress.');
   if(prior.phase==='created')throw new BusinessOnboardingError('not_sent','This session already has a created business. Open its verified owner membership.');
   if(prior.phase==='unavailable')throw new BusinessOnboardingError('unavailable','Business onboarding is unavailable. The server capability must be enabled in staging.');
   if(prior.phase==='unknown'&&creationBody(prior.attempt)!==creationBody(body))throw new BusinessOnboardingError('not_sent','The uncertain attempt is locked to its original key and all original business details.');
   if([...rollbacks.values()].some(state=>state.phase==='rolling_back'||state.phase==='unknown')||[...publications.keys(),...ownerDrafts.keys(),...savedDraftPublications.keys()].some(id=>writerUncertain(id.toLowerCase())))throw new BusinessOnboardingError('not_sent','Verify pending or uncertain drafts, publications and rollbacks before creating a different business.');
-  const at=generation,actor=userId,credential=token;
+  const at=generation,actor=userId,credential=token;businessAttempts.set(body.idempotencyKey,{actor,body:creationBody(body)});
   businessCreation={phase:'checking',attempt:body};
   try{
    const memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));
    if(at!==generation||userId!==actor)throw new BusinessOnboardingError('not_sent','The signed-in account changed. This attempt was not sent.');
-   if(!memberships.every(row=>uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>row.role==='BUSINESS_OWNER'))throw new BusinessOnboardingError('not_sent','Only an existing authenticated business owner can use this creation panel.');
-  }catch(error){if(at===generation)businessCreation=prior;throw error instanceof BusinessOnboardingError?error:new BusinessOnboardingError('not_sent','Fresh owner membership could not be verified. No creation request was sent.');}
+   if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||(memberships.length>0&&!memberships.some(row=>row.role==='BUSINESS_OWNER')))throw new BusinessOnboardingError('not_sent','Creation requires a verified business owner or a successful fresh membership lookup with no assigned businesses.');
+  }catch(error){if(at===generation)businessCreation=prior;throw error instanceof BusinessOnboardingError?error:new BusinessOnboardingError('not_sent','Fresh business membership could not be verified. No creation request was sent.');}
   businessCreation={phase:'creating',attempt:body};
   let response:Response,value:unknown;
   try{response=await transport(bookingApiOrigin+'/api/businesses',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:creationBody(body)});value=await response.json();}
@@ -417,7 +419,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    if(!result||!uuid(result.booking_id)||typeof result.reference!=='string')return fail('The saved response could not be verified. Retry this same request.');
    return {booking_id:result.booking_id,reference:result.reference};
   },
-  async memberships():Promise<Membership[]>{if(!userId)return fail('Please sign in again.');return rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(userId)}`,'GET',undefined,true)).map(r=>{if(!uuid(r.tenant_id)||typeof r.role!=='string')return fail();return r as unknown as Membership})},
+  async memberships():Promise<Membership[]>{if(!userId)return fail('Please sign in again.');return rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(userId)}`,'GET',undefined,true)).map(r=>{if(!exact(r,['tenant_id','role'])||!uuid(r.tenant_id)||typeof r.role!=='string')return fail('Membership data could not be verified.');return r as unknown as Membership})},
   async bookings(tenantId:string):Promise<BookingRow[]>{
    const result=rows(await request(`/rest/v1/bookings?select=id,tenant_id,reference,state,slot_start,created_at&tenant_id=eq.${tenant(tenantId)}&order=created_at.desc&limit=100`,'GET',undefined,true));
    return result.map(r=>{if(!uuid(r.id)||r.tenant_id!==tenantId||typeof r.reference!=='string'||typeof r.state!=='string'||!['draft','pending_payment','confirmed','completed','cancelled','refunded','failed'].includes(r.state)||typeof r.slot_start!=='string'||!Number.isFinite(Date.parse(r.slot_start))||typeof r.created_at!=='string'||!Number.isFinite(Date.parse(r.created_at)))return fail('Booking data is invalid.');return r as unknown as BookingRow});

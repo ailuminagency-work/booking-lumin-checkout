@@ -41,12 +41,12 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
      <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
      <button>{busy ? "Signing in…" : "Sign in"}</button>
     </fieldset>
-   </form><p>Use an existing authorized business account. Sessions stay in memory and end when this page reloads.</p></section> :
+   </form><p>Use an existing authorized account. A verified staging account with no memberships can create its first business. Sessions stay in memory and end when this page reloads.</p></section> :
    <><div className="panel"><button onClick={logout}>Sign out</button>
     {members.length > 0 && <><label>Business<select disabled={busy||creationLocked} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id} · {m.role}</option>)}
     </select></label><button disabled={busy} onClick={() => void load(tenant)}>Refresh</button></>}
-   </div>{members.length>0&&<ConnectedBusinessOnboarding client={client} tenantId={tenant} role={role} staging={staging} apiConfigured={!!config.bookingApiOrigin} contextBusy={busy} onStateChange={()=>setCreationRevision(value=>value+1)} onOpen={openCreatedBusiness}/>} {members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} catalogLoading={busy}/>:undefined} />}</>}
+   </div><ConnectedBusinessOnboarding client={client} tenantId={tenant} role={role} firstBusinessEligible={members.length===0&&tenant===''} staging={staging} apiConfigured={!!config.bookingApiOrigin} contextBusy={busy} onStateChange={()=>setCreationRevision(value=>value+1)} onOpen={openCreatedBusiness}/> {members.length === 0 ? <p>No business membership is assigned to this account.</p> : <PortalRoutes mode="connected" bookings={bookingList} bookingDetail={<ConnectedBookingDetail client={client} tenantId={tenant} services={services}/>} services={serviceList} embed={staging&&config.bookingApiOrigin?<PaidSimplePublisher client={client} tenantId={tenant} role={role} services={services} staging={staging} catalogLoading={busy}/>:undefined} />}</>}
   {error && <p role="alert">{error}</p>}
  </PortalShell>;
 }
