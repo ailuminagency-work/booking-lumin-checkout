@@ -59,3 +59,5 @@ export * from './customer-field-install-health';
 export * from './conditional-customer-fields';
 
 export * from './detailing-catalog';
+
+export * from "./detailing-scheduling";
