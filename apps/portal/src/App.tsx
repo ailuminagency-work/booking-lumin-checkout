@@ -3,7 +3,7 @@ import { Component } from "react";
 import { FlowPortal } from "./flows/FlowPortal";
 import { ModeOwnerPortal } from "./flows/ModeOwnerPortal";
 import { ConnectedPortal } from "./connected/ConnectedPortal";
-import type { ErrorInfo, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PortalProvider } from "./components/PortalProvider";
@@ -11,29 +11,30 @@ import { LegacyRedirects, PortalRoutes } from "./components/PortalRoutes";
 import { readPublicRuntimeConfig } from "@lumin/runtime-client";
 
 interface ErrorBoundaryState {
-  error: Error | null;
+  hasError: boolean;
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
-  override state: ErrorBoundaryState = { error: null };
+export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  override state: ErrorBoundaryState = { hasError: false };
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
   }
 
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Never log sensitive payloads (SI-11); message + component stack only.
-    console.error("Portal render error:", error.message, info.componentStack);
+  override componentDidCatch(): void {
+    // Boundary-owned code only: errors and component stacks may contain private data.
+    console.error("PORTAL_RENDER_ERROR");
   }
 
   override render() {
-    if (this.state.error) {
+    if (this.state.hasError) {
       return (
         <div className="error-screen" role="alert">
           <h1>Something went wrong</h1>
-          <p>The portal hit an unexpected error. Reloading usually fixes it.</p>
-          <button type="button" className="btn btn-primary" onClick={() => this.setState({ error: null })}>
-            Try again
+          <p>The portal could not display this page. This does not tell us whether your last action was saved.</p>
+          <p>Reload the portal, then open the selected booking and check its current details before retrying any action. Reloading does not cancel or repeat your last action.</p>
+          <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+            Reload portal
           </button>
         </div>
       );
