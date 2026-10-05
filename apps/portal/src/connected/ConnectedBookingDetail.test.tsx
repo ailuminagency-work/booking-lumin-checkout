@@ -151,3 +151,51 @@ it.each(['tenant','booking'] as const)('hides saved answer references immediatel
  mounted.rerender(view(client,observations,context==='tenant'?other:tenant,context==='booking'?other:booking));
  expect(observations[0]).not.toContain('PRIVATE_SAVED_ACCESS');expect(observations[0]).toContain('Loading booking');
 });
+
+it('offers recipient-only email and saved-number call links without automatic external requests',async()=>{
+ const detail=fixture('Saved contact');detail.customer={name:'Saved customer',email:'Owner+appointment@example.test',phone:'+1 (206) 555-0100'};
+ const fetchSpy=vi.spyOn(globalThis,'fetch');
+ try{
+  const bookingDetail=vi.fn(async()=>detail);render(view({bookingDetail},[]));
+  const email=await screen.findByRole('link',{name:'Email saved customer'}),phone=screen.getByRole('link',{name:'Call saved customer'});
+  expect(email).toHaveAttribute('href','mailto:Owner%2Bappointment%40example.test');expect(email).toHaveTextContent(detail.customer.email);
+  expect(email.getAttribute('href')).not.toContain('?');expect(phone).toHaveAttribute('href','tel:+12065550100');expect(phone).toHaveTextContent(detail.customer.phone!);
+  expect(fetchSpy).not.toHaveBeenCalled();expect(bookingDetail).toHaveBeenCalledTimes(1);
+ }finally{fetchSpy.mockRestore();}
+});
+it('does not invent contact actions for an absent customer or phone',async()=>{
+ const detail=fixture('Missing contact');detail.customer!.phone=null;
+ const mounted=render(view({bookingDetail:vi.fn(async()=>detail)},[]));await screen.findByText('Missing contact');
+ expect(screen.queryByRole('link',{name:'Call saved customer'})).toBeNull();expect(screen.getAllByText('Not provided').length).toBeGreaterThan(0);
+ const missing=fixture('No contact');missing.customer=null;mounted.rerender(view({bookingDetail:vi.fn(async()=>missing)},[]));
+ await screen.findByText('No customer record is linked.');expect(screen.queryByRole('link',{name:'Email saved customer'})).toBeNull();expect(screen.queryByRole('link',{name:'Call saved customer'})).toBeNull();
+});
+it.each([
+ ['victim@example.test\r\nBcc:other@example.test','+12065550100\n'],
+ ['victim@example.test?bcc=other@example.test','tel:+12065550100'],
+ ['victim%0d%0a@example.test','+12065550100;ext=123'],
+ ['javascript:alert(1)','+12065550100?recipient=other'],
+ ['a..b@example.test','123'],
+ ['<img src=x onerror=alert(1)>','<svg onload=alert(1)>'],
+ ['user@-example.test','++12065550100'],
+ ['user@example..test','(206 555-0100'],
+ ['user@example.test\n','12065550100\r'],
+ ['u'.repeat(65)+'@example.test','1'.repeat(16)]
+])('keeps unsupported or unsafe saved contacts as escaped text without actions (%#)',async(email,phone)=>{
+ const detail=fixture('Unsafe contact');detail.customer={name:'Customer',email,phone};
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));await screen.findByText('Customer',{selector:'dd'});
+ expect(screen.queryByRole('link',{name:'Email saved customer'})).toBeNull();expect(screen.queryByRole('link',{name:'Call saved customer'})).toBeNull();
+ const labels=screen.getAllByText(/Email|Phone/,{selector:'dt'});
+ expect(labels.find(label=>label.textContent==='Email')?.nextElementSibling?.textContent).toBe(email);
+ expect(labels.find(label=>label.textContent==='Phone')?.nextElementSibling?.textContent).toBe(phone);
+ expect(document.querySelector('img,svg,script')).toBeNull();
+});
+it.each(['tenant','booking','auth'] as const)('withholds old saved contact links before effects on %s change',async context=>{
+ let auth=0,observed='';const detail=fixture('PRIVATE_CONTACT');detail.customer!.phone='+12065550100';
+ const client={bookingDetail:vi.fn(async()=>detail),authContextRevision:vi.fn(()=>auth)};
+ function Observer({tenantId,bookingId}:{tenantId:string;bookingId:string}){useLayoutEffect(()=>{observed=document.body.innerHTML;});return <ConnectedBookingRecord client={client} tenantId={tenantId} bookingId={bookingId} services={[]}/>;}
+ const mounted=render(<MemoryRouter><Observer tenantId={tenant} bookingId={booking}/></MemoryRouter>);await screen.findByRole('link',{name:'Call saved customer'});
+ client.bookingDetail.mockImplementation(()=>new Promise(()=>{}));if(context==='auth')auth++;
+ mounted.rerender(<MemoryRouter><Observer tenantId={context==='tenant'?other:tenant} bookingId={context==='booking'?other:booking}/></MemoryRouter>);
+ expect(observed).not.toContain('PRIVATE_CONTACT');expect(observed).not.toContain('mailto:');expect(observed).not.toContain('tel:');expect(observed).toContain('Loading booking');
+});
