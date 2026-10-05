@@ -24,6 +24,8 @@ jobs:
         run: |
           node scripts/validate-staging-frontend-config.test.mjs
           node scripts/validate-staging-frontend-config.mjs --self-test
+      - name: Mock-only staging observability verifier regressions
+        run: node scripts/phase-a-staging-observability.mjs --selftest
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
