@@ -100,3 +100,54 @@ it('keeps long saved private text complete inside an inherited wrapping boundary
  expect(heading.textContent).toBe(`Booking ${reference}`);
  expect(boundary?.style.textOverflow).toBe('');expect(boundary?.style.overflow).toBe('');expect(boundary?.style.whiteSpace).toBe('');
 });
+
+it('shows individual persisted selection choices and quantities without inferring current catalog labels',async()=>{
+ const detail=fixture('Saved selection');detail.selection={serviceId:other,answers:{package:{choiceIds:['interior_saved']},vehicle:{choiceIds:['sedan_saved','long_vehicle_reference']},quantity:{quantity:0},empty:{choiceIds:[]}},addonIds:['saved_addon'],rentalPeriods:3};
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));await screen.findByText('Saved selection');
+ for(const key of ['package','vehicle','quantity','empty'])expect(screen.getByText(key,{selector:'dt'})).toBeVisible();
+ for(const choice of ['interior_saved','sedan_saved','long_vehicle_reference'])expect(screen.getByText(choice,{selector:'li'})).toBeVisible();
+ expect(screen.getByText('Quantity: 0')).toBeVisible();expect(screen.getByText('No choice references recorded.')).toBeVisible();
+ expect(screen.getByText(/historical question and choice labels and separate customer-form answers are not available here/)).toBeVisible();
+ expect(screen.getByText('["saved_addon"]')).toBeVisible();expect(screen.getByText('rentalPeriods',{selector:'dt'}).nextElementSibling).toHaveTextContent('3');
+ expect(screen.queryByText(JSON.stringify(detail.selection.answers))).toBeNull();
+});
+it.each([undefined,{}])('explains absent or empty selection answers without inventing a submitted form',async answers=>{
+ const detail=fixture('No selection answers');if(answers!==undefined)detail.selection.answers=answers;
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));expect(await screen.findByText('No selection answers are recorded for this booking.')).toBeVisible();
+ expect(screen.getByText(/separate customer-form answers are not available here/)).toBeVisible();
+});
+it('retains unfamiliar saved answer shapes and fields without silently normalizing or dropping them',async()=>{
+ const detail=fixture('Unfamiliar answers');detail.selection.answers={extended:{choiceIds:['saved'],extra:'PRIVATE_SAVED_VALUE'},invalid:{quantity:-2},primitive:false};
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));await screen.findByText('Unfamiliar answers');
+ expect(screen.getByText('{"choiceIds":["saved"],"extra":"PRIVATE_SAVED_VALUE"}')).toBeVisible();
+ expect(screen.getByText('{"quantity":-2}')).toBeVisible();expect(screen.getByText('false')).toBeVisible();
+ expect(screen.queryByText('Quantity: -2')).toBeNull();
+});
+it('withholds private saved answers before effects on authentication change and rejects late old-context data',async()=>{
+ let auth=0,observed='',finish!:(data:ConnectedBookingDetail)=>void;
+ const old=fixture('Previous answers');old.selection.answers={access:{choiceIds:['PRIVATE_ACCESS_REFERENCE']}};
+ const client={bookingDetail:vi.fn(async()=>old),authContextRevision:vi.fn(()=>auth)};
+ function Observer(){useLayoutEffect(()=>{observed=document.body.textContent??'';});return <ConnectedBookingRecord client={client} tenantId={tenant} bookingId={booking} services={[]}/>;}
+ const mounted=render(<MemoryRouter><Observer/></MemoryRouter>);await screen.findByText('PRIVATE_ACCESS_REFERENCE');
+ client.bookingDetail.mockImplementation(()=>new Promise(resolve=>finish=resolve));auth++;
+ mounted.rerender(<MemoryRouter><Observer/></MemoryRouter>);expect(observed).not.toContain('PRIVATE_ACCESS_REFERENCE');expect(observed).toContain('Loading booking');
+ client.bookingDetail.mockImplementation(async()=>fixture('Current answers'));auth++;
+ mounted.rerender(<MemoryRouter><Observer/></MemoryRouter>);await screen.findByText('Current answers');finish(old);
+ await waitFor(()=>expect(screen.queryByText('PRIVATE_ACCESS_REFERENCE')).toBeNull());
+});
+
+it('renders saved answer text as text without activating markup',async()=>{
+ const unsafe='<img src=x onerror="PRIVATE_CANARY">',key='<script>PRIVATE_KEY</script>';
+ const detail=fixture('Escaped answers');detail.selection.answers={[key]:{choiceIds:[unsafe]},extended:{extra:'<svg onload="PRIVATE_EXTRA">'}};
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));
+ expect(await screen.findByText(unsafe,{selector:'li'})).toBeVisible();expect(screen.getByText(key,{selector:'dt'})).toBeVisible();
+ expect(document.querySelector('img,script,svg')).toBeNull();expect(screen.getByText(JSON.stringify({extra:'<svg onload="PRIVATE_EXTRA">'}))).toBeVisible();
+});
+it.each(['tenant','booking'] as const)('hides saved answer references immediately on %s replacement',async context=>{
+ const old=fixture('Old selection');old.selection.answers={access:{choiceIds:['PRIVATE_SAVED_ACCESS']}};
+ const client:Client={bookingDetail:vi.fn(async()=>old)};const observations:string[]=[];
+ const mounted=render(view(client,observations));await screen.findByText('PRIVATE_SAVED_ACCESS');observations.length=0;
+ vi.mocked(client.bookingDetail).mockImplementation(()=>new Promise(()=>{}));
+ mounted.rerender(view(client,observations,context==='tenant'?other:tenant,context==='booking'?other:booking));
+ expect(observations[0]).not.toContain('PRIVATE_SAVED_ACCESS');expect(observations[0]).toContain('Loading booking');
+});
