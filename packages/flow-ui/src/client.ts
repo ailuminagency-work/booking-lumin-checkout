@@ -8,10 +8,13 @@ import {ConfigurableDraft,ConfigurableAuthoringV2,SessionRender,CustomerFieldSes
 const codes=['INVALID_REQUEST','UNAUTHENTICATED','FORBIDDEN','CONFLICT','NOT_AVAILABLE','UNSUPPORTED_CONFIG','INTERNAL_ERROR','RATE_LIMITED'] as const;
 const messages={INVALID_REQUEST:'Check the form and try again.',UNAUTHENTICATED:'Your session is unavailable. Sign in again.',FORBIDDEN:'This account cannot perform this action.',CONFLICT:'The saved version changed. Refresh before trying again.',NOT_AVAILABLE:'This item is unavailable.',UNSUPPORTED_CONFIG:'This service or questionnaire is not supported yet.',INTERNAL_ERROR:'The request could not be completed.',RATE_LIMITED:'Too many requests. Wait before trying again.'};
 export class FlowError extends Error{constructor(readonly code:typeof codes[number]){super(messages[code]);}}
+export const FLOW_SESSION_STARTUP_TIMEOUT_MS=30_000;
+export class FlowSessionStartupTimeout extends FlowError{constructor(){super('INTERNAL_ERROR');this.message='Opening this form took too long. Its temporary session could not be verified.';}}
 export function createFlowClient(base:string,localHarness=false,fetcher:typeof fetch=fetch){
  let url:URL;try{url=new URL(base);}catch{throw new FlowError('INVALID_REQUEST');}
  if(url.origin!==base||url.username||url.password||!(url.protocol==='https:'||(localHarness&&url.protocol==='http:'&&['localhost','127.0.0.1'].includes(url.hostname))))throw new FlowError('INVALID_REQUEST');
  let generation=0;
+ const startupCancels=new Set<()=>void>();
  const customerFieldSessions=new Map<string,{render:PaidCustomerFieldRender;expiresAt:number;request?:string;reference?:string}>();
  const conditionalSessions=new Map<string,{render:PaidConditionalCustomerFieldRender;expiresAt:number;request?:string;reference?:string}>();
  const conditionalRequest=z.object({schemaVersion:z.literal(3),idempotencyKey:z.string().min(16).max(128),answers:z.object({}).strict(),customerAnswers:ConditionalCustomerFieldAnswers,customer:z.object({name:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254)}).strict(),requestedStart:z.string().datetime({offset:true}).transform(value=>new Date(value).toISOString())}).strict();
@@ -55,12 +58,25 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   session.reference=result.reference;
   return result;
  }
- async function call<T>(path:string,schema:z.ZodType<T>,token?:string,body?:unknown):Promise<T>{
+ async function call<T>(path:string,schema:z.ZodType<T>,token?:string,body?:unknown,signal?:AbortSignal):Promise<T>{
  const at=generation;let response:Response;let value:unknown;
- try{response=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});value=await response.json();}catch{throw new FlowError('INTERNAL_ERROR');}
+ try{response=await fetcher(base+path,{method:body===undefined?'GET':'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),...(signal?{signal}:{})});value=await response.json();}catch{throw new FlowError('INTERNAL_ERROR');}
  if(at!==generation)throw new FlowError('UNAUTHENTICATED');
  const failure=z.object({ok:z.literal(false),code:z.enum(codes)}).strict().safeParse(value);if(failure.success)throw new FlowError(failure.data.code);
  const parsed=z.object({ok:z.literal(true),data:schema}).strict().safeParse(value);if(!response.ok||!parsed.success)throw new FlowError('INTERNAL_ERROR');return schema.parse(parsed.data.data);
+ }
+ // Session issuance can create a short-lived capability, but never a booking,
+ // reservation or payment. Bound only this startup; never replay it automatically.
+ async function startup<T>(installation:string,schema:z.ZodType<T>):Promise<T>{
+  const path='/api/installations/'+uuid(installation)+'/sessions',controller=new AbortController(),at=generation;
+  let timer:ReturnType<typeof setTimeout>|undefined,cancel=()=>{};
+  const stopped=new Promise<never>((_,reject)=>{
+   cancel=()=>{clearTimeout(timer);reject(new FlowError('UNAUTHENTICATED'));controller.abort();};
+   timer=setTimeout(()=>{reject(new FlowSessionStartupTimeout());controller.abort();},FLOW_SESSION_STARTUP_TIMEOUT_MS);
+  });
+  startupCancels.add(cancel);
+  try{const value=await Promise.race([call(path,schema,undefined,{},controller.signal),stopped]);if(at!==generation)throw new FlowError('UNAUTHENTICATED');return value;}
+  finally{clearTimeout(timer);startupCancels.delete(cancel);}
  }
  const tenant=(id:string)=>'?tenantId='+encodeURIComponent(z.string().uuid().parse(id));
  const uuid=(id:string)=>z.string().uuid().parse(id);
@@ -77,7 +93,7 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
   // Slots starting within the day may legitimately finish after midnight.
   return {...value,slots:value.slots.filter(slot=>Date.parse(slot.start)<end)};
  }
- return {invalidate(){generation++;customerFieldSessions.clear();conditionalSessions.clear();},
+ return {invalidate(){generation++;for(const cancel of startupCancels)cancel();startupCancels.clear();customerFieldSessions.clear();conditionalSessions.clear();},
  submitConditionalCustomerFields,
  submitCustomerFields,
  availability,
@@ -99,10 +115,10 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  saveConfigurable:(token:string,id:string,flow:string,body:{expectedRevision:number;serviceId:string;name:string;authoring:ConfigurableAuthoringV2})=>call('/api/configurable-flows/'+uuid(flow)+'/draft'+tenant(id),z.object({flowId:z.string().uuid(),revision:z.number().int().positive(),authoringVersion:z.literal(2)}).strict(),token,body),
  publishConfigurable:(token:string,id:string,flow:string,body:{expectedRevision:number;allowedOrigins:string[]})=>call('/api/configurable-flows/'+uuid(flow)+'/publish'+tenant(id),z.object({versionId:z.string().uuid(),installationId:z.string().uuid(),renderSchemaVersion:z.literal(2),hostedPath:z.string().regex(/^\/checkout\/flow\/[0-9a-f-]{36}$/i)}).strict(),token,body),
  requests:(token:string,id:string)=>call('/api/requests'+tenant(id),z.object({requests:z.array(z.object({id:z.string().uuid(),reference:z.string(),state:z.literal('draft'),slotStart:z.string().datetime({offset:true}),createdAt:z.string().datetime({offset:true})}).strict()).max(100)}).strict(),token),
- session:(installation:string)=>call('/api/installations/'+uuid(installation)+'/sessions',z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:SessionRender}).strict(),undefined,{}),
+ session:(installation:string)=>startup(installation,z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:SessionRender}).strict()),
  customerFieldSession:async(installation:string)=>{
   const at=generation;
-  const value=await call('/api/installations/'+uuid(installation)+'/sessions',z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:CustomerFieldSessionRender}).strict(),undefined,{});
+  const value=await startup(installation,z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:CustomerFieldSessionRender}).strict());
   if(at!==generation||Date.parse(value.expiresAt)<=Date.now())throw new FlowError('UNAUTHENTICATED');
   if(!('renderSchemaVersion' in value.render)||value.render.renderSchemaVersion!==5)return value;
   if(conditionalSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
@@ -113,7 +129,7 @@ export function createFlowClient(base:string,localHarness=false,fetcher:typeof f
  },
  conditionalCustomerFieldSession:async(installation:string)=>{
   const at=generation;
-  const value=await call('/api/installations/'+uuid(installation)+'/sessions',z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:ConditionalCustomerFieldSessionRender}).strict(),undefined,{});
+  const value=await startup(installation,z.object({sessionToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/),expiresAt:z.string().datetime({offset:true}),render:ConditionalCustomerFieldSessionRender}).strict());
   if(at!==generation||Date.parse(value.expiresAt)<=Date.now())throw new FlowError('UNAUTHENTICATED');
   if('renderSchemaVersion' in value.render&&value.render.renderSchemaVersion===6){
    if(customerFieldSessions.has(value.sessionToken))throw new FlowError('INTERNAL_ERROR');
