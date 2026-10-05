@@ -7,7 +7,8 @@ import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PortalProvider } from "./components/PortalProvider";
-import { LegacyRedirects, PortalRoutes } from "./components/PortalRoutes";
+import { LegacyRedirects } from "./components/LegacyRedirects";
+import { PortalRoutes } from "./components/PortalRoutes";
 import { readPublicRuntimeConfig } from "@lumin/runtime-client";
 
 interface ErrorBoundaryState {

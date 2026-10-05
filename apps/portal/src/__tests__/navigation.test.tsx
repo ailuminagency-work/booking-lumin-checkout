@@ -81,19 +81,19 @@ describe("Portal navigation migration", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/portal/${target}`));
     expect(window.location.search).toBe("?view=week");
     expect(window.location.hash).toBe("#details");
-    expect(screen.getByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
     first.unmount();
     render(<App />);
-    expect(screen.getByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
   });
 
-  it("resolves static resource/template/new paths before service identifiers", () => {
+  it("resolves static resource/template/new paths before service identifiers", async () => {
     const view = portal("/services/resources");
-    expect(screen.getByRole("heading", { level: 1, name: "Resources" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Resources" })).toBeInTheDocument();
     expect(screen.queryByText("Service not found")).not.toBeInTheDocument();
     view.unmount();
     const templates = portal("/services/templates");
-    expect(screen.getByTestId("template-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("template-catalog")).toBeInTheDocument();
     templates.unmount();
     portal("/services/new");
     expect(screen.getByRole("heading", { name: "Create service" })).toBeInTheDocument();
@@ -106,9 +106,9 @@ describe("Portal navigation migration", () => {
     expect(within(screen.getByRole("main")).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("does not offer a fake installation snippet in the retained demo builder preview", () => {
+  it("does not offer a fake installation snippet in the retained demo builder preview", async () => {
     portal("/embed");
-    expect(screen.getByText("Installation is not available yet")).toBeInTheDocument();
+    expect(await screen.findByText("Installation is not available yet")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Copy snippet/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/cdn.bookinglumin.example/)).not.toBeInTheDocument();
   });
