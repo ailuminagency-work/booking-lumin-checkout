@@ -12,6 +12,7 @@ import {createConditionalCustomerFieldInstallHealthReader} from './conditional-c
 import {createConditionalCustomerFieldPublicationReader} from './conditional-customer-field-publication-reader';
 import {createBusinessProfileInitializer} from './existing-business-profile';
 import {attachRequestId} from './request-id';
+import {createRequestTelemetry} from './request-telemetry';
 import {readReleaseMetadata,serveReleaseMetadata} from './release-metadata';
 import {createCustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {createCustomerFieldRollback} from './customer-field-rollback';
@@ -101,6 +102,7 @@ function main(): void {
   const customerOrigins = originList("CUSTOMER_ORIGINS");
   const listenPort = port();
   const releaseMetadata = readReleaseMetadata(process.env);
+  const observeRequest = createRequestTelemetry(process.env);
 
   // ---- Real Supabase-JWT identity verification ----------------------------
   // Constructing the verifier validates projectUrl/publicKey shape and throws
@@ -173,6 +175,7 @@ function main(): void {
 
   const server = createServer({ maxHeaderSize: 16384 }, (req: IncomingMessage, res: ServerResponse) => {
     attachRequestId(req, res);
+    observeRequest(req, res);
     let path = "/";
     try {
       path = new URL(req.url ?? "/", "http://localhost").pathname;
