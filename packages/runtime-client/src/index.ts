@@ -1,3 +1,6 @@
+import {ConfirmationReceiptHistory} from '@lumin/contracts';
+export type {ConfirmationReceiptHistory} from '@lumin/contracts';
+export class ConfirmationReceiptHistoryError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'UNVERIFIED',message:string){super(message);}}
 import {ConfirmationReceiptStatus} from '@lumin/contracts';
 export type {ConfirmationReceiptStatus} from '@lumin/contracts';
 export class ConfirmationReceiptStatusError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'UNVERIFIED',message:string){super(message);}}
@@ -840,6 +843,29 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   }
   throw new ConfirmationReceiptStatusError('UNVERIFIED','Receipt recording status could not be verified.');
  }
+ async function readConfirmationReceiptHistory(tenantId:string,bookingId:string):Promise<ConfirmationReceiptHistory>{
+  if(!token||!userId||!bookingApiOrigin)throw new ConfirmationReceiptHistoryError('UNAUTHENTICATED','Sign in with the configured notification service.');
+  if(!uuid(tenantId)||!uuid(bookingId))throw new ConfirmationReceiptHistoryError('INVALID_REQUEST','Select a valid business and booking.');
+  tenantId=tenantId.toLowerCase();bookingId=bookingId.toLowerCase();const at=generation,actor=userId,credential=token;
+  const current=()=>at===generation&&actor===userId&&credential===token;
+  let memberships:Record<string,unknown>[];
+  try{memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));}catch{if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');throw new ConfirmationReceiptHistoryError('UNVERIFIED','Fresh owner membership could not be verified.');}
+  if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');
+  if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>String(row.tenant_id).toLowerCase()===tenantId&&row.role==='BUSINESS_OWNER'))throw new ConfirmationReceiptHistoryError('FORBIDDEN','Fresh owner membership for this exact business is required.');
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/confirmation-receipt-history?tenantId='+encodeURIComponent(tenantId)+'&bookingId='+encodeURIComponent(bookingId),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});}catch{if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');throw new ConfirmationReceiptHistoryError('UNVERIFIED','Receipt history could not be verified.');}
+  if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');
+  if(response.status===401){signOut();throw new ConfirmationReceiptHistoryError('UNAUTHENTICATED','Please sign in again before checking recorded receipts.');}
+  try{value=await response.json();}catch{if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');throw new ConfirmationReceiptHistoryError('UNVERIFIED','Receipt history could not be verified.');}
+  if(!current())throw new ConfirmationReceiptHistoryError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');
+  if(response.status===200&&exact(value,['ok','data'])&&value.ok===true){const receipt=ConfirmationReceiptHistory.safeParse(value.data);if(receipt.success&&receipt.data.tenantId===tenantId&&receipt.data.bookingId===bookingId){for(const row of receipt.data.receipts)Object.freeze(row);Object.freeze(receipt.data.receipts);return Object.freeze(receipt.data);}}
+  if(exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===403&&value.code==='FORBIDDEN')throw new ConfirmationReceiptHistoryError('FORBIDDEN','Only an authorized owner can check recorded receipts.');
+   if(response.status===404&&value.code==='NOT_AVAILABLE')throw new ConfirmationReceiptHistoryError('NOT_AVAILABLE','Receipt history is unavailable for this booking.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new ConfirmationReceiptHistoryError('UNSUPPORTED_CONFIG','Receipt history checks are unavailable in this workspace.');
+  }
+  throw new ConfirmationReceiptHistoryError('UNVERIFIED','Receipt history could not be verified.');
+ }
  async function notificationPlannerOperation(tenantId:string,input?:SaveNotificationPlannerConfig):Promise<NotificationPlannerReceipt|null>{
   if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new NotificationPlannerError('not_sent','Sign in and select a verified business.');
   tenantId=tenantId.toLowerCase();const parsed=input===undefined?undefined:SaveNotificationPlannerConfig.safeParse(input);
@@ -1077,6 +1103,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   ownerDetailingScheduling,
   detailingSchedulingState(tenantId:string,serviceId:string):DetailingSchedulingState {const state=detailingScheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingSchedulingState:{phase:'ready'};},
   readConfirmationReceiptStatus,
+  readConfirmationReceiptHistory,
   readNotificationPlannerConfig,saveNotificationPlannerConfig,
   ownerBusinessContext,simpleOfferContext,createSimpleOffer,createOfferScheduling,detailingOfferContext,createDetailingOffer,readDetailingOffer,
   detailingOfferState(tenantId:string):DetailingOfferState {if(!uuid(tenantId))return fail('Invalid business selection.');const state=detailingOffers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingOfferState:{phase:'ready'};},
