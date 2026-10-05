@@ -471,3 +471,16 @@ jobs:
           node --import tsx apps/api/src/atomic-confirmation.integration.ts
           node --import tsx apps/api/src/rental-confirmation.integration.ts
           node --import tsx apps/api/src/confirmation-delivery-store.integration.ts
+      - name: Saved notification planner mock delivery composition and lease recovery
+        env:
+          CONFIRMATION_PLANNER_DELIVERY_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_phase_a_confirmation_planner_delivery_ci
+        run: |
+          export CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' '${{ job.services.postgres.id }}')"
+          psql -d postgres -c 'create database lumin_phase_a_confirmation_planner_delivery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/confirmation-planner-delivery.integration.ts
