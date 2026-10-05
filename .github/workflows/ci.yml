@@ -86,6 +86,7 @@ jobs:
             flow_storage_tests \
             outbox_tests \
             confirmation_outbox_tests \
+            confirmation_delivery_store_tests \
             mode_installations_tests \
             mode_flow_session_tests \
             customer_session_availability_tests \
@@ -468,3 +469,4 @@ jobs:
           node --import tsx apps/api/src/confirmation-outbox.integration.ts
           node --import tsx apps/api/src/atomic-confirmation.integration.ts
           node --import tsx apps/api/src/rental-confirmation.integration.ts
+          node --import tsx apps/api/src/confirmation-delivery-store.integration.ts
