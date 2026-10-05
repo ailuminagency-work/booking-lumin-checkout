@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState} from 'react';
+import {useLayoutEffect,useRef,useState} from 'react';
 import {ConfirmationReceiptStatus} from '@lumin/contracts';
 import {ConfirmationReceiptStatusError,type RuntimeClient} from '@lumin/runtime-client';
 export type ConfirmationReceiptsClient=Pick<RuntimeClient,'authContextRevision'|'readConfirmationReceiptStatus'>;
@@ -8,7 +8,7 @@ const uuid=(value:string)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 export function ConnectedConfirmationReceipts({client,tenantId,bookingId}:Props){
  const auth=client?.authContextRevision()??0;
  const [view,setView]=useState<View>({client,tenantId,bookingId,auth}),generation=useRef(0),inFlight=useRef(false);
- useEffect(()=>{generation.current++;inFlight.current=false;setView({client,tenantId,bookingId,auth});return()=>{generation.current++;};},[client,tenantId,bookingId,auth]);
+ useLayoutEffect(()=>{generation.current++;inFlight.current=false;setView({client,tenantId,bookingId,auth});return()=>{generation.current++;};},[client,tenantId,bookingId,auth]);
  const current=view.client===client&&view.tenantId===tenantId&&view.bookingId===bookingId&&view.auth===auth?view:undefined;
  const available=!!client&&uuid(tenantId)&&uuid(bookingId);
  async function refresh(){
