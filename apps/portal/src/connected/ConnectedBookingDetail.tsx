@@ -1,14 +1,16 @@
 import {useEffect,useState} from 'react';
+import {ConnectedConfirmationReceipts,type ConfirmationReceiptsClient} from './ConnectedConfirmationReceipts';
 import {Link,useParams} from 'react-router-dom';
 import {formatMoney} from '@lumin/contracts';
 import type {RuntimeClient,ConnectedBookingDetail,ServiceRow} from '@lumin/runtime-client';
 
-export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{client:Pick<RuntimeClient,'bookingDetail'>;tenantId:string;bookingId:string;services:ServiceRow[]}){
- const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;data:ConnectedBookingDetail|null;error:string}|null>(null);
+export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{client:Pick<RuntimeClient,'bookingDetail'>&Partial<ConfirmationReceiptsClient>;tenantId:string;bookingId:string;services:ServiceRow[]}){
+ const auth=client.authContextRevision?.()??0;
+ const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;auth:number;data:ConnectedBookingDetail|null;error:string}|null>(null);
  const [retry,setRetry]=useState(0);
- useEffect(()=>{let active=true;setResult(null);void client.bookingDetail(tenantId,bookingId).then(data=>{if(active)setResult({client,tenant:tenantId,id:bookingId,data,error:''})},()=>{if(active)setResult({client,tenant:tenantId,id:bookingId,data:null,error:'Booking details could not be loaded. Check your connection or sign in again.'})});return()=>{active=false}},[client,tenantId,bookingId,retry]);
+ useEffect(()=>{let active=true;setResult(null);void client.bookingDetail(tenantId,bookingId).then(data=>{if(active)setResult({client,tenant:tenantId,id:bookingId,auth,data,error:''})},()=>{if(active)setResult({client,tenant:tenantId,id:bookingId,auth,data:null,error:'Booking details could not be loaded. Check your connection or sign in again.'})});return()=>{active=false}},[client,tenantId,bookingId,retry,auth]);
  // Withhold the old connection's private record and error before passive effects.
- const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId?result:null;
+ const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId&&result.auth===auth?result:null;
  const error=current?.error??'';
  const detail=current?.data;
  const when=(v:string)=>new Date(v).toLocaleString();
@@ -23,6 +25,7 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
    <h2>Location</h2>{detail.address?<dl>{Object.entries(detail.address).map(([key,value])=><div key={key}><dt>{key}</dt><dd style={{overflowWrap:'anywhere'}}>{show(value)}</dd></div>)}</dl>:<p>No address was provided.</p>}
    <h2>Form responses</h2><dl>{Object.entries(detail.selection).filter(([key])=>key!=='serviceId').map(([key,value])=><div key={key}><dt>{key}</dt><dd style={{overflowWrap:'anywhere'}}>{show(value)}</dd></div>)}</dl>
    {detail.notes&&<><h2>Notes</h2><p style={{overflowWrap:'anywhere'}}>{detail.notes}</p></>}
+   <ConnectedConfirmationReceipts client={typeof client.readConfirmationReceiptStatus==='function'&&typeof client.authContextRevision==='function'?client as ConfirmationReceiptsClient:undefined} tenantId={tenantId} bookingId={bookingId}/>
    <h2>Activity</h2><p>Created {when(detail.createdAt)}</p><ol>{detail.history.map((h,index)=><li key={index}>{when(h.at)} · {h.from?`${h.from} → `:''}{h.to}{h.reason?` · ${h.reason}`:''}</li>)}</ol>
   </>}
  </section>;

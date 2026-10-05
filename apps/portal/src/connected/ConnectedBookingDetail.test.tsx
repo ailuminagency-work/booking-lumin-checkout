@@ -1,6 +1,6 @@
 import {useLayoutEffect} from 'react';
 import {afterEach,expect,it,vi} from 'vitest';
-import {cleanup,render,screen,waitFor} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import type {ConnectedBookingDetail,RuntimeClient} from '@lumin/runtime-client';
 import {ConnectedBookingRecord} from './ConnectedBookingDetail';
@@ -50,4 +50,18 @@ it('drops a late old-client receipt while showing the new verified record',async
  await waitFor(()=>expect(screen.queryByText('STAGING_PRIVATE_CUSTOMER_A')).toBeNull());
  expect(screen.getByText('STAGING_CURRENT_CUSTOMER_B')).toBeVisible();
  expect(screen.getByText('STAGING TEST — simulated payment')).toBeVisible();
+});
+it('integrates confirmation receipt records only into a verified booking and keeps refresh explicit',async()=>{
+ const readConfirmationReceiptStatus=vi.fn(async()=>({schemaVersion:1 as const,tenantId:tenant,bookingId:booking,channels:[{channel:'email' as const,receiptRecorded:true},{channel:'sms' as const,receiptRecorded:false}] as [{channel:'email';receiptRecorded:boolean},{channel:'sms';receiptRecorded:boolean}]}));
+ const client={bookingDetail:vi.fn(async()=>fixture('STAGING_BOUND_BOOKING')),authContextRevision:vi.fn(()=>0),readConfirmationReceiptStatus};
+ render(<MemoryRouter><ConnectedBookingRecord client={client} tenantId={tenant} bookingId={booking} services={[]}/></MemoryRouter>);await screen.findByText('STAGING_BOUND_BOOKING');expect(screen.getByRole('region',{name:'Confirmation receipt records'})).toBeTruthy();expect(readConfirmationReceiptStatus).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'Refresh confirmation receipts'}));await screen.findByRole('table');expect(readConfirmationReceiptStatus).toHaveBeenCalledWith(tenant,booking);expect(screen.getByText('Successful-send receipt recorded')).toBeTruthy();expect(screen.getByText('No successful-send receipt recorded')).toBeTruthy();
+});
+it('does not expose a receipt refresh for an unavailable booking',async()=>{
+ const readConfirmationReceiptStatus=vi.fn();render(<MemoryRouter><ConnectedBookingRecord client={{bookingDetail:vi.fn(async()=>null),authContextRevision:vi.fn(()=>0),readConfirmationReceiptStatus}} tenantId={tenant} bookingId={booking} services={[]}/></MemoryRouter>);await screen.findByText('No booking is available for this business and reference.');expect(screen.queryByRole('region',{name:'Confirmation receipt records'})).toBeNull();expect(readConfirmationReceiptStatus).not.toHaveBeenCalled();
+});
+it('withholds the prior private booking before passive effects after same-client authentication changes',async()=>{
+ let auth=0,observed='';const client={bookingDetail:vi.fn(async()=>fixture('STAGING_PREVIOUS_ACCOUNT')),authContextRevision:vi.fn(()=>auth)};
+ function Observer(){useLayoutEffect(()=>{observed=document.body.textContent??'';});return <ConnectedBookingRecord client={client} tenantId={tenant} bookingId={booking} services={[]}/>;}
+ const view=render(<MemoryRouter><Observer/></MemoryRouter>);await screen.findByText('STAGING_PREVIOUS_ACCOUNT');vi.mocked(client.bookingDetail).mockImplementation(()=>new Promise(()=>{}));auth++;
+ view.rerender(<MemoryRouter><Observer/></MemoryRouter>);expect(observed).not.toContain('STAGING_PREVIOUS_ACCOUNT');expect(observed).toContain('Loading booking');expect(screen.queryByRole('region',{name:'Confirmation receipt records'})).toBeNull();
 });
