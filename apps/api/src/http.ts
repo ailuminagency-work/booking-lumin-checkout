@@ -1,3 +1,4 @@
+import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {DetailingPaymentReceipt,DetailingPaymentReadiness,type DetailingPaymentApi} from './detailing-payment';
 import {DetailingReservationInput,DetailingRequestReceipt,DetailingHoldReceipt} from '@lumin/contracts';
 import type {DetailingReservationApi} from './detailing-reservation';
@@ -54,6 +55,8 @@ import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDr
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
+ notificationAuthoring?:boolean;
+ notificationPlannerConfig?:NotificationPlannerConfigApi;
  detailingOfferCreate?:DetailingOfferCreator;
  detailingOfferRead?:DetailingOfferReader;
  releaseEnvironment?:ReleaseEnvironment;
@@ -243,6 +246,24 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==='/api/notification-planner-config'){
+    if(!options.notificationAuthoring||!options.notificationPlannerConfig)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'&&req.method!=='POST')throw new FlowError('INVALID_REQUEST');
+    const tenantId=tenant.toLowerCase();
+    if(req.method==='GET'){
+     if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const value=await options.notificationPlannerConfig.read(actor,tenantId);
+     if(value===null){send(res,200,{ok:true,data:null});return;}
+     const result=NotificationPlannerReceipt.safeParse(value);
+     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:result.data});return;
+    }
+    const body=SaveNotificationPlannerConfig.parse(await jsonBody(req));
+    if(body.config.tenantId!==tenantId)throw new FlowError('INVALID_REQUEST');
+    const result=NotificationPlannerReceipt.safeParse(await options.notificationPlannerConfig.save(actor,tenantId,body));
+    if(!result.success||result.data.tenantId!==tenantId||result.data.revision!==body.expectedRevision+1||!isDeepStrictEqual(result.data.config,body.config))throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
    if(url.pathname==="/api/bookings/mock-payment"){
     if(req.method!=="POST")throw new FlowError("NOT_AVAILABLE");
     const body=MockPaymentInput.parse(await jsonBody(req));

@@ -7,13 +7,15 @@ const tenant='11111111-1111-1111-1111-111111111111',booking='22222222-2222-2222-
 const customer='33333333-3333-3333-3333-333333333333',service='44444444-4444-4444-4444-444444444444';
 const connection='55555555-5555-5555-5555-555555555555',foreign='99999999-9999-9999-9999-999999999999';
 const binding:ConfirmationContextBinding={tenantId:tenant,connectionId:connection,providerName:'controlled-test-provider',supportedChannels:['email','sms']};
+function plannerConfig(overrides:Parameters<typeof baseConfig>[0]={}){const config=baseConfig(overrides);config.templates=config.templates.filter(template=>template.locale===config.locale);return config;}
 function snapshot(){return {
  tenant:{id:tenant,name:'Persisted business',status:'active',timezone:'UTC'},
  booking:{id:booking,tenantId:tenant,state:'confirmed',reference:'LMN-SAVED',customerId:customer,serviceId:service,
   slotStart:'2035-01-01T09:00:00.000Z',slotEnd:'2035-01-01T10:00:00.000Z',total:{amount:12900,currency:'USD'}},
  customer:{id:customer,tenantId:tenant,name:'Persisted customer',email:'persisted@example.test',phone:'+15125550111' as string|null},
  service:{id:service,tenantId:tenant,active:true,currency:'USD'},
- connection:{id:connection,tenantId:tenant,provider:binding.providerName,status:'connected',config:baseConfig({timezone:'UTC'}) as unknown},
+ connection:{id:connection,tenantId:tenant,provider:binding.providerName,status:'connected'},
+ planner:{schemaVersion:1,tenantId:tenant,revision:1,config:plannerConfig({timezone:'UTC'}) as unknown},
 };}
 type Snapshot=ReturnType<typeof snapshot>;
 function harness(rows:unknown[]=[{result:snapshot()}]){
@@ -48,32 +50,48 @@ describe('trusted persisted confirmation context (unwired, no configuration defa
   const s=snapshot();s.connection[field]=foreign;expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
  });
  it.each([undefined,null,{}, {apiKey:'secret-value'}, {locale:'en-US'}, {tenantId:foreign}])('blocks absent/provider-only planner configuration',config=>{
-  const s=snapshot();s.connection.config=config;expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+  const s=snapshot();s.planner.config=config;expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+ });
+ it.each([null,undefined,{}, {schemaVersion:2,tenantId:tenant,revision:1,config:plannerConfig({timezone:'UTC'})},
+  {schemaVersion:1,tenantId:foreign,revision:1,config:plannerConfig({timezone:'UTC'})},
+  ...[0,-1,1.5,Number.MAX_SAFE_INTEGER+1,'1'].map(revision=>({schemaVersion:1,tenantId:tenant,revision,config:plannerConfig({timezone:'UTC'})})),
+  {schemaVersion:1,tenantId:tenant,revision:1,config:plannerConfig({timezone:'UTC'}),provider:'override'}])('rejects absent or malformed canonical planner envelope',planner=>{
+  const s={...snapshot(),planner};expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+ });
+ it('never falls back to provider configuration when the canonical planner is missing',()=>{
+  const s={...snapshot(),planner:null,connection:{...snapshot().connection,config:plannerConfig({timezone:'UTC'})}};
+  expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+ });
+ it('requires the canonical saved-locale and template grammar rather than the broader planner input contract',()=>{
+  for(const change of [(config:ReturnType<typeof plannerConfig>)=>{config.templates[0]!.locale='es-MX';},(config:ReturnType<typeof plannerConfig>)=>{config.templates[0]!.body='{{unsupportedVariable}}';}]){
+   const s=snapshot();const config=plannerConfig({timezone:'UTC'});change(config);s.planner.config=config;
+   expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+  }
  });
  it('rejects recipient or credential overrides rather than stripping them or using defaults',()=>{
   for(const extra of [{recipient:'caller@example.test'},{apiKey:'secret-value'}]){
-   const s=snapshot();s.connection.config={...(s.connection.config as object),...extra};
+   const s=snapshot();s.planner.config={...(s.planner.config as object),...extra};
    expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
   }
-  const s=snapshot();const config=baseConfig({timezone:'UTC'});config.sender={...config.sender,apiKey:'nested-secret'} as typeof config.sender;
-  s.connection.config=config;expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
+  const s=snapshot();const config=plannerConfig({timezone:'UTC'});config.sender={...config.sender,apiKey:'nested-secret'} as typeof config.sender;
+  s.planner.config=config;expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
  });
  it('rejects config tenant/zone mismatches and invalid locale/zone without guessed fallback',()=>{
   for(const override of [{tenantId:foreign},{timezone:'America/Los_Angeles'},{locale:'bad_locale'},{timezone:'Not/AZone'}]){
-   const s=snapshot();s.connection.config=baseConfig({timezone:'UTC',...override});
+   const s=snapshot();s.planner.config=plannerConfig({timezone:'UTC',...override});
    if(override.timezone==='Not/AZone')s.tenant.timezone='Not/AZone';
    expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
   }
  });
  it('requires declared provider support and persisted sender/template for every confirmation channel',()=>{
   expectCode(()=>validateConfirmationContextSnapshot(snapshot(),{...binding,supportedChannels:['email']},booking),'CONFIG_NOT_READY');
-  for(const change of [(c:ReturnType<typeof baseConfig>)=>{c.sender.emailFrom=undefined;},(c:ReturnType<typeof baseConfig>)=>{c.sender.smsFrom=undefined;},(c:ReturnType<typeof baseConfig>)=>{c.templates=c.templates.filter(t=>t.channel!=='sms');},(c:ReturnType<typeof baseConfig>)=>{c.events=c.events.filter(e=>e.event!=='booking.confirmed');}]){
-   const s=snapshot();const config=baseConfig({timezone:'UTC'});change(config);s.connection.config=config;
+  for(const change of [(c:ReturnType<typeof plannerConfig>)=>{c.sender.emailFrom=undefined;},(c:ReturnType<typeof plannerConfig>)=>{c.sender.smsFrom=undefined;},(c:ReturnType<typeof plannerConfig>)=>{c.templates=c.templates.filter(t=>t.channel!=='sms');},(c:ReturnType<typeof plannerConfig>)=>{c.events=c.events.filter(e=>e.event!=='booking.confirmed');}]){
+   const s=snapshot();const config=plannerConfig({timezone:'UTC'});change(config);s.planner.config=config;
    expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'CONFIG_NOT_READY');
   }
  });
  it('honors explicitly disabled confirmation channels without enabling another channel',()=>{
-  const s=snapshot();s.connection.config=baseConfig({timezone:'UTC',events:[{event:'booking.confirmed',channels:[]}]});s.customer.phone=null;
+  const s=snapshot();s.planner.config=plannerConfig({timezone:'UTC',events:[{event:'booking.confirmed',channels:[]}]});s.customer.phone=null;
   const loaded=validateConfirmationContextSnapshot(s,binding,booking);
   expect(planNotifications('booking.confirmed',loaded.context,loaded.config,'2030-01-01T00:00:00Z')).toEqual([]);
  });
@@ -101,7 +119,7 @@ describe('trusted persisted confirmation context (unwired, no configuration defa
   const [sql,args]=calls.find(([sql])=>sql.startsWith('select'))!;
   expect(args).toEqual([tenant,booking,connection]);
   expect(sql).toContain('c.tenant_id=b.tenant_id');expect(sql).toContain('s.tenant_id=b.tenant_id');expect(sql).toContain('n.tenant_id=b.tenant_id');
-  expect(sql).not.toContain('connection_secrets');expect(sql).not.toContain('last_error');expect(sql).not.toContain('customer_payload');
+  expect(sql).toContain('public.runtime_notification_planner_config(b.tenant_id)');expect(sql).not.toContain('n.config');expect(sql).not.toContain('connection_secrets');expect(sql).not.toContain('last_error');expect(sql).not.toContain('customer_payload');
   expect(calls.at(-1)![0]).toBe('commit');expect(h.client.release).toHaveBeenCalledWith(false);
  });
  it('rejects wrong tenant/invalid booking before opening a database connection',async()=>{
@@ -113,7 +131,7 @@ describe('trusted persisted confirmation context (unwired, no configuration defa
    const h=harness(rows);await expect(h.loader(tenant,booking)).rejects.toMatchObject({code:'NOT_AVAILABLE'});
    expect(h.client.query.mock.calls.at(-1)![0]).toBe('rollback');
   }
-  const s=snapshot();s.connection.config={};const h=harness([{result:s}]);
+  const s=snapshot();s.planner.config={};const h=harness([{result:s}]);
   await expect(h.loader(tenant,booking)).rejects.toMatchObject({code:'CONFIG_NOT_READY'});expect(h.client.query.mock.calls.at(-1)![0]).toBe('rollback');
  });
  it('masks database errors and logs no contacts, configuration or credentials',async()=>{
