@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
-import { Component } from "react";
-import { FlowPortal } from "./flows/FlowPortal";
-import { ModeOwnerPortal } from "./flows/ModeOwnerPortal";
-import { ConnectedPortal } from "./connected/ConnectedPortal";
+import { Component, lazy, Suspense } from "react";
+const FlowPortal = lazy(() => import("./flows/FlowPortal").then(module => ({ default: module.FlowPortal })));
+const ModeOwnerPortal = lazy(() => import("./flows/ModeOwnerPortal").then(module => ({ default: module.ModeOwnerPortal })));
+const ConnectedPortal = lazy(() => import("./connected/ConnectedPortal").then(module => ({ default: module.ConnectedPortal })));
 import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { Layout } from "./components/Layout";
@@ -43,6 +43,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
   }
 }
 
+export function PortalModeLoading({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<p role="status" aria-live="polite">Loading portal…</p>}>{children}</Suspense>;
+}
+
 /** Shared route context; mode determines data access, never a fallback to demo. */
 export function PortalApplication() {
   const runtime = readPublicRuntimeConfig(import.meta.env);
@@ -56,5 +60,5 @@ export function PortalApplication() {
 }
 
 export function App() {
-  return <ErrorBoundary><BrowserRouter basename={import.meta.env.BASE_URL}><PortalApplication /></BrowserRouter></ErrorBoundary>;
+  return <ErrorBoundary><BrowserRouter basename={import.meta.env.BASE_URL}><PortalModeLoading><PortalApplication /></PortalModeLoading></BrowserRouter></ErrorBoundary>;
 }
