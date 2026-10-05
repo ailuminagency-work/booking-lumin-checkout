@@ -7,6 +7,11 @@ const queryCanary='lumin_observability_query_canary',headerCanary='lumin_observa
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&(Object.getPrototypeOf(value)===Object.prototype||Object.getPrototypeOf(value)===null);
 const exact=(value,keys)=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...keys].sort().join(',');
+function ownerVary(value){
+ if(typeof value!=='string'||value.length>128)return false;
+ const tokens=value.split(',').map(token=>token.replace(/^[ \t]+|[ \t]+$/g,'').toLowerCase());
+ return tokens.length<=2&&tokens.includes('origin')&&new Set(tokens).size===tokens.length&&tokens.every(token=>token==='origin'||token==='accept-encoding');
+}
 class ProbeFailure extends Error{constructor(code,check){super('Staging observability probe failed.');this.code=code;this.check=check;}}
 const failure=(code,check)=>new ProbeFailure(code,check);
 export function parseObservabilityArgs(args){
@@ -33,7 +38,7 @@ export async function runObservabilityProbe(config,options={}){
    if(controller.signal.aborted){void response.body?.cancel().catch(()=>{});throw failure('NETWORK',check);}
    if(response.redirected||response.status!==status||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||response.headers.get('cache-control')!=='no-store'||response.headers.get('x-content-type-options')!=='nosniff'||response.headers.get('set-cookie')!==null||response.headers.get('access-control-allow-credentials')!==null||response.headers.get('access-control-expose-headers')!==null)throw failure('RESPONSE',check);
    if(response.url&&response.url!==target+path)throw failure('RESPONSE',check);
-   if(response.headers.get('access-control-allow-origin')!==(origin===owner?owner:null)||(origin===owner&&response.headers.get('vary')!=='Origin'))throw failure('RESPONSE',check);
+   if(response.headers.get('access-control-allow-origin')!==(origin===owner?owner:null)||(origin===owner&&!ownerVary(response.headers.get('vary'))))throw failure('RESPONSE',check);
    const requestId=response.headers.get('x-request-id');if(!uuid.test(requestId??'')||requestId===spoof||ids.has(requestId))throw failure('RESPONSE',check);
    if(!response.body)throw failure('RESPONSE',check);reader=response.body.getReader();let bytes=0;const chunks=[];
    while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>4096)throw failure('RESPONSE',check);chunks.push(part.value);}
