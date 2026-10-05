@@ -376,3 +376,66 @@ it.each(['publication','rollback'] as const)('disables discard and drops the rev
  mounted.rerender(<PaidSimplePublisher client={client} tenantId={tenant} role="BUSINESS_OWNER" services={[service]} staging/>);
  expect(screen.queryByRole('dialog',{name:'Review discarding draft edits'})).toBeNull();expect(screen.getByRole('button',{name:'Discard unsaved edits'})).toBeDisabled();expect(screen.getByLabelText('Draft name')).toHaveValue('Pending local edit');expect(calls).toHaveBeenCalledTimes(3);
 });
+
+
+const installCurrent='44000000-0000-4000-8000-000000000004',installCurrentId='55000000-0000-4000-8000-000000000005',installPrior='66000000-0000-4000-8000-000000000006',installPriorId='77000000-0000-4000-8000-000000000007';
+const currentFieldReceipt={flowId:other,draftRevision:2,publication:{versionId:installCurrent,installationId:installCurrentId,renderSchemaVersion:5 as const,hostedPath:'/checkout/flow/'+installCurrentId}};
+const priorFieldReceipt={flowId:other,draftRevision:1,publication:{versionId:installPrior,installationId:installPriorId,renderSchemaVersion:5 as const,hostedPath:'/checkout/flow/'+installPriorId}};
+const installHistory={flowId:other,versions:[{versionId:installCurrent,renderSchemaVersion:5,draftRevision:2,name:'Blue current',presentation:{accentColor:'#4f46e5',layout:'stacked'},current:true,publication:currentFieldReceipt.publication,customerFields:v2Fields},{versionId:installPrior,renderSchemaVersion:5,draftRevision:1,name:'Teal prior',presentation:{accentColor:'#0e7490',layout:'compact'},current:false,publication:priorFieldReceipt.publication,customerFields:v2Fields}]};
+async function rollbackInstallFixture(outcome:'success'|'unknown'|'pending'='success'){
+ let step=0,restored=false;
+ const {client,calls}=await fixture(async()=>{
+  step++;
+  if(step===1)return json({ok:true,data:currentFieldReceipt});
+  if(step===2)return json({ok:true,data:{...v2UiDraft,revision:2}});
+  if(outcome==='unknown'&&step===5){restored=true;return json({ok:true,data:{flowId:other,...priorFieldReceipt.publication}});}
+  if(step===3||step>4)return json({ok:true,data:{...installHistory,versions:installHistory.versions.map(v=>({...v,current:restored?v.versionId===installPrior:v.current}))}});
+  if(outcome==='unknown')throw Error('lost response');
+  if(outcome==='pending')return new Promise<Response>(()=>{});
+  restored=true;return json({ok:true,data:{flowId:other,...priorFieldReceipt.publication}});
+ });
+ await client.recoverPaidCustomerFieldPublication(tenant,other,2);await client.loadPaidSimpleDraft(tenant,other);
+ return {client,calls};
+}
+async function reviewFieldInstallRollback(){
+ openTab('Publish');fireEvent.change(screen.getByLabelText('Publication history form ID'),{target:{value:other}});fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));await screen.findByRole('heading',{name:'Teal prior'});fireEvent.change(screen.getByLabelText('Prior published version'),{target:{value:installPrior}});fireEvent.click(screen.getByRole('button',{name:'Review rollback'}));fireEvent.click(screen.getByRole('button',{name:'Confirm publication rollback'}));
+}
+function ownerFieldPublisher(client:Awaited<ReturnType<typeof fixture>>['client'],business=tenant){return <PaidSimplePublisher client={client} tenantId={business} role="BUSINESS_OWNER" services={[{...service,tenant_id:business}]} staging customerFieldPublicationAvailable/>;}
+it('selects verified rollback revision for every install artifact without editing the newer saved draft or claiming browser health',async()=>{
+ const {client,calls}=await rollbackInstallFixture();render(ownerFieldPublisher(client));openTab('Install & Health');expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+currentFieldReceipt.publication.hostedPath);
+ await reviewFieldInstallRollback();await screen.findByText(/Rollback target verified at last check/);openTab('Install & Health');
+ const target=STAGING_CHECKOUT_ORIGIN+priorFieldReceipt.publication.hostedPath;
+ expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(target);expect((screen.getByLabelText('Website iframe code') as HTMLTextAreaElement).value).toContain(target);expect((screen.getByLabelText('Staging JavaScript inline code') as HTMLTextAreaElement).value).toContain(installPriorId);expect((screen.getByLabelText('Staging launcher / modal code') as HTMLTextAreaElement).value).toContain(installPriorId);expect(screen.getByRole('link',{name:'Open staging customer information form'})).toHaveAttribute('href',target);expect(screen.getByText(/Published draft revision: 1; form:/)).toBeVisible();expect(screen.getByLabelText('QR booking URL')).toHaveValue(target);
+ const health=vi.spyOn(client,'paidCustomerFieldPublicationHealth').mockRejectedValue(Error('offline'));
+ fireEvent.click(screen.getByRole('button',{name:'Check install evidence'}));await screen.findByText(/Install evidence could not be verified/);expect(health).toHaveBeenCalledWith(tenant,priorFieldReceipt);expect(screen.getByText(/Browser load health remains unverified/)).toBeVisible();
+ expect(client.paidSimpleDraftState(tenant)).toMatchObject({phase:'loaded',revision:2});expect(client.paidCustomerFieldPublicationState(tenant)).toMatchObject({phase:'published',draftRevision:2,receipt:currentFieldReceipt});expect(calls.mock.calls.slice(2).filter(([,init])=>init?.method==='POST')).toHaveLength(1);
+});
+it.each(['pending','unknown'] as const)('withholds install artifacts while rollback is %s and never selects the target optimistically',async outcome=>{
+ const {client,calls}=await rollbackInstallFixture(outcome);render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await waitFor(()=>expect(client.customerFieldRollbackState(tenant).phase).toBe(outcome==='pending'?'rolling_back':'unknown'));openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();expect(screen.queryByRole('button',{name:'Check install evidence'})).toBeNull();expect(screen.getByRole('button',{name:'Save draft'})).toBeDisabled();expect(calls.mock.calls.slice(2).filter(([,init])=>init?.method==='POST')).toHaveLength(1);
+});
+it('requires an explicit current history read after remount and never falls back to the inactive published receipt',async()=>{
+ const {client,calls}=await rollbackInstallFixture();const first=render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await screen.findByText(/Rollback target verified at last check/);first.unmount();const before=calls.mock.calls.length;render(ownerFieldPublisher(client));openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();expect(screen.getByText(/Refresh publication history in Publish/)).toBeVisible();expect(calls).toHaveBeenCalledTimes(before);
+ openTab('Publish');fireEvent.change(screen.getByLabelText('Publication history form ID'),{target:{value:other}});fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));await screen.findByRole('heading',{name:'Teal prior'});openTab('Install & Health');expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+priorFieldReceipt.publication.hostedPath);expect(calls).toHaveBeenCalledTimes(before+1);expect(calls.mock.calls.at(-1)?.[1]?.method).toBe('GET');
+});
+it('supersedes a restored install selection only when a new publication receipt is verified',async()=>{
+ const {client}=await rollbackInstallFixture();const view=render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await screen.findByText(/Rollback target verified at last check/);openTab('Install & Health');expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+priorFieldReceipt.publication.hostedPath);
+ const next={...currentFieldReceipt,draftRevision:3,publication:{...currentFieldReceipt.publication,versionId:tenant,installationId:serviceId,hostedPath:'/checkout/flow/'+serviceId}};
+ vi.spyOn(client,'paidCustomerFieldPublicationState').mockReturnValue({phase:'published',flowId:other,draftRevision:3,receipt:next});view.rerender(ownerFieldPublisher(client));expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+next.publication.hostedPath);
+});
+it.each(['tenant','session'] as const)('drops rollback revision provenance on %s change without leaking the previous installation',async context=>{
+ const {client}=await rollbackInstallFixture();const view=render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await screen.findByText(/Rollback target verified at last check/);openTab('Install & Health');expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+priorFieldReceipt.publication.hostedPath);
+ if(context==='session')client.signOut();view.rerender(ownerFieldPublisher(client,context==='tenant'?serviceId:tenant));openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();expect(screen.queryByRole('link',{name:'Open staging customer information form'})).toBeNull();expect(document.body.textContent).not.toContain(installPriorId);expect(document.body.textContent).not.toContain('synthetic-owner-private-token');
+});
+
+it('selects the retained validated target revision only after an explicit uncertain rollback receipt check',async()=>{
+ const {client,calls}=await rollbackInstallFixture('unknown');render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await waitFor(()=>expect(client.customerFieldRollbackState(tenant).phase).toBe('unknown'));openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();openTab('Publish');fireEvent.click(screen.getByRole('button',{name:'Check rollback outcome'}));await screen.findByText(/Rollback target verified at last check/);openTab('Install & Health');expect(screen.getByLabelText('Direct staging form URL')).toHaveValue(STAGING_CHECKOUT_ORIGIN+priorFieldReceipt.publication.hostedPath);expect(calls.mock.calls.slice(2).filter(([,init])=>init?.method==='POST')).toHaveLength(1);expect(calls.mock.calls.at(-1)?.[1]?.method).toBe('GET');
+});
+it('rejects a late validated history callback from an earlier auth revision, even if the client object is reused',async()=>{
+ const {client}=await rollbackInstallFixture();let finish!:(history:Awaited<ReturnType<typeof client.customerFieldVersionHistory>>)=>void;
+ vi.spyOn(client,'customerFieldVersionHistory').mockImplementation(()=>new Promise(resolve=>finish=resolve));const view=render(ownerFieldPublisher(client));openTab('Publish');fireEvent.change(screen.getByLabelText('Publication history form ID'),{target:{value:other}});fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));await waitFor(()=>expect(finish).toBeTypeOf('function'));
+ client.signOut();view.rerender(ownerFieldPublisher(client));finish(installHistory as Awaited<ReturnType<typeof client.customerFieldVersionHistory>>);await waitFor(()=>expect(screen.queryByText('Checking published form history...')).toBeNull());expect(screen.queryByRole('heading',{name:'Teal prior'})).toBeNull();openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();expect(document.body.textContent).not.toContain(installPriorId);
+});
+
+it('does not select an older verified rollback again after a later rollback is rejected',async()=>{
+ let step=0;const {client}=await fixture(async()=>{step++;return step===1?json({ok:true,data:currentFieldReceipt}):step===2?json({ok:true,data:{...v2UiDraft,revision:2}}):step===4?json({ok:true,data:{flowId:other,...priorFieldReceipt.publication}}):step===6?json({ok:false,code:'FORBIDDEN'},403):json({ok:true,data:installHistory});});await client.recoverPaidCustomerFieldPublication(tenant,other,2);await client.loadPaidSimpleDraft(tenant,other);render(ownerFieldPublisher(client));await reviewFieldInstallRollback();await screen.findByText(/Rollback target verified at last check/);await reviewFieldInstallRollback();await screen.findByText(/Rollback was rejected/);openTab('Install & Health');expect(screen.queryByLabelText('Direct staging form URL')).toBeNull();expect(screen.queryByRole('button',{name:'Check install evidence'})).toBeNull();expect(client.customerFieldRollbackState(tenant).phase).toBe('verified');
+});

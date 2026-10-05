@@ -2,10 +2,10 @@ import {useEffect,useId,useRef,useState,type FormEvent,type KeyboardEvent} from 
 import {CustomerDraftFields} from '@lumin/contracts';
 import {PAID_SIMPLE_ACCENT_COLORS,PublicationError,type CustomerFieldInstallReceipt,type CustomerFieldVersionHistory,type RuntimeClient} from '@lumin/runtime-client';
 
-type Client=Pick<RuntimeClient,'customerFieldVersionHistory'|'rollbackCustomerFieldPublication'|'reconcileCustomerFieldRollback'|'customerFieldRollbackState'>;
-export type ConnectedCustomerFieldHistoryProps={client:Client;tenantId:string;blocked:boolean;onStateChange:()=>void};
-type View={client:Client;tenantId:string;flowId:string;phase:'idle'|'loading'|'loaded'|'failed';history?:CustomerFieldVersionHistory;error:string};
-type Review={client:Client;tenantId:string;flowId:string;currentVersionId:string;targetVersionId:string;targetName:string;targetRevision:number;targetPublication:CustomerFieldInstallReceipt};
+type Client=Pick<RuntimeClient,'customerFieldVersionHistory'|'rollbackCustomerFieldPublication'|'reconcileCustomerFieldRollback'|'customerFieldRollbackState'>&Partial<Pick<RuntimeClient,'authContextRevision'>>;
+export type ConnectedCustomerFieldHistoryProps={client:Client;tenantId:string;blocked:boolean;onStateChange:(verifiedRollback?:boolean)=>void;onVerifiedHistory?:(history:CustomerFieldVersionHistory,authRevision:number)=>void};
+type View={client:Client;tenantId:string;auth:number;flowId:string;phase:'idle'|'loading'|'loaded'|'failed';history?:CustomerFieldVersionHistory;error:string};
+type Review={client:Client;tenantId:string;auth:number;flowId:string;currentVersionId:string;targetVersionId:string;targetName:string;targetRevision:number;targetPublication:CustomerFieldInstallReceipt};
 const checkoutOrigin='https://booking-lumin-checkout-staging.netlify.app';
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
 const exact=(v:unknown,keys:string[]):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===keys.length&&keys.every(key=>Object.hasOwn(v,key));
@@ -25,36 +25,37 @@ export function ConnectedCustomerFieldHistory(props:ConnectedCustomerFieldHistor
  if(!uuid(props.tenantId.toLowerCase()))return <section aria-label="Customer field publication history"><p role="alert">Choose a verified business before checking publication history.</p></section>;
  return <HistoryPanel {...props} tenantId={props.tenantId.toLowerCase()}/>;
 }
-function HistoryPanel({client,tenantId,blocked,onStateChange}:ConnectedCustomerFieldHistoryProps){
- const initial=():View=>({client,tenantId,flowId:'',phase:'idle',error:''}),[snapshot,setSnapshot]=useState<View>(initial),[selected,setSelected]=useState(''),[reviewSnapshot,setReview]=useState<Review|null>(null),[checking,setChecking]=useState(false),[,setTick]=useState(0);
- const generation=useRef(0),inFlight=useRef(false),context=useRef({client,tenantId}),reviewButton=useRef<HTMLButtonElement>(null),refreshButton=useRef<HTMLButtonElement>(null),cancelButton=useRef<HTMLButtonElement>(null),confirmButton=useRef<HTMLButtonElement>(null),titleId=useId();context.current={client,tenantId};
- useEffect(()=>{generation.current++;inFlight.current=false;setSnapshot(initial());setSelected('');setReview(null);setChecking(false);return()=>{generation.current++;};},[client,tenantId]);
- const view=snapshot.client===client&&snapshot.tenantId===tenantId?snapshot:initial(),review=reviewSnapshot?.client===client&&reviewSnapshot.tenantId===tenantId?reviewSnapshot:null;
+function HistoryPanel({client,tenantId,blocked,onStateChange,onVerifiedHistory}:ConnectedCustomerFieldHistoryProps){
+ const auth=client.authContextRevision?.()??0;
+ const initial=():View=>({client,tenantId,auth,flowId:'',phase:'idle',error:''}),[snapshot,setSnapshot]=useState<View>(initial),[selected,setSelected]=useState(''),[reviewSnapshot,setReview]=useState<Review|null>(null),[checking,setChecking]=useState(false),[,setTick]=useState(0);
+ const generation=useRef(0),inFlight=useRef(false),context=useRef({client,tenantId,auth}),reviewButton=useRef<HTMLButtonElement>(null),refreshButton=useRef<HTMLButtonElement>(null),cancelButton=useRef<HTMLButtonElement>(null),confirmButton=useRef<HTMLButtonElement>(null),titleId=useId();context.current={client,tenantId,auth};
+ useEffect(()=>{generation.current++;inFlight.current=false;setSnapshot(initial());setSelected('');setReview(null);setChecking(false);return()=>{generation.current++;};},[client,tenantId,auth]);
+ const view=snapshot.client===client&&snapshot.tenantId===tenantId&&snapshot.auth===auth?snapshot:initial(),review=reviewSnapshot?.client===client&&reviewSnapshot.tenantId===tenantId&&reviewSnapshot.auth===auth?reviewSnapshot:null;
  useEffect(()=>{if(review)cancelButton.current?.focus();},[review]);
  const rollback=client.customerFieldRollbackState(tenantId),locked=rollback.phase==='rolling_back'||rollback.phase==='unknown',current=view.history?.versions.find(v=>v.current),targets=view.history?.versions.filter(v=>!v.current&&v.publication&&current&&v.draftRevision<current.draftRevision)??[];
- const active=(at:number)=>at===generation.current&&context.current.client===client&&context.current.tenantId===tenantId;
- const notify=()=>{setTick(n=>n+1);onStateChange();};
- function edit(value:string){if(locked||inFlight.current)return;generation.current++;setSelected('');setReview(null);setSnapshot({client,tenantId,flowId:value,phase:'idle',error:''});}
+ const active=(at:number)=>at===generation.current&&context.current.client===client&&context.current.tenantId===tenantId&&context.current.auth===auth&&(client.authContextRevision?.()??0)===auth;
+ const notify=(verifiedRollback=false)=>{setTick(n=>n+1);onStateChange(verifiedRollback);};
+ function edit(value:string){if(locked||inFlight.current)return;generation.current++;setSelected('');setReview(null);setSnapshot({client,tenantId,auth,flowId:value,phase:'idle',error:''});}
  async function refresh(event:FormEvent){
   event.preventDefault();if(inFlight.current||rollback.phase==='rolling_back')return;const flowId=(locked?rollback.flowId:view.flowId).trim().toLowerCase();if(!uuid(flowId)){setSnapshot({...view,error:'Enter the known form ID for this business.'});return;}
-  const at=++generation.current;inFlight.current=true;setSelected('');setReview(null);setSnapshot({client,tenantId,flowId,phase:'loading',error:''});
-  try{const history=await client.customerFieldVersionHistory(tenantId,flowId);if(!safeHistory(history,flowId))throw new PublicationError('not_sent','Publication history could not be validated. No installation or rollback authority was granted.');if(active(at))setSnapshot({client,tenantId,flowId,phase:'loaded',history,error:''});}
-  catch(error){if(active(at))setSnapshot({client,tenantId,flowId,phase:'failed',error:error instanceof PublicationError?error.message:'Publication history could not be checked. An uncertain action remains locked.'});}
+  const at=++generation.current;inFlight.current=true;setSelected('');setReview(null);setSnapshot({client,tenantId,auth,flowId,phase:'loading',error:''});
+  try{const history=await client.customerFieldVersionHistory(tenantId,flowId);if(!safeHistory(history,flowId))throw new PublicationError('not_sent','Publication history could not be validated. No installation or rollback authority was granted.');if(active(at)){setSnapshot({client,tenantId,auth,flowId,phase:'loaded',history,error:''});onVerifiedHistory?.(history,auth);}}
+  catch(error){if(active(at))setSnapshot({client,tenantId,auth,flowId,phase:'failed',error:error instanceof PublicationError?error.message:'Publication history could not be checked. An uncertain action remains locked.'});}
   finally{if(active(at))inFlight.current=false;}
  }
  function closeReview(){setReview(null);(reviewButton.current&&!reviewButton.current.disabled?reviewButton.current:refreshButton.current)?.focus();}
- function reviewTarget(){if(blocked||locked||inFlight.current||!current?.publication||!view.history)return;const target=targets.find(v=>v.versionId===selected);if(!target?.publication)return;setReview({client,tenantId,flowId:view.history.flowId,currentVersionId:current.versionId,targetVersionId:target.versionId,targetName:target.name,targetRevision:target.draftRevision,targetPublication:{...target.publication}});}
+ function reviewTarget(){if(blocked||locked||inFlight.current||!current?.publication||!view.history)return;const target=targets.find(v=>v.versionId===selected);if(!target?.publication)return;setReview({client,tenantId,auth,flowId:view.history.flowId,currentVersionId:current.versionId,targetVersionId:target.versionId,targetName:target.name,targetRevision:target.draftRevision,targetPublication:{...target.publication}});}
  function trap(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();closeReview();}else if(event.key==='Tab'){event.preventDefault();const focus=document.activeElement;const next=event.shiftKey?(focus===cancelButton.current?confirmButton.current:cancelButton.current):(focus===confirmButton.current?cancelButton.current:confirmButton.current);(next?.disabled?cancelButton.current:next)?.focus();}}
  async function confirm(){
   if(!review||blocked||locked||inFlight.current)return;const at=generation.current,reviewed=review;inFlight.current=true;setReview(null);setSelected('');setSnapshot({...view,history:undefined,error:''});
   const pending=client.rollbackCustomerFieldPublication(tenantId,reviewed.flowId,{expectedCurrentVersionId:reviewed.currentVersionId,targetVersionId:reviewed.targetVersionId});notify();
-  try{await pending;if(active(at)){setSnapshot({...view,history:undefined,error:''});notify();}}
+  try{await pending;if(active(at)){setSnapshot({...view,history:undefined,error:''});notify(true);}}
   catch(error){if(active(at)){setSnapshot({...view,history:undefined,error:error instanceof PublicationError?error.message:'Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.'});notify();}}
   finally{if(active(at))inFlight.current=false;}
  }
  async function reconcile(){
   if(inFlight.current||checking||rollback.phase!=='unknown')return;const at=generation.current;inFlight.current=true;setChecking(true);setSnapshot({...view,error:''});
-  try{await client.reconcileCustomerFieldRollback(tenantId);if(active(at)){setSnapshot({...view,history:undefined,error:''});notify();}}
+  try{await client.reconcileCustomerFieldRollback(tenantId);if(active(at)){setSnapshot({...view,history:undefined,error:''});notify(true);}}
   catch(error){if(active(at))setSnapshot({...view,error:error instanceof PublicationError?error.message:'The rollback receipt could not be verified. The frozen target remains locked.'});}
   finally{if(active(at)){inFlight.current=false;setChecking(false);}}
  }
@@ -68,7 +69,7 @@ function HistoryPanel({client,tenantId,blocked,onStateChange}:ConnectedCustomerF
    {!!targets.length&&current?.publication&&<><label>Prior published version<select value={selected} disabled={blocked||locked||view.phase==='loading'||checking} onChange={event=>{setSelected(event.target.value);setReview(null);}} style={{maxWidth:'100%',minWidth:0}}><option value="">Choose a prior version</option>{targets.map(target=><option key={target.versionId} value={target.versionId}>Revision {target.draftRevision}: {target.name}</option>)}</select></label><button ref={reviewButton} type="button" disabled={!selected||blocked||locked||checking} onClick={reviewTarget}>Review rollback</button></>}
    </>}
    {blocked&&<p>Rollback is unavailable while another draft or publication action is pending or uncertain. Read-only receipt recovery remains available for an uncertain rollback.</p>}
-   {locked&&<><p role="status">{rollback.phase==='rolling_back'?'Restoring the reviewed published version...':'Rollback outcome is unverified. Draft and publication changes remain locked. Do not repeat rollback.'}</p><p>Frozen rollback form: {rollback.flowId}; target version: {rollback.targetVersionId}; target installation: {rollback.targetPublication.installationId}.</p><button type="button" onClick={notify}>Check this session's rollback state</button>{rollback.phase==='unknown'&&<button type="button" disabled={checking||view.phase==='loading'} onClick={()=>void reconcile()}>{checking?'Checking rollback receipt...':'Check rollback outcome'}</button>}</>}
+   {locked&&<><p role="status">{rollback.phase==='rolling_back'?'Restoring the reviewed published version...':'Rollback outcome is unverified. Draft and publication changes remain locked. Do not repeat rollback.'}</p><p>Frozen rollback form: {rollback.flowId}; target version: {rollback.targetVersionId}; target installation: {rollback.targetPublication.installationId}.</p><button type="button" onClick={()=>notify()}>Check this session's rollback state</button>{rollback.phase==='unknown'&&<button type="button" disabled={checking||view.phase==='loading'} onClick={()=>void reconcile()}>{checking?'Checking rollback receipt...':'Check rollback outcome'}</button>}</>}
    {verified&&<><p role="status">Rollback target verified at last check: {verified.receipt.versionId}; form: {verified.flowId}; installation: {verified.receipt.installationId}.</p><a href={checkoutOrigin+verified.receipt.hostedPath} target="_blank" rel="noopener noreferrer">Open last verified rollback target</a><p>This records the restored state at that check. A later publication may have changed the current version. Refresh history for current evidence before another review.</p></>}
   </div>
   {review&&<div role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trap} style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(0,0,0,.4)',display:'grid',placeItems:'center',padding:16,overflow:'auto'}}><div style={{boxSizing:'border-box',background:'white',color:'#111827',padding:20,width:'100%',maxWidth:520,minWidth:0,overflowWrap:'anywhere'}}><h3 id={titleId}>Review publication rollback</h3><p>Restore {review.targetName}, published draft revision {review.targetRevision}, as the current publication for form {review.flowId}.</p><p>Expected current version: {review.currentVersionId}.</p><p>Target version: {review.targetVersionId}; existing installation: {review.targetPublication.installationId}.</p><p>This changes the current published version. It does not edit the saved draft, alter historical versions or reprice bookings. The server checks the current version and catalog eligibility. If the response is lost, check the receipt; do not repeat the action.</p><button ref={cancelButton} type="button" onClick={closeReview}>Cancel rollback</button><button ref={confirmButton} type="button" disabled={blocked||locked} onClick={()=>void confirm()}>Confirm publication rollback</button></div></div>}
