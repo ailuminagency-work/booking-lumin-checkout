@@ -67,3 +67,5 @@ export * from './detailing-availability';
 export * from './detailing-reservation';
 
 export * from './notification-planner';
+
+export * from './confirmation-receipts';
