@@ -1,3 +1,6 @@
+import {NotificationPlannerReceipt,SaveNotificationPlannerConfig} from '@lumin/contracts';
+export type {NotificationPlannerReceipt,SaveNotificationPlannerConfig,StrictNotificationPlannerConfig} from '@lumin/contracts';
+export class NotificationPlannerError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'conflict'|'unavailable'|'unknown',message:string){super(message);}}
 import {CreateDetailingScheduling,DetailingSchedulingReceipt,detailingSchedulingReceiptMatches,CreateDetailingOffer,DetailingOfferReceipt,buildDetailingService} from '@lumin/contracts';
 export type {CreateDetailingScheduling,DetailingSchedulingReceipt,CreateDetailingOffer,DetailingOfferReceipt} from '@lumin/contracts';
 export type DetailingOfferState={phase:'ready'}|{phase:'checking'|'creating'|'unknown';attempt:CreateDetailingOffer}|{phase:'created';attempt:CreateDetailingOffer;receipt:DetailingOfferReceipt};
@@ -811,6 +814,37 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessCreation={phase:'unknown',attempt:body};throw new BusinessOnboardingError('unknown','Business creation remains unverified. This response does not prove an earlier attempt failed; retry only the same frozen key and details.');
  }
  const offerBody=(input:CreateSimpleOffer)=>JSON.stringify({name:input.name,description:input.description,price:{amount:input.price.amount,currency:input.price.currency},durationMinutes:input.durationMinutes,idempotencyKey:input.idempotencyKey});
+ async function notificationPlannerOperation(tenantId:string,input?:SaveNotificationPlannerConfig):Promise<NotificationPlannerReceipt|null>{
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new NotificationPlannerError('not_sent','Sign in and select a verified business.');
+  tenantId=tenantId.toLowerCase();const parsed=input===undefined?undefined:SaveNotificationPlannerConfig.safeParse(input);
+  if(parsed&&!parsed.success||parsed?.success&&parsed.data.config.tenantId!==tenantId)throw new NotificationPlannerError('not_sent','The planner configuration must be valid and belong to this exact business.');
+  if(parsed?.success&&(conditionalRollbackAttempts.size>0||offerLocked()||conditionalPublicationAttempts.size>0||uncertainConditionalDrafts.size>0||fieldRollbackAttempts.size>0||customerPublicationAttempts.size>0))throw new NotificationPlannerError('not_sent','Resolve pending business actions before saving notification settings.');
+  const frozen=parsed?.success?parsed.data:undefined,body=frozen?JSON.stringify(frozen):undefined,at=generation,actor=userId,credential=token;
+  const current=()=>at===generation&&actor===userId&&credential===token;
+  let memberships:Record<string,unknown>[];
+  try{memberships=rows(await request(`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,'GET',undefined,true));}catch{throw new NotificationPlannerError('not_sent','Fresh owner membership could not be verified.');}
+  if(!current())throw new NotificationPlannerError('not_sent','The signed-in account changed. Load this business again.');
+  if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>String(row.tenant_id).toLowerCase()===tenantId&&row.role==='BUSINESS_OWNER'))throw new NotificationPlannerError('not_sent','Fresh owner membership for this exact business is required.');
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/notification-planner-config?tenantId='+encodeURIComponent(tenantId),{method:frozen?'POST':'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,...(frozen?{'Content-Type':'application/json'}:{})},...(frozen?{body}:{})});}catch{throw new NotificationPlannerError(frozen?'unknown':'not_sent',frozen?'Save outcome is unverified. Explicitly read the current configuration; do not repeat the old revision.':'Notification settings could not be read.');}
+  if(!current())throw new NotificationPlannerError(frozen?'unknown':'not_sent','The signed-in account changed. No planner receipt was accepted.');
+  if(response.status===401){signOut();throw new NotificationPlannerError(frozen?'unknown':'not_sent','Please sign in again before checking notification settings.');}
+  try{value=await response.json();}catch{throw new NotificationPlannerError(frozen?'unknown':'not_sent','The notification planner receipt could not be verified.');}
+  if(!current())throw new NotificationPlannerError(frozen?'unknown':'not_sent','The signed-in account changed. No planner receipt was accepted.');
+  if(exact(value,['ok','code'])&&value.ok===false){
+   if(response.status===409&&value.code==='CONFLICT')throw new NotificationPlannerError('conflict','The saved revision changed. Explicitly load current settings before reviewing another save.');
+   if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new NotificationPlannerError('unavailable','Notification planner configuration is unavailable in this workspace.');
+   if([400,403,404].includes(response.status)&&['INVALID_REQUEST','FORBIDDEN','NOT_AVAILABLE'].includes(String(value.code)))throw new NotificationPlannerError('rejected','The notification planner request was rejected.');
+  }
+  if(response.status===200&&exact(value,['ok','data'])&&value.ok===true){
+   if(!frozen&&value.data===null)return null;
+   const receipt=NotificationPlannerReceipt.safeParse(value.data);
+   if(receipt.success&&receipt.data.tenantId===tenantId&&(!frozen||receipt.data.revision===frozen.expectedRevision+1&&JSON.stringify(receipt.data.config)===JSON.stringify(frozen.config)))return receipt.data;
+  }
+  throw new NotificationPlannerError(frozen?'unknown':'not_sent','The notification planner receipt could not be verified.');
+ }
+ async function readNotificationPlannerConfig(tenantId:string):Promise<NotificationPlannerReceipt|null>{return notificationPlannerOperation(tenantId);}
+ async function saveNotificationPlannerConfig(tenantId:string,input:SaveNotificationPlannerConfig):Promise<NotificationPlannerReceipt>{if(!SaveNotificationPlannerConfig.safeParse(input).success)throw new NotificationPlannerError('not_sent','Invalid notification planner save.');return (await notificationPlannerOperation(tenantId,input))!;}
  async function ownerBusinessContext(tenantId:string):Promise<OwnerBusinessContext>{
   if(!token||!userId||!bookingApiOrigin||!uuid(tenantId))throw new BusinessOnboardingError('not_sent','Sign in and choose a verified business.');
   tenantId=tenantId.toLowerCase();const at=generation,actor=userId,credential=token;
@@ -1016,6 +1050,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerDetailingScheduling,
   detailingSchedulingState(tenantId:string,serviceId:string):DetailingSchedulingState {const state=detailingScheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingSchedulingState:{phase:'ready'};},
+  readNotificationPlannerConfig,saveNotificationPlannerConfig,
   ownerBusinessContext,simpleOfferContext,createSimpleOffer,createOfferScheduling,detailingOfferContext,createDetailingOffer,readDetailingOffer,
   detailingOfferState(tenantId:string):DetailingOfferState {if(!uuid(tenantId))return fail('Invalid business selection.');const state=detailingOffers.get(tenantId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingOfferState:{phase:'ready'};},
   offerSchedulingState(tenantId:string,serviceId:string):OfferSchedulingState {const state=scheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as OfferSchedulingState:{phase:'ready'};},
