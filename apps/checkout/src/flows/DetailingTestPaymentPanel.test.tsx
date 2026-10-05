@@ -74,6 +74,34 @@ it('keeps unknown outcomes neutral and permits only checking the same booking', 
   expect(actions.onReplayConfirmation).not.toHaveBeenCalled();
 });
 
+it.each([
+  { recovery: 'retry-payment', label: 'Retry the same test payment', callback: 'onCompleteTestPayment' },
+  { recovery: 'confirm', label: 'Verify the same test confirmation', callback: 'onReplayConfirmation' },
+] as const)('offers only the explicit parent-permitted $recovery action while keeping the outcome unverified', ({ recovery, label, callback }) => {
+  const actions = props({ phase: 'unverified', recovery });
+  const view = render(<DetailingTestPaymentPanel {...actions} />);
+  expect(actions.onCompleteTestPayment).not.toHaveBeenCalled();
+  expect(actions.onReplayConfirmation).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('status are unverified');
+  expect(screen.getByText(/Do not start another booking/)).toBeVisible();
+  expect(screen.queryByText(/This booking is confirmed/)).toBeNull();
+  expect(screen.getAllByRole('button')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  expect(actions[callback]).toHaveBeenCalledTimes(1);
+  expect(actions.onCheckStatus).not.toHaveBeenCalled();
+  expect(actions[callback === 'onCompleteTestPayment' ? 'onReplayConfirmation' : 'onCompleteTestPayment']).not.toHaveBeenCalled();
+  // Dispatching the recovery callback alone never changes the rendered truth.
+  expect(screen.getByRole('alert')).toHaveTextContent('status are unverified');
+  view.rerender(<DetailingTestPaymentPanel {...actions} busy />);
+  expect(screen.getByRole('button', { name: label })).toBeDisabled();
+});
+
+it('disables unknown confirmation recovery when its parent callback is absent', () => {
+  render(<DetailingTestPaymentPanel {...props({ phase: 'unverified', recovery: 'confirm' })} onReplayConfirmation={undefined} />);
+  expect(screen.getByRole('button', { name: 'Verify the same test confirmation' })).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('status are unverified');
+});
+
 it('renders confirmed staging truth, authoritative values, and no request or hold claims', () => {
   render(<DetailingTestPaymentPanel {...props({ phase: 'confirmed' })} />);
   expect(screen.getByRole('status')).toHaveTextContent('This booking is confirmed in the staging test.');

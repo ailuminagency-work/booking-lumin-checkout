@@ -6,7 +6,7 @@ export type DetailingTestPaymentState =
   | { phase: 'checking' }
   | { phase: 'ready' }
   | { phase: 'paying' }
-  | { phase: 'unverified'; checkingStatus?: boolean }
+  | { phase: 'unverified'; checkingStatus?: boolean; recovery?: 'check' | 'retry-payment' | 'confirm' }
   | { phase: 'confirmed'; canReplayConfirmation?: boolean };
 
 export interface DetailingTestPaymentPanelProps {
@@ -71,8 +71,12 @@ export function DetailingTestPaymentPanel({
           onClick={onCheckAvailability}>Check test payment availability</button>}
       {(state.phase === 'ready' || state.phase === 'paying') &&
         <button type="button" disabled={pending} onClick={onCompleteTestPayment}>Complete test payment</button>}
-      {state.phase === 'unverified' &&
+      {state.phase === 'unverified' && (!state.recovery || state.recovery === 'check') &&
         <button type="button" disabled={pending} onClick={onCheckStatus}>Check test payment status</button>}
+      {state.phase === 'unverified' && state.recovery === 'retry-payment' &&
+        <button type="button" disabled={pending} onClick={onCompleteTestPayment}>Retry the same test payment</button>}
+      {state.phase === 'unverified' && state.recovery === 'confirm' &&
+        <button type="button" disabled={pending || !onReplayConfirmation} onClick={onReplayConfirmation}>Verify the same test confirmation</button>}
       {state.phase === 'confirmed' && state.canReplayConfirmation && onReplayConfirmation &&
         <button type="button" disabled={pending} onClick={onReplayConfirmation}>Verify the same test confirmation</button>}
     </section>
