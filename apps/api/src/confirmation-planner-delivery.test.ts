@@ -30,6 +30,9 @@ it('partial failure retains email receipt and retry sends only missing SMS witho
 
 // Execute the real entrypoint with invalid targets: each must stop at its
 // assertion gates before any Pool connection or fixture mutation is possible.
+// A resolver trap proves denial happens before any database or worker module
+// loads, rather than merely hoping the heavy graph starts within the deadline.
+const guardImportTrap='data:text/javascript,'+encodeURIComponent("import {register} from 'node:module'; register('data:text/javascript,'+encodeURIComponent(\"export async function resolve(specifier,context,next){if(specifier==='pg'||specifier.includes('notification-planner-config')||specifier.includes('confirmation-outbox-worker'))throw new Error('FIXTURE_RUNTIME_IMPORT_BEFORE_GUARD');return next(specifier,context);}\"));");
 it.each([
  {CONFIRMATION_PLANNER_DELIVERY_LOCAL_TEST:'0'},
  {PGHOST:'example.com'},
@@ -41,10 +44,14 @@ it.each([
  {CI:'true',GITHUB_ACTIONS:'true',PGPORT:'5432',CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST:'not-an-ip'},
  {CI:'true',GITHUB_ACTIONS:'true',PGPORT:'55436',CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST:'172.18.0.2'},
  {PGOPTIONS:'-c search_path=public'},
+ {CONFIRMATION_PLANNER_DELIVERY_CHILD_MODE:'deliver'},
+ {CONFIRMATION_PLANNER_DELIVERY_CHILD_OPT_IN:'1'},
+ {CONFIRMATION_PLANNER_DELIVERY_CHILD_OPT_IN:'1',CONFIRMATION_PLANNER_DELIVERY_CHILD_MODE:'unexpected'},
+ {CONFIRMATION_PLANNER_DELIVERY_CHILD_OPT_IN:'1',CONFIRMATION_PLANNER_DELIVERY_CHILD_MODE:'recover'},
 ])('refuses unsafe local/CI fixture configuration %# before database access',overrides=>{
  const env:NodeJS.ProcessEnv={...process.env,CI:'false',GITHUB_ACTIONS:'false',PGHOST:'127.0.0.1',PGPORT:'55436',PGDATABASE:'lumin_phase_a_confirmation_planner_delivery_guard_only',CONFIRMATION_PLANNER_DELIVERY_LOCAL_TEST:'1'};
- for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS','CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST'])delete env[key];
+ for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS','CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST','CONFIRMATION_PLANNER_DELIVERY_CHILD_MODE','CONFIRMATION_PLANNER_DELIVERY_CHILD_OPT_IN'])delete env[key];
  Object.assign(env,overrides);
- const result=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('./confirmation-planner-delivery.integration.ts',import.meta.url))],{env,encoding:'utf8',timeout:15000});
- expect(result.error).toBeUndefined();expect(result.status).not.toBe(0);expect(result.stderr).toContain('ERR_ASSERTION');expect(result.stdout).toBe('');
+ const result=spawnSync(process.execPath,['--import','tsx','--import',guardImportTrap,fileURLToPath(new URL('./confirmation-planner-delivery.integration.ts',import.meta.url))],{env,encoding:'utf8',timeout:15000});
+ expect(result.error).toBeUndefined();expect(result.status).not.toBe(0);expect(result.stderr).toContain('ERR_ASSERTION');expect(result.stderr).not.toContain('FIXTURE_RUNTIME_IMPORT_BEFORE_GUARD');expect(result.stdout).toBe('');
 });
