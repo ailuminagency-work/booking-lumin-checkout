@@ -33,7 +33,7 @@ declare x jsonb;y jsonb;ch jsonb;allowed text[]:=array['booking.created','bookin
 begin
  if not lumin.notification_keys(c,array['tenantId','locale','timezone','sender','events','reminders','templates']) or c->>'tenantId' is distinct from p_tenant::text
  or not lumin.notification_text(c->'locale',35) or c->>'locale' !~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
- or not lumin.notification_text(c->'timezone',100) or not exists(select 1 from pg_timezone_names where name=c->>'timezone') then return false;end if;
+ or not lumin.notification_text(c->'timezone',100) or c->>'timezone' !~ '^(UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+)+)$' or not exists(select 1 from pg_timezone_names where name=c->>'timezone') then return false;end if;
  if jsonb_typeof(c->'sender') is distinct from 'object' or exists(select 1 from jsonb_object_keys(c->'sender') k where k not in('emailFrom','emailFromName','smsFrom')) then return false;end if;
  if c->'sender'?'emailFrom' and (not lumin.notification_text(c->'sender'->'emailFrom',254) or c->'sender'->>'emailFrom' ~ '^\.' or c->'sender'->>'emailFrom' like '%..%' or c->'sender'->>'emailFrom' !~* '^[A-Z0-9_''+.-]*[A-Z0-9_+-]@([A-Z0-9][A-Z0-9-]*\.)+[A-Z]{2,}$') then return false;end if;
  if c->'sender'?'emailFromName' and not lumin.notification_text(c->'sender'->'emailFromName',100) then return false;end if;

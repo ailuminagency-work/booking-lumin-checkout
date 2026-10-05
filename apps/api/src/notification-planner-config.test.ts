@@ -20,3 +20,6 @@ it('sanitizes pool connection failure before any receipt or provider data can es
 
 it.each(['a..b@example.com','a@b.c','.a@example.com','a.@example.com','a@-example.com','a@example.123'])('rejects sender email %s before any database access',async(emailFrom)=>{const x=fixture();await expect(x.api.save(actor,tenant,{...body,config:{...config,sender:{emailFrom}}})).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(x.connect).not.toHaveBeenCalled();});
 it.each(['a@example.com',"owner+tag.o'neil@sub.example.test",'OWNER@EXAMPLE.COM'])('accepts bounded sender email %s with database-compatible grammar',emailFrom=>{expect(StrictNotificationPlannerConfig.safeParse({...config,sender:{emailFrom}}).success).toBe(true);});
+
+it.each(['GMT','EST','PST8PDT','Etc','Invalid/Zone'])('rejects noncanonical or unknown timezone %s before database access',async(timezone)=>{const x=fixture();await expect(x.api.save(actor,tenant,{...body,config:{...config,timezone}})).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(x.connect).not.toHaveBeenCalled();});
+it.each(['UTC','America/Los_Angeles','Europe/London','Etc/GMT+5'])('accepts explicit named timezone %s',timezone=>{expect(StrictNotificationPlannerConfig.safeParse({...config,timezone}).success).toBe(true);});
