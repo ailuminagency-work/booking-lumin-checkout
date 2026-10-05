@@ -84,6 +84,16 @@ describe('trusted persisted confirmation context (unwired, no configuration defa
   const s=snapshot();delete (s.booking as Partial<Snapshot['booking']>).total;
   expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'NOT_AVAILABLE');
  });
+ it('rejects a negative final booking total before producing notification context',()=>{
+  const s=snapshot();s.booking.total.amount=-1;
+  expectCode(()=>validateConfirmationContextSnapshot(s,binding,booking),'NOT_AVAILABLE');
+ });
+ it('preserves a valid zero final booking total without replacing or repricing it',()=>{
+  const s=snapshot();s.booking.total.amount=0;
+  const loaded=validateConfirmationContextSnapshot(s,binding,booking);
+  expect(loaded.context.booking.total).toEqual({amount:0,currency:'USD'});
+  expect(planNotifications('booking.confirmed',loaded.context,loaded.config,'2030-01-01T00:00:00Z')).toHaveLength(2);
+ });
  it('reads one exact tenant/booking/connection snapshot under existing service read authority',async()=>{
   const h=harness();await h.loader(tenant,booking);
   const calls=h.client.query.mock.calls;expect(calls[0]![0]).toBe('begin isolation level repeatable read read only');

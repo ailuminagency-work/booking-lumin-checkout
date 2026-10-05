@@ -52,7 +52,7 @@ export function validateConfirmationContextSnapshot(value:unknown,binding:Confir
     if(channel==='sms'&&(!config.data.sender.smsFrom||!/^\+[1-9]\d{6,14}$/.test(config.data.sender.smsFrom)))deny('CONFIG_NOT_READY');
   }
   const total=Money.strict().safeParse(booking.total);
-  if(!total.success||!Number.isSafeInteger(total.data.amount)||total.data.currency!==service.currency)deny('NOT_AVAILABLE');
+  if(!total.success||!Number.isSafeInteger(total.data.amount)||total.data.amount<0||total.data.currency!==service.currency)deny('NOT_AVAILABLE');
   const phone=customer.phone===null||customer.phone===undefined?undefined:customer.phone;
   if(phone!==undefined&&(typeof phone!=='string'||!/^\+[1-9]\d{6,14}$/.test(phone)))deny('NOT_AVAILABLE');
   if(policies[0]!.channels.includes('sms')&&phone===undefined)deny('NOT_AVAILABLE');
