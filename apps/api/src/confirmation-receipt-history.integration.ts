@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
+import {isIP} from 'node:net';
 import type {Pool as PgPool} from 'pg';
 import {createConfirmationReceiptHistoryReader} from './confirmation-receipt-history.js';
 
-// Synthetic, persistent fixture in a FRESH disposable loopback DB only. Never hosted.
-// Replays require a new DB name; no destructive cleanup or provider operations.
+// Persistent synthetic fixtures require a fresh dedicated disposable database.
+// Local loopback or the exact registered GitHub service only; never hosted.
 const env=process.env;
-if(env.CONFIRMATION_RECEIPT_HISTORY_LOCAL_TEST!=='1'||env.PGHOST!=='127.0.0.1'||env.PGPORT!=='55463'||env.PGUSER!=='postgres'
- ||!/^lumin_confirmation_receipt_history_reader_[a-z0-9_]+$/.test(env.PGDATABASE??'')
+const ci=env.GITHUB_ACTIONS==='true'||env.CI==='true';
+const expectedHost=ci?env.CONFIRMATION_RECEIPT_HISTORY_CI_SERVER_HOST:'127.0.0.1';
+const port=ci?5432:55463;
+const privateIPv4=(value:string|undefined)=>!!value&&isIP(value)===4&&(
+ value.startsWith('10.')||value.startsWith('192.168.')||/^172\.(1[6-9]|2[0-9]|3[01])\./.test(value));
+if(env.CONFIRMATION_RECEIPT_HISTORY_LOCAL_TEST!=='1'||env.PGHOST!=='127.0.0.1'||env.PGPORT!==String(port)||env.PGUSER!=='postgres'
+ ||(ci?(env.GITHUB_ACTIONS!=='true'||env.CI!=='true'||!privateIPv4(expectedHost)||env.PGDATABASE!=='lumin_confirmation_receipt_history_reader_ci')
+ : (!!env.CONFIRMATION_RECEIPT_HISTORY_CI_SERVER_HOST||!/^lumin_confirmation_receipt_history_reader_[a-z0-9_]+$/.test(env.PGDATABASE??'')||env.PGDATABASE==='lumin_confirmation_receipt_history_reader_ci'))
  ||['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'].some(key=>!!env[key]))throw Error('LOCAL_RECEIPT_HISTORY_GUARD');
 const {Pool}=await import('pg');
-const pool=new Pool({host:env.PGHOST,port:55463,user:'postgres',database:env.PGDATABASE,max:8,options:'-c timezone=America/Los_Angeles',statement_timeout:10000});
+const connection={host:env.PGHOST,port,user:'postgres',statement_timeout:10000};
+const pool=new Pool({...connection,database:env.PGDATABASE,max:8,options:'-c timezone=America/Los_Angeles'});
 const id=(n:number)=>`68000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const actor=id(1),tenant=id(3),booking=id(10);
 let stage='target';
@@ -33,8 +41,11 @@ async function waitForLock(pid:number){
  throw Error('LOCAL_LOCK_PROOF_UNAVAILABLE');
 }
 try{
+ const adminTarget=new Pool({...connection,database:'postgres',max:1});
+ try{assert.deepEqual((await adminTarget.query('select host(inet_server_addr()) as host,inet_server_port() as port,current_database() as name,current_user as actor')).rows[0],{host:expectedHost,port,name:'postgres',actor:'postgres'});}
+ finally{await adminTarget.end();}
  const target=(await pool.query('select host(inet_server_addr()) as host,inet_server_port() as port,current_database() as name,current_user as actor')).rows[0];
- assert.deepEqual(target,{host:'127.0.0.1',port:55463,name:env.PGDATABASE,actor:'postgres'});
+ assert.deepEqual(target,{host:expectedHost,port,name:env.PGDATABASE,actor:'postgres'});
  assert.equal((await pool.query("select to_regprocedure('public.outbox_confirmation_receipt_history(uuid,uuid)') is not null as ready")).rows[0].ready,true);
  assert.equal((await pool.query('select (select count(*) from public.tenants)+(select count(*) from auth.users) as count')).rows[0].count,'0','fresh database required');
  stage='seed';
