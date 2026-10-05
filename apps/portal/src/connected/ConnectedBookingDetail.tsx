@@ -14,8 +14,9 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
  const error=current?.error??'';
  const detail=current?.data;
  const when=(v:string)=>new Date(v).toLocaleString();
+ const statusLabel=(state:string)=>state.replaceAll('_',' ').replace(/^./,first=>first.toUpperCase());
  const show=(v:unknown):string=>v===null?'Not provided':typeof v==='object'?JSON.stringify(v):String(v);
- return <section><p><Link to="/bookings">Back to bookings</Link></p>
+ return <section style={{minWidth:0,maxWidth:'100%',overflowWrap:'anywhere'}}><p><Link to="/bookings">Back to bookings</Link></p>
   <h1>{detail?`Booking ${detail.reference}`:'Booking detail'}</h1>
   {error?<p role="alert">{error} <button onClick={()=>setRetry(n=>n+1)}>Retry</button></p>:!current?<p role="status">Loading booking…</p>:!detail?<p>No booking is available for this business and reference.</p>:<>
    <p>Status: {detail.state.replaceAll('_',' ')}</p>
@@ -26,7 +27,7 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
    <h2>Form responses</h2><dl>{Object.entries(detail.selection).filter(([key])=>key!=='serviceId').map(([key,value])=><div key={key}><dt>{key}</dt><dd style={{overflowWrap:'anywhere'}}>{show(value)}</dd></div>)}</dl>
    {detail.notes&&<><h2>Notes</h2><p style={{overflowWrap:'anywhere'}}>{detail.notes}</p></>}
    <ConnectedConfirmationReceipts client={typeof client.readConfirmationReceiptStatus==='function'&&typeof client.authContextRevision==='function'?client as ConfirmationReceiptsClient:undefined} tenantId={tenantId} bookingId={bookingId}/>
-   <h2>Activity</h2><p>Created {when(detail.createdAt)}</p><ol>{detail.history.map((h,index)=><li key={index}>{when(h.at)} · {h.from?`${h.from} → `:''}{h.to}{h.reason?` · ${h.reason}`:''}</li>)}</ol>
+   <h2>Activity</h2><p>Created {when(detail.createdAt)}</p>{detail.history.length===0?<p>No saved status changes are recorded for this booking.</p>:<ol>{detail.history.map((h,index)=><li key={index}><p>{h.from===null?`Status set to ${statusLabel(h.to)}.`:`Status changed from ${statusLabel(h.from)} to ${statusLabel(h.to)}.`} Recorded {when(h.at)}.</p>{h.reason&&<p>Saved reason: {h.reason}</p>}</li>)}</ol>}
   </>}
  </section>;
 }
