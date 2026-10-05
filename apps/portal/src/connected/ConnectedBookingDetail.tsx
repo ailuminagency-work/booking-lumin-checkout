@@ -4,6 +4,23 @@ import {Link,useParams} from 'react-router-dom';
 import {formatMoney} from '@lumin/contracts';
 import type {RuntimeClient,ConnectedBookingDetail,ServiceRow} from '@lumin/runtime-client';
 
+// Conservative actionable subset only; unsupported saved values stay readable.
+// Encode only a recipient, never mailto headers, and never add a country code.
+function emailLink(value:string):string|undefined{
+ if(value.length>254||/[\u0000-\u001f\u007f-\u009f]/.test(value))return;
+ const parts=value.split('@');if(parts.length!==2)return;
+ const [local,domain]=parts;
+ if(!local||local.length>64||!/^[A-Za-z0-9._+-]+$/.test(local)||local.startsWith('.')||local.endsWith('.')||local.includes('..'))return;
+ if(!domain||!domain.includes('.')||domain.split('.').some(label=>!label||label.length>63||!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)))return;
+ return `mailto:${encodeURIComponent(value)}`;
+}
+function phoneLink(value:string|null):string|undefined{
+ if(!value||value.length>100||/[\u0000-\u001f\u007f-\u009f]/.test(value)||!/^\+?[0-9(][0-9 .()-]*[0-9)]$/.test(value))return;
+ let depth=0;for(const char of value){if(char==='('&&++depth>1)return;if(char===')'&&--depth<0)return;}if(depth!==0)return;
+ const digits=value.replace(/[^0-9]/g,'');if(digits.length<7||digits.length>15)return;
+ return `tel:${value.startsWith('+')?'+':''}${digits}`;
+}
+
 export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{client:Pick<RuntimeClient,'bookingDetail'>&Partial<ConfirmationReceiptsClient>;tenantId:string;bookingId:string;services:ServiceRow[]}){
  const auth=client.authContextRevision?.()??0;
  const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;auth:number;data:ConnectedBookingDetail|null;error:string}|null>(null);
@@ -13,6 +30,8 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
  const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId&&result.auth===auth?result:null;
  const error=current?.error??'';
  const detail=current?.data;
+ const emailHref=detail?.customer?emailLink(detail.customer.email):undefined;
+ const phoneHref=detail?.customer?phoneLink(detail.customer.phone):undefined;
  const when=(v:string)=>new Date(v).toLocaleString();
  const statusLabel=(state:string)=>state.replaceAll('_',' ').replace(/^./,first=>first.toUpperCase());
  const show=(v:unknown):string=>v===null?'Not provided':typeof v==='object'?JSON.stringify(v):String(v);
@@ -32,7 +51,7 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
   <h1>{detail?`Booking ${detail.reference}`:'Booking detail'}</h1>
   {error?<p role="alert">{error} <button onClick={()=>setRetry(n=>n+1)}>Retry</button></p>:!current?<p role="status">Loading booking…</p>:!detail?<p>No booking is available for this business and reference.</p>:<>
    <p>Status: {detail.state.replaceAll('_',' ')}</p>
-   <h2>Customer</h2>{detail.customer?<dl><dt>Name</dt><dd>{detail.customer.name}</dd><dt>Email</dt><dd>{detail.customer.email}</dd><dt>Phone</dt><dd>{detail.customer.phone??'Not provided'}</dd></dl>:<p>No customer record is linked.</p>}
+   <h2>Customer</h2>{detail.customer?<dl><dt>Name</dt><dd>{detail.customer.name}</dd><dt>Email</dt><dd>{emailHref?<a href={emailHref} aria-label="Email saved customer">{detail.customer.email}</a>:detail.customer.email}</dd><dt>Phone</dt><dd>{phoneHref?<a href={phoneHref} aria-label="Call saved customer">{detail.customer.phone}</a>:detail.customer.phone??'Not provided'}</dd></dl>:<p>No customer record is linked.</p>}
    <h2>Service and schedule</h2><dl><dt>Service</dt><dd>{services.find(s=>s.id===detail.serviceId&&s.tenant_id===tenantId)?.name??detail.serviceId}</dd><dt>Starts</dt><dd>{when(detail.slotStart)}</dd><dt>Ends</dt><dd>{when(detail.slotEnd)}</dd><dt>Timezone shown</dt><dd>{Intl.DateTimeFormat().resolvedOptions().timeZone}</dd><dt>Duration</dt><dd>{(Date.parse(detail.slotEnd)-Date.parse(detail.slotStart))/60000} minutes</dd></dl>
    <h2>Payment</h2><dl><dt>Booking total</dt><dd>{detail.total?formatMoney(detail.total):'Not priced yet'}</dd><dt>Configured deposit</dt><dd>{detail.deposit?formatMoney(detail.deposit):'Not priced yet'}</dd><dt>Payment status</dt><dd>{detail.payment?.state.replaceAll('_',' ')??'No linked payment'}</dd>{detail.payment&&<><dt>Payment record amount</dt><dd>{formatMoney(detail.payment.amount)}</dd><dt>Provider</dt><dd>{['mock','staging_mock'].includes(detail.payment.provider)?'STAGING TEST — simulated payment':detail.payment.provider}</dd></>}</dl><p>Amounts come from the saved booking and payment records. Refund totals and outstanding balances are not available on this page yet.</p>
    <h2>Location</h2>{detail.address?<dl>{Object.entries(detail.address).map(([key,value])=><div key={key}><dt>{key}</dt><dd style={{overflowWrap:'anywhere'}}>{show(value)}</dd></div>)}</dl>:<p>No address was provided.</p>}
