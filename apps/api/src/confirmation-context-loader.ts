@@ -1,5 +1,6 @@
 import type {Pool,PoolClient} from 'pg';
-import {Money,NotificationConfig,NotificationContext,NotificationTemplate,type NotificationChannel} from '@lumin/contracts';
+import {Money,NotificationContext,type NotificationChannel} from '@lumin/contracts';
+import {NotificationPlannerReceipt} from './notification-planner-config.js';
 
 export interface ConfirmationContextBinding {
   // Trusted server adapter selection; never request-supplied recipients/config.
@@ -15,41 +16,31 @@ function bind(binding:ConfirmationContextBinding,tenant:string,booking:string){
   if(!uuid.test(binding.tenantId)||!uuid.test(binding.connectionId)||!uuid.test(booking)||tenant!==binding.tenantId||
     !binding.providerName.trim()||!binding.supportedChannels.length||binding.supportedChannels.some(channel=>channel!=='email'&&channel!=='sms'))deny('INVALID_BINDING');
 }
-// Unknown fields (including accidental credentials/recipient overrides) are not
-// accepted or silently stripped from the persisted planner configuration.
-const strictConfig=NotificationConfig.extend({
-  sender:NotificationConfig.shape.sender.strict(),
-  events:NotificationConfig.shape.events.element.strict().array(),
-  reminders:NotificationConfig.shape.reminders.element.strict().array(),
-  templates:NotificationTemplate.innerType().strict().array(),
-}).strict();
-
 export function validateConfirmationContextSnapshot(value:unknown,binding:ConfirmationContextBinding,bookingId:string){
   bind(binding,binding.tenantId,bookingId);
   if(!object(value)||!object(value.tenant)||!object(value.booking)||!object(value.customer)||!object(value.service)||!object(value.connection))deny('NOT_AVAILABLE');
-  const {tenant,booking,customer,service,connection}=value;
+  const {tenant,booking,customer,service,connection,planner}=value;
   if(tenant.id!==binding.tenantId||tenant.status!=='active'||typeof tenant.name!=='string'||!tenant.name.trim()||typeof tenant.timezone!=='string'||
     booking.id!==bookingId||booking.tenantId!==binding.tenantId||booking.state!=='confirmed'||
     customer.tenantId!==binding.tenantId||customer.id!==booking.customerId||typeof customer.id!=='string'||!uuid.test(customer.id)||
     service.tenantId!==binding.tenantId||service.id!==booking.serviceId||typeof service.id!=='string'||!uuid.test(service.id)||service.active!==true)deny('NOT_AVAILABLE');
   if(connection.id!==binding.connectionId||connection.tenantId!==binding.tenantId||connection.provider!==binding.providerName||connection.status!=='connected')deny('CONFIG_NOT_READY');
-  // Existing generic connection.config has no seeded planner defaults. Only a
-  // fully persisted NotificationConfig is usable; {} or provider-only settings
-  // remain an explicit blocker. This loader does not establish provider approval.
-  const strict=strictConfig.safeParse(connection.config);
-  const config=NotificationConfig.safeParse(connection.config);
-  if(!strict.success||!config.success||config.data.tenantId!==binding.tenantId||config.data.timezone!==tenant.timezone)deny('CONFIG_NOT_READY');
+  // Canonical planner data comes only from the service-only runtime getter.
+  // Missing/malformed envelopes never fall back to provider configuration.
+  const receipt=NotificationPlannerReceipt.safeParse(planner);
+  if(!receipt.success||receipt.data.tenantId!==binding.tenantId||receipt.data.config.timezone!==tenant.timezone)deny('CONFIG_NOT_READY');
+  const config=receipt.data.config;
   try{
-    Intl.getCanonicalLocales(config.data.locale);
-    new Intl.DateTimeFormat(config.data.locale,{timeZone:config.data.timezone});
-    for(const template of config.data.templates)Intl.getCanonicalLocales(template.locale);
+    Intl.getCanonicalLocales(config.locale);
+    new Intl.DateTimeFormat(config.locale,{timeZone:config.timezone});
+    for(const template of config.templates)Intl.getCanonicalLocales(template.locale);
   }catch{deny('CONFIG_NOT_READY');}
-  const policies=config.data.events.filter(policy=>policy.event==='booking.confirmed');
+  const policies=config.events.filter(policy=>policy.event==='booking.confirmed');
   if(policies.length!==1||new Set(policies[0]!.channels).size!==policies[0]!.channels.length)deny('CONFIG_NOT_READY');
   for(const channel of policies[0]!.channels){
-    if(!binding.supportedChannels.includes(channel)||!config.data.templates.some(template=>template.trigger==='booking.confirmed'&&template.channel===channel))deny('CONFIG_NOT_READY');
-    if(channel==='email'&&(!config.data.sender.emailFrom||!config.data.sender.emailFrom.trim()))deny('CONFIG_NOT_READY');
-    if(channel==='sms'&&(!config.data.sender.smsFrom||!/^\+[1-9]\d{6,14}$/.test(config.data.sender.smsFrom)))deny('CONFIG_NOT_READY');
+    if(!binding.supportedChannels.includes(channel)||!config.templates.some(template=>template.trigger==='booking.confirmed'&&template.channel===channel))deny('CONFIG_NOT_READY');
+    if(channel==='email'&&(!config.sender.emailFrom||!config.sender.emailFrom.trim()))deny('CONFIG_NOT_READY');
+    if(channel==='sms'&&(!config.sender.smsFrom||!/^\+[1-9]\d{6,14}$/.test(config.sender.smsFrom)))deny('CONFIG_NOT_READY');
   }
   const total=Money.strict().safeParse(booking.total);
   if(!total.success||!Number.isSafeInteger(total.data.amount)||total.data.amount<0||total.data.currency!==service.currency)deny('NOT_AVAILABLE');
@@ -61,7 +52,7 @@ export function validateConfirmationContextSnapshot(value:unknown,binding:Confir
     customerName:customer.name,customerEmail:customer.email,...(phone===undefined?{}:{customerPhone:phone}),total:total.data,
   }});
   if(!context.success||!context.data.booking.customerName.trim()||Date.parse(context.data.booking.slotEnd)<=Date.parse(context.data.booking.slotStart))deny('NOT_AVAILABLE');
-  return {bookingTenantId:binding.tenantId,context:context.data,config:config.data};
+  return {bookingTenantId:binding.tenantId,context:context.data,config:config};
 }
 
 // Existing 0007 service-role SELECT grants permit this fixed joined projection.
@@ -74,13 +65,14 @@ const query=`select jsonb_build_object(
    'slotEnd',to_char(b.slot_end at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'total',b.pricing->'total'),
  'customer',jsonb_build_object('id',c.id,'tenantId',c.tenant_id,'name',c.name,'email',c.email,'phone',c.phone),
  'service',jsonb_build_object('id',s.id,'tenantId',s.tenant_id,'active',s.active,'currency',s.currency),
- 'connection',jsonb_build_object('id',n.id,'tenantId',n.tenant_id,'provider',n.provider,'status',n.status,'config',n.config)
+ 'connection',jsonb_build_object('id',n.id,'tenantId',n.tenant_id,'provider',n.provider,'status',n.status),
+ 'planner',public.runtime_notification_planner_config(b.tenant_id)
  ) result from public.bookings b
  join public.tenants t on t.id=b.tenant_id
  join public.customers c on c.id=b.customer_id and c.tenant_id=b.tenant_id
  join public.services s on s.id::text=b.selection->>'serviceId' and s.tenant_id=b.tenant_id
  join public.notification_connections n on n.tenant_id=b.tenant_id and n.id=$3::uuid
- where b.tenant_id=$1::uuid and b.id=$2::uuid`;
+ where b.tenant_id=$1::uuid and b.id=$2::uuid and t.status='active'`;
 
 export function createConfirmationContextLoader(pool:Pool,binding:ConfirmationContextBinding){
   const trusted={...binding,supportedChannels:[...binding.supportedChannels]};
