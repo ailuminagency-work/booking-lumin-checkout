@@ -459,6 +459,7 @@ jobs:
           PGHOST: 127.0.0.1
           PGDATABASE: lumin_confirmation_outbox_ci
         run: |
+          export CONFIRMATION_OUTBOX_CI_SERVER_HOST="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' '${{ job.services.postgres.id }}')"
           psql -d postgres -c 'create database lumin_confirmation_outbox_ci;'
           psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
           for f in supabase/migrations/0*.sql; do

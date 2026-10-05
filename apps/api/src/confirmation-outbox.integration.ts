@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {isIP} from 'node:net';
 import {Pool} from 'pg';
 
 assert.equal(process.env.CONFIRMATION_OUTBOX_LOCAL_TEST,'1');
@@ -7,6 +8,14 @@ assert.equal(process.env.PGHOST,'127.0.0.1');
 assert.equal(process.env.PGPORT,process.env.CI==='true'?'5432':'55463');
 assert.match(process.env.PGDATABASE??'',/^lumin_confirmation_outbox_/);
 for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])assert.ok(!process.env[key]);
+const expectedServerHost=process.env.CONFIRMATION_OUTBOX_CI_SERVER_HOST;
+if(process.env.CI==='true'){
+ assert.equal(process.env.GITHUB_ACTIONS,'true');
+ // CI obtains this exact address from its registered postgres service container.
+ // Permit only a private IPv4 Docker address, never a public/loopback override.
+ assert.equal(isIP(expectedServerHost??''),4);
+ assert.match(expectedServerHost!,/^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/);
+}else assert.equal(expectedServerHost,undefined,'CI server override forbidden locally');
 
 const pool=new Pool({max:8});
 const id=(n:number)=>`63000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -25,7 +34,7 @@ async function confirm(payment:string){
 
 try{
  const target=(await pool.query('select host(inet_server_addr()) host,inet_server_port() port,current_database() database')).rows[0];
- assert.equal(target.host,'127.0.0.1');assert.equal(String(target.port),process.env.PGPORT);assert.equal(target.database,process.env.PGDATABASE);
+ assert.equal(target.host,process.env.CI==='true'?expectedServerHost:'127.0.0.1');assert.equal(String(target.port),process.env.PGPORT);assert.equal(target.database,process.env.PGDATABASE);
  assert.equal((await pool.query('select count(*)::int n from public.tenants where id in ($1::uuid,$2::uuid)',[id(3),id(4)])).rows[0].n,0,'fresh disposable database required; fixture identities already exist');
  // Reuse the same bounded SQL fixtures, excluding every assertion/attack and
  // rolling transaction. This harness owns only its synthetic tenant identities.
