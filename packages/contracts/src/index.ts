@@ -69,3 +69,5 @@ export * from './detailing-reservation';
 export * from './notification-planner';
 
 export * from './confirmation-receipts';
+
+export * from './confirmation-receipt-history';
