@@ -56,11 +56,11 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("VITE_RUNTIME_MODE", "mock"); 
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); window.history.replaceState({}, "", "/"); });
 
 describe("Portal navigation migration", () => {
-  it.each(["mock", "supabase"])("uses exactly five ordered primary destinations in %s mode", mode => {
+  it.each(["mock", "supabase"])("uses exactly five ordered primary destinations in %s mode", async mode => {
     vi.stubEnv("VITE_RUNTIME_MODE", mode);
     vi.stubEnv("VITE_SUPABASE_URL", "");
     portal();
-    const links = within(screen.getByRole("navigation", { name: "Portal sections" })).getAllByRole("link");
+    const links = within(await screen.findByRole("navigation", { name: "Portal sections" })).getAllByRole("link");
     expect(links).toHaveLength(5);
     labels.forEach((label, index) => expect(links[index]).toHaveTextContent(label));
     if (mode === "supabase") {
