@@ -4,13 +4,8 @@ import {isIP} from 'node:net';
 import {fork} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {Pool} from 'pg';
-import {createNotificationPlannerConfigApi} from './notification-planner-config.js';
-import {createConfirmationContextLoader} from './confirmation-context-loader.js';
-import {createConfirmationOutboxQueue} from './confirmation-outbox-queue.js';
-import {createConfirmationOutboxWorker,confirmationDeliveryKey,type ConfirmationQueue,type ConfirmationLease,type ConfirmationDeliveryProvider} from './confirmation-outbox-worker.js';
-import {planNotifications} from '../../../packages/notifications/src/index.js';
-import {createMockNotificationProvider} from '../../../packages/adapters/src/mockNotification.js';
+import type {Pool as PgPool} from 'pg';
+import type {ConfirmationQueue,ConfirmationLease,ConfirmationDeliveryProvider} from './confirmation-outbox-worker.js';
 
 // Local/registered CI test only: synthetic data in a fresh disposable DB. No provider
 // activation, external requests, scheduler, or production entrypoint.
@@ -30,12 +25,22 @@ if(childMode!==undefined||process.env.CONFIRMATION_PLANNER_DELIVERY_CHILD_OPT_IN
  assert.ok(childMode==='deliver'||childMode==='recover');
  assert.ok(process.send&&process.connected,'child execution requires parent IPC');
 }
+// Unsafe entrypoints reject before loading the database/worker/schema graph.
+// Dynamic imports preserve the exact positive fixture but avoid transforming
+// unrelated runtime modules for every denial subprocess under the full suite.
+const {Pool}=await import('pg');
+const {createNotificationPlannerConfigApi}=await import('./notification-planner-config.js');
+const {createConfirmationContextLoader}=await import('./confirmation-context-loader.js');
+const {createConfirmationOutboxQueue}=await import('./confirmation-outbox-queue.js');
+const {createConfirmationOutboxWorker,confirmationDeliveryKey}=await import('./confirmation-outbox-worker.js');
+const {planNotifications}=await import('../../../packages/notifications/src/index.js');
+const {createMockNotificationProvider}=await import('../../../packages/adapters/src/mockNotification.js');
 const id=(n:number)=>`66010000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const tenant=id(3),connection=id(9),pool=new Pool({max:6});
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-async function authorityFingerprint(p:Pool){return (await p.query(`select jsonb_build_object('bookings',(select jsonb_agg(to_jsonb(x) order by id) from public.bookings x),'payments',(select jsonb_agg(to_jsonb(x) order by id) from public.payments x),'refunds',(select jsonb_agg(to_jsonb(x) order by id) from public.refunds x),'connections',(select jsonb_agg((to_jsonb(x)-'updated_at') order by id) from public.notification_connections x),'secrets',(select jsonb_agg(to_jsonb(x) order by connection_id) from public.notification_connection_secrets x),'holds',(select jsonb_agg(to_jsonb(x) order by id) from public.capacity_holds x),'reservations',(select jsonb_agg(to_jsonb(x) order by id) from public.resource_reservations x)) result` )).rows[0].result;}
-async function fullFingerprint(p:Pool){return {authority:await authorityFingerprint(p),operational:(await p.query(`select jsonb_build_object('queue',(select jsonb_agg(to_jsonb(x) order by id) from public.durable_outbox x),'receipts',(select jsonb_agg(to_jsonb(x) order by tenant_id,booking_id,channel) from public.confirmation_delivery_receipts x),'planner',(select jsonb_agg(to_jsonb(x) order by tenant_id) from public.tenant_notification_planner_configs x)) result`)).rows[0].result};}
+async function authorityFingerprint(p:PgPool){return (await p.query(`select jsonb_build_object('bookings',(select jsonb_agg(to_jsonb(x) order by id) from public.bookings x),'payments',(select jsonb_agg(to_jsonb(x) order by id) from public.payments x),'refunds',(select jsonb_agg(to_jsonb(x) order by id) from public.refunds x),'connections',(select jsonb_agg((to_jsonb(x)-'updated_at') order by id) from public.notification_connections x),'secrets',(select jsonb_agg(to_jsonb(x) order by connection_id) from public.notification_connection_secrets x),'holds',(select jsonb_agg(to_jsonb(x) order by id) from public.capacity_holds x),'reservations',(select jsonb_agg(to_jsonb(x) order by id) from public.resource_reservations x)) result` )).rows[0].result;}
+async function fullFingerprint(p:PgPool){return {authority:await authorityFingerprint(p),operational:(await p.query(`select jsonb_build_object('queue',(select jsonb_agg(to_jsonb(x) order by id) from public.durable_outbox x),'receipts',(select jsonb_agg(to_jsonb(x) order by tenant_id,booking_id,channel) from public.confirmation_delivery_receipts x),'planner',(select jsonb_agg(to_jsonb(x) order by tenant_id) from public.tenant_notification_planner_configs x)) result`)).rows[0].result};}
 type ChildProof={mode:'deliver'|'recover';pid:number;mockSendCount:number;settingsRevision:number;settingsDigest:string;authorityDigest:string};
 async function childProof(mode:'deliver'|'recover'):Promise<ChildProof>{
  // The child never seeds, discovers, changes provider bindings, or accepts IDs.
