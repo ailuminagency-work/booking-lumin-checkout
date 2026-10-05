@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {isIP} from 'node:net';
 import {Pool} from 'pg';
 import {createNotificationPlannerConfigApi} from './notification-planner-config.js';
 import {createConfirmationContextLoader} from './confirmation-context-loader.js';
@@ -8,18 +9,23 @@ import {createConfirmationOutboxWorker,confirmationDeliveryKey,type Confirmation
 import {planNotifications} from '../../../packages/notifications/src/index.js';
 import {createMockNotificationProvider} from '../../../packages/adapters/src/mockNotification.js';
 
-// Local test only: creates synthetic data in a fresh disposable DB. No provider
+// Local/registered CI test only: synthetic data in a fresh disposable DB. No provider
 // activation, external requests, scheduler, or production entrypoint.
 assert.equal(process.env.CONFIRMATION_PLANNER_DELIVERY_LOCAL_TEST,'1');
 assert.equal(process.env.PGHOST,'127.0.0.1');
-assert.equal(process.env.PGPORT,'55436');
+assert.equal(process.env.PGPORT,process.env.CI==='true'?'5432':'55436');
 assert.match(process.env.PGDATABASE??'',/^lumin_phase_a_confirmation_planner_delivery_[a-z0-9_]+$/);
 for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])assert.ok(!process.env[key]);
+const expectedServerHost=process.env.CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST;
+if(process.env.CI==='true'){
+ assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(isIP(expectedServerHost??''),4);
+ assert.match(expectedServerHost!,/^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/);
+}else assert.equal(expectedServerHost,undefined,'CI server override forbidden locally');
 const id=(n:number)=>`66010000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const tenant=id(3),connection=id(9),pool=new Pool({max:6});
 try{
  const target=(await pool.query('select host(inet_server_addr()) host,inet_server_port() port,current_database() database')).rows[0];
- assert.equal(target.host,'127.0.0.1');assert.equal(String(target.port),'55436');assert.equal(target.database,process.env.PGDATABASE);
+ assert.equal(target.host,process.env.CI==='true'?expectedServerHost:'127.0.0.1');assert.equal(String(target.port),process.env.PGPORT);assert.equal(target.database,process.env.PGDATABASE);
  assert.equal((await pool.query('select count(*)::int n from public.tenants')).rows[0].n,0,'fresh empty database required');
  const fixture=(await readFile(new URL('../../../supabase/tests/confirmation_outbox_tests.sql',import.meta.url),'utf8')).split('-- No new grants:')[0]!.replace(/^\\set.*$/gm,'').replaceAll('63000000','66010000').replaceAll('confirmation-outbox','planner-delivery').replaceAll('outbox-owner','planner-delivery-owner').replaceAll('outbox-admin','planner-delivery-admin');
  await pool.query(fixture+'commit;');
