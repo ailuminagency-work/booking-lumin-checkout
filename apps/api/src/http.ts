@@ -1,5 +1,6 @@
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
+import {ConfirmationReceiptHistory,type ConfirmationReceiptHistoryReader} from './confirmation-receipt-history';
 import {DetailingPaymentReceipt,DetailingPaymentReadiness,type DetailingPaymentApi} from './detailing-payment';
 import {DetailingReservationInput,DetailingRequestReceipt,DetailingHoldReceipt} from '@lumin/contracts';
 import type {DetailingReservationApi} from './detailing-reservation';
@@ -59,6 +60,7 @@ export interface FlowHttpOptions{
  notificationAuthoring?:boolean;
  notificationPlannerConfig?:NotificationPlannerConfigApi;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
+ confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
  detailingOfferCreate?:DetailingOfferCreator;
  detailingOfferRead?:DetailingOfferReader;
  releaseEnvironment?:ReleaseEnvironment;
@@ -245,9 +247,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!result.success||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
-   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==='/api/confirmation-receipts'?['tenantId','bookingId']:["tenantId"];
+   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   if(url.pathname==='/api/confirmation-receipt-history'){
+    if(!options.notificationAuthoring||!options.confirmationReceiptHistory)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'||url.searchParams.getAll('bookingId').length!==1||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    const tenantId=tenant.toLowerCase(),bookingId=Uuid.parse(url.searchParams.get('bookingId')).toLowerCase();
+    const result=ConfirmationReceiptHistory.safeParse(await options.confirmationReceiptHistory(actor,tenantId,bookingId));
+    if(!result.success||result.data.tenantId!==tenantId||result.data.bookingId!==bookingId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
    if(url.pathname==='/api/confirmation-receipts'){
     if(!options.notificationAuthoring||!options.confirmationReceiptStatus)throw new FlowError('UNSUPPORTED_CONFIG');
     if(req.method!=='GET'||url.searchParams.getAll('bookingId').length!==1||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');

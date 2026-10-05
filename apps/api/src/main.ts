@@ -1,5 +1,6 @@
 import {createNotificationPlannerConfigApi} from './notification-planner-config';
 import {createConfirmationReceiptStatusReader} from './confirmation-receipt-status';
+import {createConfirmationReceiptHistoryReader} from './confirmation-receipt-history';
 import {createDetailingPaymentApi} from './detailing-payment';
 import {createDetailingReservationApi} from './detailing-reservation';
 import {createDetailingAvailabilityReader} from './detailing-availability';
@@ -139,7 +140,7 @@ function main(): void {
 
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
-    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool)}:{}),
+    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool),confirmationReceiptHistory:createConfirmationReceiptHistoryReader(pool)}:{}),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
