@@ -14,9 +14,12 @@ async function call(payment:string){
 }
 async function seed(n:number,amount=350){
  const booking=id(n),payment=id(n+100);
+ // Each rejection scenario owns a distinct slot so exclusive holds do not collide.
+ const slotStart=new Date(Date.parse('2035-01-01T10:00:00Z')+n*86_400_000).toISOString();
+ const slotEnd=new Date(Date.parse(slotStart)+3*3_600_000).toISOString();
  await pool.query(`insert into public.bookings(id,tenant_id,reference,idempotency_key,selection,pricing,slot_start,slot_end) values($1,$2,$3,$3,jsonb_build_object('serviceId',$4::text,'itemQuantities','{}'::jsonb,'addonIds','[]'::jsonb,'answers','{}'::jsonb,'rentalPeriods',3),jsonb_build_object('total',jsonb_build_object('amount',300,'currency','USD'),'deposit',jsonb_build_object('amount',50,'currency','USD')),$5,$6)`,[booking,tenant,booking,service,slotStart,slotEnd]);
- await pool.query(`insert into public.payments(id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1,$2,$3,'fixture',$1,'succeeded',$4,'USD')`,[payment,tenant,booking,amount]);
- await pool.query(`insert into public.resource_reservations(tenant_id,resource_id,booking_id,slot_start,slot_end,hold_key,status,expires_at,quantity) values($1,$2,$3,$4,$5,$3,'held',clock_timestamp()+interval '5 minutes',1)`,[tenant,resource,booking,slotStart,slotEnd]);
+ await pool.query(`insert into public.payments(id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2,$3,'fixture',$1::text,'succeeded',$4,'USD')`,[payment,tenant,booking,amount]);
+ await pool.query(`insert into public.resource_reservations(tenant_id,resource_id,booking_id,slot_start,slot_end,hold_key,status,expires_at,quantity) values($1,$2,$3::uuid,$4,$5,$3::text,'held',clock_timestamp()+interval '5 minutes',1)`,[tenant,resource,booking,slotStart,slotEnd]);
  return{booking,payment};
 }
 try{
@@ -44,6 +47,6 @@ try{
 
  // Keep the legacy simple path covered: its service-capacity advisory lock and
  // active capacity hold still confirm exactly once under concurrent replay.
- const simpleBooking=id(20),simplePayment=id(120);await pool.query(`insert into public.bookings(id,tenant_id,reference,idempotency_key,selection,pricing,slot_start,slot_end) values($1,$2,$1,$1,jsonb_build_object('serviceId',$3::text),jsonb_build_object('total',jsonb_build_object('amount',100,'currency','USD')),$4,$5)`,[simpleBooking,tenant,simpleService,slotStart,slotEnd]);await pool.query(`insert into public.payments(id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1,$2,$3,'fixture',$1,'succeeded',100,'USD')`,[simplePayment,tenant,simpleBooking]);await pool.query(`insert into public.capacity_holds(tenant_id,service_id,booking_id,slot_start,slot_end,hold_key,status,expires_at) values($1,$2,$3,$4,$5,$3,'active',clock_timestamp()+interval '5 minutes')`,[tenant,simpleService,simpleBooking,slotStart,slotEnd]);const simpleResults=await Promise.all([call(simplePayment),call(simplePayment)]);assert.deepEqual(simpleResults.map(x=>x.replayed).sort(),[false,true]);
+ const simpleBooking=id(20),simplePayment=id(120);await pool.query(`insert into public.bookings(id,tenant_id,reference,idempotency_key,selection,pricing,slot_start,slot_end) values($1::uuid,$2,$1::text,$1::text,jsonb_build_object('serviceId',$3::text),jsonb_build_object('total',jsonb_build_object('amount',100,'currency','USD')),$4,$5)`,[simpleBooking,tenant,simpleService,slotStart,slotEnd]);await pool.query(`insert into public.payments(id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2,$3,'fixture',$1::text,'succeeded',100,'USD')`,[simplePayment,tenant,simpleBooking]);await pool.query(`insert into public.capacity_holds(tenant_id,service_id,booking_id,slot_start,slot_end,hold_key,status,expires_at) values($1,$2,$3::uuid,$4,$5,$3::text,'active',clock_timestamp()+interval '5 minutes')`,[tenant,simpleService,simpleBooking,slotStart,slotEnd]);const simpleResults=await Promise.all([call(simplePayment),call(simplePayment)]);assert.deepEqual(simpleResults.map(x=>x.replayed).sort(),[false,true]);
  console.log("PASS rental confirmation: persisted charge, serialized hold consumption, consumed replay, expiry/amount/refund/tenant/foreign-resource/slot/quantity/capacity rejection, consume rollback, and legacy simple advisory-lock path");
 }finally{await pool.end();}

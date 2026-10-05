@@ -85,6 +85,7 @@ jobs:
             configurable_flow_tests \
             flow_storage_tests \
             outbox_tests \
+            confirmation_outbox_tests \
             mode_installations_tests \
             mode_flow_session_tests \
             customer_session_availability_tests \
@@ -451,3 +452,19 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$f"
           done
           node --import tsx apps/api/src/detailing-payment.integration.ts
+      - name: Transactional confirmation envelopes and unchanged service/rental authority
+        env:
+          CONFIRMATION_OUTBOX_LOCAL_TEST: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_confirmation_outbox_ci
+        run: |
+          export CONFIRMATION_OUTBOX_CI_SERVER_HOST="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' '${{ job.services.postgres.id }}')"
+          psql -d postgres -c 'create database lumin_confirmation_outbox_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/confirmation-outbox.integration.ts
+          node --import tsx apps/api/src/atomic-confirmation.integration.ts
+          node --import tsx apps/api/src/rental-confirmation.integration.ts
