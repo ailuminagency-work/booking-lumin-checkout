@@ -65,3 +65,5 @@ export * from "./detailing-scheduling";
 export * from "./detailing-publication";
 export * from './detailing-availability';
 export * from './detailing-reservation';
+
+export * from './notification-planner';
