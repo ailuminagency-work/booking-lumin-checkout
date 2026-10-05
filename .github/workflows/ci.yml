@@ -18,6 +18,8 @@ jobs:
       - run: npm ci
       - name: Hosted customer concurrency harness safety regressions
         run: node --test scripts/customer-paid-concurrency.test.mjs
+      - name: Controlled Detailing hosted harness opt-in safety
+        run: node --test scripts/detailing-hosted-customer.test.mjs
       - name: Staging deployment configuration safety regressions
         run: |
           node scripts/validate-staging-frontend-config.test.mjs
