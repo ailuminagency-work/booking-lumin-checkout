@@ -1,7 +1,5 @@
 import { HostedFlow } from "./flows/HostedFlow";
-import { useCallback, useState, type CSSProperties } from "react";
-import { HostedDetailingFlow } from "./flows/HostedDetailingFlow";
-import { ConnectedCheckout } from "./connected/ConnectedCheckout";
+import { Component, Suspense, lazy, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { STEP_LABELS, visibleStepsFor, WizardControls } from "./components/WizardControls";
 import { branding, getService } from "./config/demoTenant";
@@ -14,6 +12,26 @@ import { Payment } from "./steps/Payment";
 import { ServicePicker } from "./steps/ServicePicker";
 import { SlotPicker } from "./steps/SlotPicker";
 import { Summary } from "./steps/Summary";
+
+const HostedDetailingFlow = lazy(() => import("./flows/HostedDetailingFlow").then(module => ({ default: module.HostedDetailingFlow })));
+const ConnectedCheckout = lazy(() => import("./connected/ConnectedCheckout").then(module => ({ default: module.ConnectedCheckout })));
+
+// A missing route chunk says nothing about an earlier booking or payment attempt.
+class RouteLoadingBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  override render(): ReactNode {
+    if (this.state.failed) return <main className="checkout-card" role="alert">
+      <h1>Checkout could not be loaded</h1>
+      <p>Booking and payment status have not been checked. If you already submitted a request, contact the business with your booking reference before starting another booking.</p>
+    </main>;
+    return this.props.children;
+  }
+}
+
+function RouteLoading() {
+  return <main className="checkout-card" aria-busy="true"><p role="status">Loading checkout…</p></main>;
+}
 
 function StepBody() {
   const { state } = useCheckout();
@@ -81,7 +99,7 @@ function Shell() {
 export function HostedInstallationFlow(props:{installationId:string;apiUrl:string;localHarness?:boolean}) {
   const [detailing,setDetailing]=useState(false);
   const unsupported=useCallback(()=>setDetailing(true),[]);
-  return detailing ? <HostedDetailingFlow {...props}/> : <HostedFlow {...props} onUnsupportedConfig={unsupported}/>;
+  return detailing ? <RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedDetailingFlow {...props}/></Suspense></RouteLoadingBoundary> : <HostedFlow {...props} onUnsupportedConfig={unsupported}/>;
 }
 
 export default function App() {
@@ -90,11 +108,11 @@ export default function App() {
   const hostedMatch = /^flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
   if (hostedMatch) return <ErrorBoundary><HostedInstallationFlow key={hostedMatch[1]!+runtime.flowApiOrigin} installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
   if (runtime.mode === "supabase") {
-    return <ErrorBoundary><ConnectedCheckout config={{
+    return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><ConnectedCheckout config={{
       url: runtime.supabaseUrl,
       publishableKey: runtime.supabasePublishableKey,
       tenantId: runtime.tenantId,
-    }} /></ErrorBoundary>;
+    }} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
   }
   // White-label: branding flows in via CSS custom properties, so swapping
   // the tenant config restyles the whole checkout.
