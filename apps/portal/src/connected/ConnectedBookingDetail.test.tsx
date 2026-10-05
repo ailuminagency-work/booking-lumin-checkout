@@ -1,6 +1,6 @@
 import {useLayoutEffect} from 'react';
 import {afterEach,expect,it,vi} from 'vitest';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import type {ConnectedBookingDetail,RuntimeClient} from '@lumin/runtime-client';
 import {ConnectedBookingRecord} from './ConnectedBookingDetail';
@@ -64,4 +64,39 @@ it('withholds the prior private booking before passive effects after same-client
  function Observer(){useLayoutEffect(()=>{observed=document.body.textContent??'';});return <ConnectedBookingRecord client={client} tenantId={tenant} bookingId={booking} services={[]}/>;}
  const view=render(<MemoryRouter><Observer/></MemoryRouter>);await screen.findByText('STAGING_PREVIOUS_ACCOUNT');vi.mocked(client.bookingDetail).mockImplementation(()=>new Promise(()=>{}));auth++;
  view.rerender(<MemoryRouter><Observer/></MemoryRouter>);expect(observed).not.toContain('STAGING_PREVIOUS_ACCOUNT');expect(observed).toContain('Loading booking');expect(screen.queryByRole('region',{name:'Confirmation receipt records'})).toBeNull();
+});
+
+it('describes saved initial and changed statuses with readable labels and the saved reason',async()=>{
+ const detail=fixture('Readable activity');detail.history=[
+  {from:null,to:'draft',reason:null,at:'2026-10-04T18:00:00Z'},
+  {from:'draft',to:'pending_payment',reason:'Customer requested a later appointment.',at:'2026-10-04T18:01:00Z'},
+  {from:'pending_payment',to:'confirmed',reason:null,at:'2026-10-04T18:02:00Z'}
+ ];
+ render(view({bookingDetail:vi.fn(async()=>detail)},[]));
+ const list=await screen.findByRole('list');const entries=within(list).getAllByRole('listitem');
+ expect(entries).toHaveLength(3);
+ expect(entries[0]).toHaveTextContent('Status set to Draft. Recorded');
+ expect(entries[1]).toHaveTextContent('Status changed from Draft to Pending payment. Recorded');
+ expect(entries[1]).toHaveTextContent('Saved reason: Customer requested a later appointment.');
+ expect(entries[2]).toHaveTextContent('Status changed from Pending payment to Confirmed. Recorded');
+ expect(within(list).queryAllByText(/Saved reason:/)).toHaveLength(1);
+ expect(list.textContent).not.toMatch(/[\uFFFD\u001A]/);
+});
+it('explains an empty saved status history without implying a missing booking or payment',async()=>{
+ render(view({bookingDetail:vi.fn(async()=>fixture('No saved changes'))},[]));
+ expect(await screen.findByText('No saved status changes are recorded for this booking.')).toBeVisible();
+ expect(screen.queryByRole('list')).toBeNull();
+ expect(screen.getByText('Status: confirmed')).toBeVisible();
+ expect(screen.getByText('Amounts come from the saved booking and payment records. Refund totals and outstanding balances are not available on this page yet.')).toBeVisible();
+});
+it('keeps long saved private text complete inside an inherited wrapping boundary',async()=>{
+ const reference='R'.repeat(200),name='N'.repeat(200),email='e'.repeat(240)+'@example.test',service='S'.repeat(200),reason='A'.repeat(2000);
+ const detail=fixture(reference);detail.customer={name,email,phone:'1'.repeat(100)};detail.history=[{from:'confirmed',to:'completed',reason,at:'2026-10-24T18:00:00Z'}];
+ render(<MemoryRouter><ConnectedBookingRecord client={{bookingDetail:vi.fn(async()=>detail)}} tenantId={tenant} bookingId={booking} services={[{id:other,tenant_id:tenant,name:service} as Parameters<typeof ConnectedBookingRecord>[0]['services'][number]]}/></MemoryRouter>);
+ const heading=await screen.findByRole('heading',{name:`Booking ${reference}`});const boundary=heading.closest('section');
+ expect(boundary).toHaveStyle({minWidth:'0',maxWidth:'100%',overflowWrap:'anywhere'});
+ for(const value of [name,email,service,'1'.repeat(100)])expect(screen.getByText(value)).toBeVisible();
+ expect(screen.getByText(`Saved reason: ${reason}`)).toBeVisible();
+ expect(heading.textContent).toBe(`Booking ${reference}`);
+ expect(boundary?.style.textOverflow).toBe('');expect(boundary?.style.overflow).toBe('');expect(boundary?.style.whiteSpace).toBe('');
 });
