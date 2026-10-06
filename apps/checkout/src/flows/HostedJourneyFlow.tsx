@@ -12,12 +12,12 @@ function windowFor(date:string){
 }
 
 // Memory only. Unmount/context replacement must not permit a new orphan attempt.
-// A full page reload still requires future server-side read-only recovery.
-type RetainedHold={context:string;owner:symbol;client?:RuntimeClient;session?:PaidJourneyCustomerSession;input?:PaidJourneyHoldInput;phase:'pending'|'unknown'|'held';receipt?:PaidJourneyHoldReceipt;controller:AbortController;timeout?:ReturnType<typeof setTimeout>;expiryTimer?:ReturnType<typeof setTimeout>;sequence:number};
+// A full page reload loses the private token; this cannot recover missing credentials.
+type RetainedHold={context:string;owner:symbol;client?:RuntimeClient;session?:PaidJourneyCustomerSession;input?:PaidJourneyHoldInput;phase:'pending'|'checking'|'unknown'|'held';checked:boolean;receipt?:PaidJourneyHoldReceipt;controller:AbortController;timeout?:ReturnType<typeof setTimeout>;expiryTimer?:ReturnType<typeof setTimeout>;sequence:number};
 let retainedHold:RetainedHold|undefined;
 const holdListeners=new Set<()=>void>();
 const notifyHold=()=>{for(const listener of holdListeners)listener();};
-function uncertain(hold:RetainedHold){hold.phase='unknown';clearTimeout(hold.timeout);hold.controller.abort();notifyHold();}
+function uncertain(hold:RetainedHold){hold.phase='unknown';hold.checked=false;clearTimeout(hold.timeout);hold.controller.abort();notifyHold();}
 function forget(hold:RetainedHold){clearTimeout(hold.timeout);clearTimeout(hold.expiryTimer);hold.input=undefined;hold.session=undefined;hold.client=undefined;if(retainedHold===hold)retainedHold=undefined;notifyHold();}
 const validText=(value:string,max:number)=>value.length>0&&value.length<=max&&value===value.trim()&&!/[\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(value);
 const validCustomer=(name:string,email:string)=>validText(name,200)&&validText(email,254)&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email);
@@ -41,7 +41,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  const session=sessionReceipt?.context===context?sessionReceipt.session:null;
  const setSession=(value:PaidJourneyCustomerSession|null)=>setSessionReceipt(value?{session:value,context}:null);
  const currentContext=useRef(context);currentContext.current=context;
- useEffect(()=>{const listener=()=>setHoldVersion(value=>value+1);holdListeners.add(listener);return()=>{holdListeners.delete(listener);const hold=retainedHold;if(hold?.owner===holdOwner.current&&hold.phase==='pending')uncertain(hold);};},[context]);
+ useEffect(()=>{const listener=()=>setHoldVersion(value=>value+1);holdListeners.add(listener);return()=>{holdListeners.delete(listener);const hold=retainedHold;if(hold?.owner===holdOwner.current&&(hold.phase==='pending'||hold.phase==='checking'))uncertain(hold);};},[context]);
  useEffect(()=>{
   epoch.current++;openingRef.current=false;openingAbort.current?.abort();clearTimeout(openingTimer.current);
   setOpening(false);setSession(null);setMessage('');setHoldMessage('');setAvailability(null);setSelected('');setStage(0);setName('');setEmail('');setDate(today());
@@ -75,8 +75,8 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  },[session,date,client,context,holdVersion]);
  async function sendHold(hold:RetainedHold,retry:boolean){
   const sdk=hold.client,originalSession=hold.session,input=hold.input;
-  if(!sdk||!originalSession||!input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||hold.phase==='pending'&&retry)return;
-  const sequence=++hold.sequence,controller=new AbortController();hold.phase='pending';hold.controller=controller;hold.owner=holdOwner.current;notifyHold();
+  if(retainedHold!==hold||!sdk||!originalSession||!input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||(hold.phase==='pending'||hold.phase==='checking'||!hold.checked)&&retry)return;
+  const sequence=++hold.sequence,controller=new AbortController();hold.phase='pending';hold.checked=false;hold.controller=controller;hold.owner=holdOwner.current;notifyHold();
   const timeout=setTimeout(()=>{if(retainedHold===hold&&hold.sequence===sequence&&hold.phase==='pending')uncertain(hold);},timeoutMs);hold.timeout=timeout;
   try{const receipt=await sdk.holdPaidJourneySlot(installationId,originalSession,input,{signal:controller.signal,...(retry?{retry:true as const}:{})});
    if(retainedHold!==hold||hold.sequence!==sequence)return;
@@ -87,11 +87,22 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
    hold.phase='unknown';
   }finally{clearTimeout(timeout);if(retainedHold===hold&&hold.sequence===sequence){if(Date.parse(originalSession.expiresAt)<=Date.now()){hold.input=undefined;hold.session=undefined;hold.client=undefined;}notifyHold();}}
  }
+ async function checkHold(hold:RetainedHold){
+  const sdk=hold.client,originalSession=hold.session;
+  if(retainedHold!==hold||!sdk||!originalSession||!hold.input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||hold.phase==='pending'||hold.phase==='checking')return;
+  const sequence=++hold.sequence,controller=new AbortController();hold.phase='checking';hold.checked=false;hold.controller=controller;hold.owner=holdOwner.current;notifyHold();
+  const timeout=setTimeout(()=>{if(retainedHold===hold&&hold.sequence===sequence&&hold.phase==='checking')uncertain(hold);},timeoutMs);hold.timeout=timeout;
+  const active=()=>retainedHold===hold&&hold.sequence===sequence&&!controller.signal.aborted&&hold.context===currentContext.current&&Date.parse(originalSession.expiresAt)>Date.now();
+  try{const receipt=await sdk.recoverPaidJourneyHold(installationId,originalSession,{signal:controller.signal});
+   if(!active())return;hold.receipt=receipt;hold.phase='held';hold.checked=true;
+  }catch(error){if(retainedHold!==hold||hold.sequence!==sequence)return;hold.phase='unknown';hold.checked=active()&&(error as {code?:unknown})?.code==='UNVERIFIED';
+  }finally{clearTimeout(timeout);if(retainedHold===hold&&hold.sequence===sequence){if(hold.phase==='checking')hold.phase='unknown';if(Date.parse(originalSession.expiresAt)<=Date.now()){hold.checked=false;hold.input=undefined;hold.session=undefined;hold.client=undefined;}notifyHold();}}
+ }
  async function reserve(){
   if(retainedHold||!client||!session||current?.kind!=='review_payment'||Date.parse(session.expiresAt)<=Date.now()||!validCustomer(name,email)||!availability?.slots.some(slot=>slot.start===selected&&Date.parse(slot.start)>Date.now()))return;
   let key:string;try{const bytes=new Uint8Array(32);crypto.getRandomValues(bytes);key=Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');}catch{setHoldMessage('A secure reservation key is unavailable. No reservation request was sent.');return;}
   const input=Object.freeze({schemaVersion:1 as const,idempotencyKey:key,requestedStart:selected,customer:Object.freeze({name,email}),answers:Object.freeze({})});
-  const hold:RetainedHold={context,owner:holdOwner.current,client,session,input,phase:'pending',controller:new AbortController(),sequence:0};retainedHold=hold;setName('');setEmail('');setHoldMessage('');
+  const hold:RetainedHold={context,owner:holdOwner.current,client,session,input,phase:'pending',checked:false,controller:new AbortController(),sequence:0};retainedHold=hold;setName('');setEmail('');setHoldMessage('');
   hold.expiryTimer=setTimeout(()=>{if(retainedHold!==hold)return;uncertain(hold);hold.input=undefined;hold.session=undefined;hold.client=undefined;notifyHold();},Math.max(0,Date.parse(session.expiresAt)-Date.now()));
   await sendHold(hold,false);
  }
@@ -111,8 +122,8 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
   <p>Staging · Temporary reservation. Booking submission is currently unavailable until payment and confirmation are connected.</p>
   {hold?!compatibleHold?<p role="alert">An earlier reservation attempt must be resolved before opening a different form. Booking and payment status have not been checked.</p>:<section aria-label="Reservation draft">
    <h2>Reservation draft</h2>
-   {hold.phase==='pending'?<p role="status">Reserving the selected time… Do not start another attempt.</p>:verifiedHold?<><p role="status">Temporary hold verified. Booking remains DRAFT. Payment is unavailable and no booking has been confirmed.</p><p>Draft reference: {verifiedHold.reference}</p><p>Hold active until {new Date(verifiedHold.expiresAt).toISOString().slice(11,19)} UTC.</p></>:<><p role="alert">Reservation status could not be verified. A draft and hold may exist. Do not start another booking. No payment or confirmation was authorized.</p>{hold.receipt&&<p>Last verified draft reference: {hold.receipt.reference}. Its current hold status has not been checked.</p>}</>}
-   {hold.phase!=='pending'&&hold.session&&hold.client&&hold.input&&Date.parse(hold.session.expiresAt)>Date.now()&&(!hold.receipt||Date.parse(hold.receipt.expiresAt)>Date.now())?<><button type="button" onClick={()=>void sendHold(hold,true)}>Retry same hold request</button><p>This explicitly sends the original unchanged request. It does not start a new booking or payment.</p></>:hold.phase!=='pending'&&<p>The session or known hold is no longer available for retry. Contact the business to resolve this draft before starting another attempt.</p>}
+   {hold.phase==='pending'||hold.phase==='checking'?<p role="status">{hold.phase==='checking'?'Checking the existing reservation… This check does not create or renew a hold.':'Reserving the selected time… Do not start another attempt.'}</p>:verifiedHold?<><p role="status">Temporary hold verified. Booking remains DRAFT. Payment is unavailable and no booking has been confirmed.</p><p>Draft reference: {verifiedHold.reference}</p><p>Hold active until {new Date(verifiedHold.expiresAt).toISOString().slice(11,19)} UTC.</p></>:<><p role="alert">Reservation status could not be verified. A draft and hold may exist. Do not start another booking. No payment or confirmation was authorized.</p>{hold.receipt&&<p>Last verified draft reference: {hold.receipt.reference}. Its current hold status has not been checked.</p>}</>}
+   {hold.phase!=='pending'&&hold.phase!=='checking'&&hold.session&&hold.client&&hold.input&&Date.parse(hold.session.expiresAt)>Date.now()&&(!hold.receipt||Date.parse(hold.receipt.expiresAt)>Date.now())?<><button type="button" onClick={()=>void checkHold(hold)}>Check existing reservation</button><p>This reads the original attempt only. It does not create, renew or confirm a booking.</p>{hold.phase==='unknown'&&hold.checked&&<><button type="button" onClick={()=>void sendHold(hold,true)}>Retry same hold request</button><p>The check could not verify a hold. This explicitly sends the original unchanged request; its outcome may still be uncertain.</p></>}</>:hold.phase!=='pending'&&hold.phase!=='checking'&&<p>The session or known hold is no longer available for retry. Contact the business to resolve this draft before starting another attempt.</p>}
   </section>:!client?<p role="alert">This booking form is unavailable because its connected public configuration could not be verified.</p>:!session?<>
    {message&&<p role="alert">{message}</p>}
    {opening&&<p role="status">Opening temporary booking session…</p>}
