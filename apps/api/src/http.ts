@@ -1,3 +1,4 @@
+import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
@@ -92,6 +93,8 @@ export interface FlowHttpOptions{
  paidSimplePublication?:boolean;
  /** Versioned journey authoring only; off until a coherent release enables it. */
  paidJourneyDrafts?:boolean;
+ /** Separate V8 publication/read capability. No customer session issuance. */
+ paidJourneyPublication?:boolean;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
@@ -150,7 +153,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const url=new URL(req.url??"/","http://127.0.0.1");
    if(serveReleaseMetadata(req,res,url.pathname,releaseMetadata))return;
    if(url.pathname==="/health"&&req.method==="GET"){send(res,200,{ok:true,data:{mode:"LOCAL_HARNESS",providerConnections:false}});return;}
-   const customer=url.pathname.startsWith("/api/detailing-installations/")||url.pathname.startsWith("/api/detailing-flow-sessions/")||url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
+   const customer=url.pathname.startsWith('/api/paid-journey-installations/')||url.pathname.startsWith("/api/detailing-installations/")||url.pathname.startsWith("/api/detailing-flow-sessions/")||url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
    const origin=originHeader(req,customer?customerOrigins:ownerOrigins);
    res.setHeader("Access-Control-Allow-Origin",origin);res.setHeader("Vary","Origin");
    if(req.method==="OPTIONS"){
@@ -162,6 +165,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    const journeyRender=url.pathname.match(/^\/api\/paid-journey-installations\/([^/]+)\/render$/);
+    if(journeyRender){
+     if(!options.paidJourneyPublication)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+     if([...url.searchParams].length||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const installation=Uuid.parse(journeyRender[1]).toLowerCase();
+     const data=await call('get_paid_journey_render',[installation,origin]);
+     send(res,200,{ok:true,data});return;
+    }
     if(url.pathname==='/api/detailing-flow-sessions/availability'){
      if(!options.detailingPublication||!options.detailingAvailability)throw new FlowError('UNSUPPORTED_CONFIG');
      if(req.method!=='GET'||[...url.searchParams.keys()].some(k=>k!=='from'&&k!=='to')||url.searchParams.getAll('from').length!==1||url.searchParams.getAll('to').length!==1)throw new FlowError('INVALID_REQUEST');
@@ -412,6 +424,18 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=PaidSimpleDraftList.safeParse(await options.paidDrafts(actor,tenant));
     if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const journeyPublish=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/publish-draft$/);
+   if(journeyPublish){
+    if(!options.paidJourneyPublication)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const flow=Uuid.parse(journeyPublish[1]).toLowerCase(),targetTenant=tenant.toLowerCase();
+    const body=PublishPaidJourneyDraft.parse(await jsonBody(req));
+    if(body.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError('FORBIDDEN');
+    const version=randomUUID(),installation=randomUUID();
+    const data=RpcResults.publish_paid_journey_draft.parse(await call('publish_paid_journey_draft',[actor,targetTenant,flow,body.expectedDraftRevision,version,installation,body.allowedOrigins,customerOrigins]));
+    if(data.tenantId!==targetTenant||data.flowId!==flow||data.draftRevision!==body.expectedDraftRevision||(!data.replayed&&(data.versionId!==version||data.installationId!==installation)))throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data});return;
    }
    const journeyDraft=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/draft$/);
    if(journeyDraft){
