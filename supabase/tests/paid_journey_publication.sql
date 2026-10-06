@@ -30,13 +30,28 @@ select pg_temp.assert(pg_temp.publish(v=>'70000000-0000-4000-8000-000000000015',
 reset role;
 create temporary table frozen_snapshot as select journey_snapshot from public.flow_versions where id='70000000-0000-4000-8000-000000000005';
 select pg_temp.assert((select journey_snapshot->'service'->'price'='{"amount":12500,"currency":"USD"}'::jsonb and journey_snapshot#>'{form,journey}'=pg_temp.journey() and not(journey_snapshot ?| array['actorId','tenantId','flowId','draftRevision']) and not((journey_snapshot->'form') ?| array['draftRevision','revision','actorId']) from public.flow_versions where id='70000000-0000-4000-8000-000000000005'),'server price/order and stripped owner draft metadata');
-do $$declare p jsonb;k text;begin
+do $$declare p jsonb;k text;bad_name text;bad jsonb;path text[];begin
  select journey_snapshot into p from frozen_snapshot;
  foreach k in array array['actorId','tenantId','draftRevision','provider','total'] loop perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(p||jsonb_build_object(k,1)),'unknown snapshot authority key');end loop;
  perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{renderSchemaVersion}','7')),'V7 cannot become journey');
  perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,presentation,layout}','null')),'null layout rejected');
  perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{service,price,amount}','-1')),'negative price rejected');
+ foreach path slice 1 in array array[array['service','name'],array['form','name']] loop
+  foreach bad_name in array array[' ',U&'\00a0\feff',E'bad\nname',U&'bad\0085name'] loop
+   bad:=jsonb_set(p,path,to_jsonb(bad_name));
+   perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(bad),'blank/control publication name rejected');
+   perform pg_temp.reject(format('insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select %L,tenant_id,flow_id,10,submission_mode,config,8,%L::jsonb from public.flow_versions where id=%L','70000000-0000-4000-8000-000000000077',bad,'70000000-0000-4000-8000-000000000005'),'23514');
+  end loop;
+ end loop;
+ perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,name}','" x "')),'untrimmed form name rejected');
+ perform pg_temp.assert(lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,name}',to_jsonb(U&'Journey \+01f600'::text))),'valid emoji JSONB name accepted');
+ bad:=jsonb_set(p,'{form,journey,stages}',(p#>'{form,journey,stages}')-5-4-3-2 || jsonb_build_array(jsonb_build_object('id','informational_note','kind','informational','label','Note','enabled',true)) || jsonb_build_array(p#>'{form,journey,stages,2}',p#>'{form,journey,stages,3}',p#>'{form,journey,stages,4}',p#>'{form,journey,stages,5}'));
+ perform pg_temp.assert(lumin.paid_journey_valid(bad#>'{form,journey}') and not lumin.paid_journey_snapshot_valid(bad),'unbound information authoring contract cannot become V8 snapshot');
+ perform pg_temp.reject(format('insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select %L,tenant_id,flow_id,10,submission_mode,config,8,%L::jsonb from public.flow_versions where id=%L','70000000-0000-4000-8000-000000000077',bad,'70000000-0000-4000-8000-000000000005'),'23514');
 end$$;
+update public.services set name=E'bad\nname' where id='70000000-0000-4000-8000-000000000003';
+select pg_temp.reject($q$select pg_temp.publish()$q$,'0A000');
+update public.services set name='Cleaning' where id='70000000-0000-4000-8000-000000000003';
 select pg_temp.reject($q$update public.flow_versions set journey_snapshot='{}' where id='70000000-0000-4000-8000-000000000005'$q$,'55000');
 select pg_temp.reject($q$update public.paid_journey_publications set installation_id='70000000-0000-4000-8000-000000000016' where version_id='70000000-0000-4000-8000-000000000005'$q$,'55000');
 select pg_temp.reject($q$delete from public.flow_installations where id='70000000-0000-4000-8000-000000000006'$q$,'55000');

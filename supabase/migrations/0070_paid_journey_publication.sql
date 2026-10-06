@@ -12,6 +12,9 @@ begin
  if (select count(*) from jsonb_object_keys(form))<>3 or not(form ?& array['name','presentation','journey'])
  or jsonb_typeof(form->'name') is distinct from 'string' or lumin.utf16_length(form->>'name') not between 1 and 200
  or jsonb_typeof(form->'presentation') is distinct from 'object' or not lumin.paid_journey_valid(form->'journey') then return false;end if;
+ if form->>'name' ~ U&'[\0001-\001f\007f-\009f]' or length(btrim(form->>'name',U&'\0009\000a\000b\000c\000d\0020\00a0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200a\2028\2029\202f\205f\3000\feff'))=0
+ or form->>'name'<>btrim(form->>'name',U&'\0009\000a\000b\000c\000d\0020\00a0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200a\2028\2029\202f\205f\3000\feff')
+ or exists(select 1 from jsonb_array_elements(form#>'{journey,stages}') stage where stage->>'kind'='informational') then return false;end if;
  if (select count(*) from jsonb_object_keys(form->'presentation'))<>2 or not((form->'presentation') ?& array['accentColor','layout'])
  or jsonb_typeof(form#>'{presentation,accentColor}') is distinct from 'string' or jsonb_typeof(form#>'{presentation,layout}') is distinct from 'string'
  or form#>>'{presentation,accentColor}' not in('#4f46e5','#0e7490','#0f766e','#2563eb','#be123c') or form#>>'{presentation,layout}' not in('stacked','compact') then return false;end if;
@@ -19,6 +22,7 @@ begin
  or jsonb_typeof(s->'id') is distinct from 'string' or s->>'id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
  or jsonb_typeof(s->'name') is distinct from 'string' or lumin.utf16_length(s->>'name') not between 1 and 200
  or jsonb_typeof(s->'durationMinutes') is distinct from 'number' then return false;end if;
+ if s->>'name' ~ U&'[\0001-\001f\007f-\009f]' or length(btrim(s->>'name',U&'\0009\000a\000b\000c\000d\0020\00a0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200a\2028\2029\202f\205f\3000\feff'))=0 then return false;end if;
  if (s->>'durationMinutes')::numeric not between 5 and 1440 or trunc((s->>'durationMinutes')::numeric)<>(s->>'durationMinutes')::numeric then return false;end if;
  if (select count(*) from jsonb_object_keys(price))<>2 or not(price ?& array['amount','currency'])
  or jsonb_typeof(price->'amount') is distinct from 'number' or jsonb_typeof(price->'currency') is distinct from 'string' or price->>'currency' !~ '^[A-Z]{3}$' then return false;end if;
