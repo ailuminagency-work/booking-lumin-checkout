@@ -1,3 +1,6 @@
+export interface PaidJourneyAvailability {readonly schemaVersion:1;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
+export interface PaidJourneyAvailabilityWindow {readonly from:string;readonly to:string}
+export class PaidJourneyAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyOwnerPublication {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly allowedOrigins:readonly string[];readonly render:PaidJourneyRender}
 export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
 export class PaidJourneySessionError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
@@ -149,6 +152,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const journeyPublicationAttempts=new Map<string,{actor:string;flowId:string;draftRevision:number;generation:number}>();
  let journeyOwnerReadSequence=0;
  let journeySessionSequence=0;
+ let journeyAvailabilitySequence=0;
  const journeyPublications=new Map<string,{actor:string;state:Exclude<PaidJourneyPublicationState,{phase:'ready'}>}>();
  const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
  const journeyDrafts=new Map<string,{actor:string;state:Exclude<PaidJourneyDraftState,{phase:'ready'}>}>();
@@ -505,6 +509,33 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const expiry=Date.parse(data.expiresAt),now=Date.now(),parsed=PaidJourneyRender.safeParse(data.render);
   if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000||!parsed.success)throw new PaidJourneySessionError('unknown','The session expiry or immutable journey is incompatible. No booking or payment was authorized.');
   return Object.freeze({schemaVersion:1,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:parsed.data});
+ }
+ /** A read binds only to the supplied immutable customer session; it reconciles no writers. */
+ async function readPaidJourneyAvailability(session:PaidJourneyCustomerSession,window:PaidJourneyAvailabilityWindow,options:{signal?:AbortSignal}={}):Promise<PaidJourneyAvailability>{
+  const sequence=++journeyAvailabilitySequence;
+  const invalid=()=>new PaidJourneyAvailabilityError('INVALID_REQUEST','Use a valid V8 session, bounded UTC window and optional cancellation signal.');
+  const utc=(v:unknown):number=>{if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(v))return NaN;const n=Date.parse(v),d=new Date(n),parts=v.slice(0,19).split(/[-T:]/).map(Number);return Number.isFinite(n)&&d.getUTCFullYear()===parts[0]&&d.getUTCMonth()+1===parts[1]&&d.getUTCDate()===parts[2]&&d.getUTCHours()===parts[3]&&d.getUTCMinutes()===parts[4]&&d.getUTCSeconds()===parts[5]?n:NaN;};
+  if(!bookingApiOrigin||!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal))||!exact(window,['from','to'])||!exact(session,['schemaVersion','sessionToken','expiresAt','render'])||session.schemaVersion!==1||typeof session.sessionToken!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(session.sessionToken)||typeof session.expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(session.expiresAt))throw invalid();
+  const from=utc(window.from),to=utc(window.to),expiry=Date.parse(session.expiresAt),render=PaidJourneyRender.safeParse(session.render),parts=session.expiresAt.slice(0,19).split(/[-T:]/).map(Number),calendar=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!));
+  if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>7*86400000||!Number.isFinite(expiry)||expiry>Date.now()+15*60000||!render.success||calendar.getUTCFullYear()!==parts[0]||calendar.getUTCMonth()+1!==parts[1]||calendar.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59)throw invalid();
+  if(expiry<=Date.now())throw new PaidJourneyAvailabilityError('EXPIRED','Start a fresh customer session before checking availability.');
+  const signal=options.signal;if(signal?.aborted)throw new PaidJourneyAvailabilityError('ABORTED','The availability read was canceled.');
+  const current=generation,sessionSequence=journeySessionSequence,credential=session.sessionToken,service=render.data.service;
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-journey-flow-sessions/availability?from='+encodeURIComponent(new Date(from).toISOString())+'&to='+encodeURIComponent(new Date(to).toISOString()),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`},...(signal?{signal}:{})});value=await response.json();}catch{throw new PaidJourneyAvailabilityError('UNVERIFIED','Availability could not be read. No retry or financial action was made.');}
+  if(signal?.aborted)throw new PaidJourneyAvailabilityError('ABORTED','The availability read was canceled.');
+  if(current!==generation||sessionSequence!==journeySessionSequence||sequence!==journeyAvailabilitySequence)throw new PaidJourneyAvailabilityError('STALE_CONTEXT','The customer availability context changed.');
+  if(expiry<=Date.now())throw new PaidJourneyAvailabilityError('EXPIRED','The customer session expired during the availability read.');
+  if(response.redirected)throw new PaidJourneyAvailabilityError('UNVERIFIED','Availability could not be verified without redirecting.');
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'){
+   const codes:Record<string,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+   if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code])throw new PaidJourneyAvailabilityError('REJECTED','The availability read was rejected. No financial action was made.');
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['schemaVersion','serviceId','durationMinutes','slots'])||data.schemaVersion!==1||data.serviceId!==service.id||data.durationMinutes!==service.durationMinutes||!Array.isArray(data.slots)||data.slots.length>2016)throw new PaidJourneyAvailabilityError('UNVERIFIED','Availability does not match the pinned customer service.');
+  const slots:Array<Readonly<{start:string;end:string;remainingCapacity:number}>>=[];let previous=-Infinity;
+  for(const slot of data.slots){if(!exact(slot,['start','end','remainingCapacity']))throw new PaidJourneyAvailabilityError('UNVERIFIED','Availability contains incompatible slot data.');const start=utc(slot.start),end=utc(slot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<from||end>to||start<=previous||end-start!==service.durationMinutes*60000||typeof slot.remainingCapacity!=='number'||!Number.isSafeInteger(slot.remainingCapacity)||slot.remainingCapacity<1)throw new PaidJourneyAvailabilityError('UNVERIFIED','Availability contains invalid or out-of-window slots.');previous=start;slots.push(Object.freeze({start:new Date(start).toISOString(),end:new Date(end).toISOString(),remainingCapacity:slot.remainingCapacity}));}
+  return Object.freeze({schemaVersion:1,serviceId:service.id,durationMinutes:service.durationMinutes,slots:Object.freeze(slots)});
  }
  /** Owner verification reads never reconcile any uncertain publication/save writer. */
  async function readPaidJourneyOwnerPublication(tenantId:string,flowId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyOwnerPublication>{
@@ -1280,7 +1311,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,paidJourneyPublicationState,
+  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,
