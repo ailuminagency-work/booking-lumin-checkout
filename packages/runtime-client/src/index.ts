@@ -3,6 +3,10 @@ export interface PaidJourneyAvailabilityWindow {readonly from:string;readonly to
 export class PaidJourneyAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyOwnerPublication {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly allowedOrigins:readonly string[];readonly render:PaidJourneyRender}
 export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
+export interface PaidJourneyHoldInput {readonly schemaVersion:1;readonly idempotencyKey:string;readonly requestedStart:string;readonly customer:Readonly<{name:string;email:string}>;readonly answers:Readonly<Record<string,never>>}
+export interface PaidJourneyHoldReceipt {readonly schemaVersion:1;readonly versionId:string;readonly installationId:string;readonly serviceId:string;readonly bookingId:string;readonly reference:string;readonly state:'draft';readonly confirmed:false;readonly paymentMode:'unavailable';readonly slot:Readonly<{start:string;end:string}>;readonly holdId:string;readonly status:'active';readonly expiresAt:string;readonly replayed:boolean}
+export type PaidJourneyHoldState=Readonly<{phase:'ready'|'holding'|'unknown'|'blocked'}>|Readonly<{phase:'held';receipt:PaidJourneyHoldReceipt}>;
+export class PaidJourneyHoldError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
 export class PaidJourneySessionError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
 export interface PaidJourneyPublishInput {readonly schemaVersion:1;readonly expectedDraftRevision:number;readonly allowedOrigins:readonly string[]}
 export interface PaidJourneyPublicationReceipt {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly replayed:boolean}
@@ -153,6 +157,8 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  let journeyOwnerReadSequence=0;
  let journeySessionSequence=0;
  let journeyAvailabilitySequence=0;
+ // Private same-attempt recovery survives auth changes. Never expose bearer/customer/body.
+ let journeyHoldAttempt:{generation:number;sequence:number;installationId:string;sessionToken:string;expiresAt:number;renderBody:string;body:string;phase:'holding'|'unknown'|'held';uncertain:boolean;receipt?:PaidJourneyHoldReceipt}|undefined;
  const journeyPublications=new Map<string,{actor:string;state:Exclude<PaidJourneyPublicationState,{phase:'ready'}>}>();
  const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
  const journeyDrafts=new Map<string,{actor:string;state:Exclude<PaidJourneyDraftState,{phase:'ready'}>}>();
@@ -494,9 +500,11 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  async function issuePaidJourneySession(installationId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyCustomerSession>{
   if(!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new PaidJourneySessionError('not_sent','Use only an optional cancellation signal; session authority comes from the server.');
   if(!bookingApiOrigin||!uuid(installationId)||options.signal?.aborted)throw new PaidJourneySessionError('not_sent','Choose a valid V8 installation and configured API before starting a session.');
+  if(journeyHoldAttempt&&journeyHoldAttempt.phase!=='held')throw new PaidJourneySessionError('not_sent','Resolve the retained hold attempt before opening a different session.');
+  if(journeyHoldAttempt?.phase==='held')journeyHoldAttempt=undefined;
   const current=generation,sequence=++journeySessionSequence,signal=options.signal;let response:Response,value:unknown;
   try{response=await transport(bookingApiOrigin+'/api/paid-journey-installations/'+installationId.toLowerCase()+'/sessions',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json'},body:'{}',...(signal?{signal}:{})});value=await response.json();}catch{throw new PaidJourneySessionError('unknown','The session response is unverified. No automatic retry was made; a new attempt may create another nonfinancial session.');}
-  if(current!==generation||sequence!==journeySessionSequence||signal?.aborted||response.redirected)throw new PaidJourneySessionError('unknown','The session context changed. This response cannot be accepted.');
+  if(current!==generation||sequence!==journeySessionSequence||signal?.aborted||response.redirected||journeyHoldAttempt)throw new PaidJourneySessionError('unknown','The session context changed. This response cannot be accepted.');
   if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'){
    const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
    if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code])throw new PaidJourneySessionError('rejected','The session request was rejected. Check the installation and staging configuration.');
@@ -509,6 +517,41 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const expiry=Date.parse(data.expiresAt),now=Date.now(),parsed=PaidJourneyRender.safeParse(data.render);
   if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000||!parsed.success)throw new PaidJourneySessionError('unknown','The session expiry or immutable journey is incompatible. No booking or payment was authorized.');
   return Object.freeze({schemaVersion:1,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:parsed.data});
+ }
+ /** No automatic retry. Unknown writes keep their exact private request identity. */
+ async function holdPaidJourneySlot(installationId:string,session:PaidJourneyCustomerSession,input:PaidJourneyHoldInput,options:{signal?:AbortSignal;retry?:true}={}):Promise<PaidJourneyHoldReceipt>{
+  const reject=(message:string)=>new PaidJourneyHoldError('not_sent',message);
+  const utc=(value:unknown,offset=false):number=>{if(typeof value!=='string'||!(offset?/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/:/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/).test(value))return NaN;const parts=value.slice(0,19).split(/[-T:]/).map(Number),calendar=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!)),n=Date.parse(value);return calendar.getUTCFullYear()===parts[0]&&calendar.getUTCMonth()+1===parts[1]&&calendar.getUTCDate()===parts[2]&&parts[3]!<=23&&parts[4]!<=59&&parts[5]!<=59&&Number.isFinite(n)?n:NaN;};
+  const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length>0&&v.length<=max&&v===v.trim()&&!/[\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(v);
+  if(!bookingApiOrigin||!uuid(installationId)||!(exact(options,[])||exact(options,['signal'])||exact(options,['retry'])||exact(options,['signal','retry']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal))||(options.retry!==undefined&&options.retry!==true)||!exact(session,['schemaVersion','sessionToken','expiresAt','render'])||session.schemaVersion!==1||typeof session.sessionToken!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(session.sessionToken)||!exact(input,['schemaVersion','idempotencyKey','requestedStart','customer','answers'])||input.schemaVersion!==1||typeof input.idempotencyKey!=='string'||!/^[A-Za-z0-9_-]{16,128}$/.test(input.idempotencyKey)||!exact(input.customer,['name','email'])||!text(input.customer.name,200)||!text(input.customer.email,254)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(input.customer.email)||!exact(input.answers,[]))throw reject('Use only the exact customer hold request and cancellation or explicit retry options.');
+  const expiry=utc(session.expiresAt,true),start=utc(input.requestedStart),render=PaidJourneyRender.safeParse(session.render),now=Date.now();
+  if(!render.success||!Number.isFinite(start)||!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000||options.signal?.aborted)throw reject('The current customer session and UTC slot must be valid before sending a hold request.');
+  const body=JSON.stringify({schemaVersion:1,idempotencyKey:input.idempotencyKey,requestedStart:new Date(start).toISOString(),customer:{name:input.customer.name,email:input.customer.email},answers:{}}),renderBody=JSON.stringify(render.data),installation=installationId.toLowerCase();
+  let attempt=journeyHoldAttempt;
+  if(attempt){if(attempt.phase==='holding'||options.retry!==true||attempt.generation!==generation||attempt.sequence!==journeySessionSequence||attempt.installationId!==installation||attempt.sessionToken!==session.sessionToken||attempt.expiresAt!==expiry||attempt.renderBody!==renderBody||attempt.body!==body)throw reject('Keep the original session, key and request unchanged; only an explicit same-attempt retry is permitted.');}
+  else{if(options.retry===true||start<=now)throw reject('Start one future-slot attempt before requesting a retry.');attempt={generation,sequence:journeySessionSequence,installationId:installation,sessionToken:session.sessionToken,expiresAt:expiry,renderBody,body,phase:'holding',uncertain:false};journeyHoldAttempt=attempt;}
+  const retained=attempt,hadUncertainty=retained.uncertain;retained.phase='holding';
+  const unknown=()=>{retained.phase='unknown';retained.uncertain=true;return new PaidJourneyHoldError('unknown','The hold response could not be verified. A draft and hold may exist. Retry only this unchanged attempt explicitly; no payment or confirmation was authorized.');};
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-journey-flow-sessions/hold',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json',Authorization:`Bearer ${retained.sessionToken}`},body:retained.body,...(options.signal?{signal:options.signal}:{})});value=await response.json();}catch{throw unknown();}
+  if(options.signal?.aborted||retained.generation!==generation||retained.sequence!==journeySessionSequence||retained.expiresAt<=Date.now()||response.redirected)throw unknown();
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'){
+   const codes:Record<string,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+   if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code]){if(hadUncertainty||retained.receipt)throw unknown();journeyHoldAttempt=undefined;throw new PaidJourneyHoldError('rejected','The hold request was rejected. No hold receipt was accepted.');}
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  const canonical=(v:unknown):v is string=>uuid(v)&&v===v.toLowerCase();
+  if(response.status!==200||!exact(data,['schemaVersion','versionId','installationId','serviceId','bookingId','reference','state','confirmed','paymentMode','slot','holdId','status','expiresAt','replayed'])||data.schemaVersion!==1||data.versionId!==render.data.versionId||data.installationId!==installation||data.serviceId!==render.data.service.id||!canonical(data.bookingId)||!canonical(data.holdId)||typeof data.reference!=='string'||!/^LMN-[A-F0-9]{32}$/.test(data.reference)||data.state!=='draft'||data.confirmed!==false||data.paymentMode!=='unavailable'||data.status!=='active'||typeof data.replayed!=='boolean'||!exact(data.slot,['start','end']))throw unknown();
+  const slotStart=utc(data.slot.start),slotEnd=utc(data.slot.end),holdExpiry=utc(data.expiresAt,true);
+  if(slotStart!==start||slotEnd-slotStart!==render.data.service.durationMinutes*60000||!Number.isFinite(holdExpiry)||holdExpiry<=Date.now()||holdExpiry>Date.now()+301000||(retained.receipt&&(data.replayed!==true||retained.receipt.bookingId!==data.bookingId||retained.receipt.holdId!==data.holdId||retained.receipt.reference!==data.reference||Date.parse(retained.receipt.expiresAt)!==holdExpiry)))throw unknown();
+  const receipt=Object.freeze({...data,slot:Object.freeze({start:new Date(slotStart).toISOString(),end:new Date(slotEnd).toISOString()}),expiresAt:new Date(holdExpiry).toISOString()}) as PaidJourneyHoldReceipt;
+  retained.phase='held';retained.receipt=receipt;return receipt;
+ }
+ function paidJourneyHoldState():PaidJourneyHoldState{
+  const attempt=journeyHoldAttempt;if(!attempt)return Object.freeze({phase:'ready'});
+  if(attempt.generation!==generation||attempt.sequence!==journeySessionSequence)return Object.freeze({phase:'blocked'});
+  if(attempt.phase==='held'&&(attempt.expiresAt<=Date.now()||!attempt.receipt||Date.parse(attempt.receipt.expiresAt)<=Date.now()))return Object.freeze({phase:'blocked'});
+  return attempt.phase==='held'&&attempt.receipt?Object.freeze({phase:'held',receipt:attempt.receipt}):Object.freeze({phase:attempt.phase==='held'?'unknown':attempt.phase});
  }
  /** A read binds only to the supplied immutable customer session; it reconciles no writers. */
  async function readPaidJourneyAvailability(session:PaidJourneyCustomerSession,window:PaidJourneyAvailabilityWindow,options:{signal?:AbortSignal}={}):Promise<PaidJourneyAvailability>{
@@ -1311,7 +1354,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,paidJourneyPublicationState,
+  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,paidJourneyHoldState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,

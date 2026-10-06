@@ -107,7 +107,6 @@ jobs:
             paid_journey_sessions \
             paid_journey_owner_publication_read \
             paid_journey_availability \
-            paid_journey_holds \
             publish_paid_simple_draft_tests \
             paid_simple_draft_list_tests \
             paid_option_publication_tests \
@@ -743,5 +742,6 @@ jobs:
           for f in supabase/migrations/0*.sql; do
             psql -X -v ON_ERROR_STOP=1 -f "$f"
           done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_holds.sql
           export PAID_JOURNEY_HOLD_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-hold.integration.ts
