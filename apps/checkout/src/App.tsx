@@ -1,5 +1,4 @@
 import { HostedFlow } from "./flows/HostedFlow";
-import { HostedJourneyFlow } from "./flows/HostedJourneyFlow";
 import { useStagingInstallEscape } from "./staging-install-escape";
 import { Component, Suspense, lazy, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -16,6 +15,7 @@ import { SlotPicker } from "./steps/SlotPicker";
 import { Summary } from "./steps/Summary";
 
 const HostedDetailingFlow = lazy(() => import("./flows/HostedDetailingFlow").then(module => ({ default: module.HostedDetailingFlow })));
+const HostedJourneyFlow = lazy(() => import("./flows/HostedJourneyFlow").then(module => ({ default: module.HostedJourneyFlow })));
 const ConnectedCheckout = lazy(() => import("./connected/ConnectedCheckout").then(module => ({ default: module.ConnectedCheckout })));
 
 // A missing route chunk says nothing about an earlier booking or payment attempt.
@@ -110,7 +110,7 @@ export default function App() {
   const relativePath = location.pathname.startsWith("/checkout/flow/") || location.pathname.startsWith("/checkout/journey/flow/") ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
   const hostedMatch = /^flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
   const journeyMatch = /^journey\/flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
-  if (journeyMatch) return <ErrorBoundary><HostedJourneyFlow key={journeyMatch[1]!+runtime.flowApiOrigin} installationId={journeyMatch[1]!} config={runtime} /></ErrorBoundary>;
+  if (journeyMatch) return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedJourneyFlow key={journeyMatch[1]!+runtime.flowApiOrigin} installationId={journeyMatch[1]!} config={runtime} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
   if (hostedMatch) return <ErrorBoundary><HostedInstallationFlow key={hostedMatch[1]!+runtime.flowApiOrigin} installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
   if (runtime.mode === "supabase") {
     return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><ConnectedCheckout config={{

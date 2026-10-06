@@ -33,9 +33,9 @@ it('renders immutable published order/design and customer information before sch
  expect(screen.getByRole('navigation').textContent).toBe('ServiceInformationScheduleReview & PaymentConfirmation');
  fireEvent.click(screen.getByRole('button',{name:'Continue'}));expect(screen.getByLabelText('Your name')).toBeVisible();expect(screen.queryByLabelText('Date (UTC)')).toBeNull();expect(screen.getByRole('button',{name:'Continue'})).toBeDisabled();
 });
-it.each(['demo','missing-key','missing-tenant','bad-api','http-page'])('fails closed on unavailable public configuration: %s',kind=>{
+it.each(['demo','production','missing-key','missing-tenant','bad-api','http-page'])('fails closed on unavailable public configuration: %s',kind=>{
  vi.stubGlobal('location',{protocol:kind==='http-page'?'http:':'https:'});const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
- const value={...config,...(kind==='demo'?{mode:'demo' as const}:kind==='missing-key'?{supabasePublishableKey:''}:kind==='missing-tenant'?{tenantId:''}:kind==='bad-api'?{flowApiOrigin:'http://api.example'}:{})};
+ const value={...config,...(kind==='demo'?{mode:'demo' as const}:kind==='production'?{environment:'production' as const}:kind==='missing-key'?{supabasePublishableKey:''}:kind==='missing-tenant'?{tenantId:''}:kind==='bad-api'?{flowApiOrigin:'http://api.example'}:{})};
  render(<HostedJourneyFlow installationId={id} config={value}/>);expect(screen.getByRole('alert')).toHaveTextContent('configuration could not be verified');expect(fetcher).not.toHaveBeenCalled();
 });
 it.each(['legacy-version','extra-private','wrong-token'])('rejects malformed session %s without issuing legacy fallback or auto retry',async kind=>{

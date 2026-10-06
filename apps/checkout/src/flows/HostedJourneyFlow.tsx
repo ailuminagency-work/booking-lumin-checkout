@@ -14,9 +14,9 @@ function windowFor(date:string){
 /** Dedicated V8 availability surface. Stage order grants no booking or payment capability. */
 export function HostedJourneyFlow({installationId,config}:{installationId:string;config:PublicRuntimeConfig}){
  const client=useMemo(()=>{try{
-  if(config.mode!=='supabase'||!config.flowApiOrigin||location.protocol!=='https:')return null;
+  if(config.environment!=='staging'||config.mode!=='supabase'||!config.flowApiOrigin||location.protocol!=='https:')return null;
   return createRuntimeClient({url:config.supabaseUrl,publishableKey:config.supabasePublishableKey,tenantId:config.tenantId,bookingApiOrigin:config.flowApiOrigin});
- }catch{return null;}},[config.mode,config.flowApiOrigin,config.supabaseUrl,config.supabasePublishableKey,config.tenantId]);
+ }catch{return null;}},[config.environment,config.mode,config.flowApiOrigin,config.supabaseUrl,config.supabasePublishableKey,config.tenantId]);
  const [sessionReceipt,setSessionReceipt]=useState<{session:PaidJourneyCustomerSession;context:string}|null>(null);
  const [opening,setOpening]=useState(false),[message,setMessage]=useState('');
  const [date,setDate]=useState(today),[availability,setAvailability]=useState<PaidJourneyAvailability|null>(null);
@@ -24,7 +24,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  const [stage,setStage]=useState(0),[name,setName]=useState(''),[email,setEmail]=useState('');
  const epoch=useRef(0),openingRef=useRef(false),openingAbort=useRef<AbortController|null>(null);
  const openingTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
- const context=installationId+'|'+config.mode+'|'+config.flowApiOrigin+'|'+config.supabaseUrl+'|'+config.supabasePublishableKey+'|'+config.tenantId;
+ const context=installationId+'|'+config.environment+'|'+config.mode+'|'+config.flowApiOrigin+'|'+config.supabaseUrl+'|'+config.supabasePublishableKey+'|'+config.tenantId;
  const session=sessionReceipt?.context===context?sessionReceipt.session:null;
  const setSession=(value:PaidJourneyCustomerSession|null)=>setSessionReceipt(value?{session:value,context}:null);
  const currentContext=useRef(context);currentContext.current=context;
