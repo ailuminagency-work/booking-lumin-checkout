@@ -1,3 +1,6 @@
+import {OwnerBookingFormAnswers} from '@lumin/contracts';
+export type {OwnerBookingFormAnswers} from '@lumin/contracts';
+export class BookingFormAnswersError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'ABORTED'|'UNVERIFIED',message:string){super(message);}}
 import {ConfirmationReceiptHistory} from '@lumin/contracts';
 export type {ConfirmationReceiptHistory} from '@lumin/contracts';
 export class ConfirmationReceiptHistoryError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'UNVERIFIED',message:string){super(message);}}
@@ -106,7 +109,10 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const httpsOrigin=(value:unknown):value is string=>{try{if(typeof value!=='string')return false;const parsed=new URL(value);return parsed.protocol==='https:'&&parsed.origin===value&&!parsed.username&&!parsed.password;}catch{return false}};
  const bookingApiOrigin=config.bookingApiOrigin;
  if(bookingApiOrigin!==undefined&&!httpsOrigin(bookingApiOrigin))return fail('Connected mode configuration is missing or invalid.');
- let token:string|undefined;let generation=0;let userId:string|undefined;let businessCreation:BusinessCreationState={phase:'ready'};
+ let token:string|undefined;let generation=0;let userId:string|undefined;
+ const bookingAnswerReads=new Set<AbortController>();
+ function abortBookingAnswerReads(){for(const read of bookingAnswerReads)read.abort();bookingAnswerReads.clear();}
+ let businessCreation:BusinessCreationState={phase:'ready'};
  const detailingOffers=new Map<string,Exclude<DetailingOfferState,{phase:'ready'}>>();
  const detailingAttempts=new Map<string,{actor:string;tenantId:string;body:string}>();
  const uncertainDetailing=new Map<string,{actor:string;tenantId:string;attempt:CreateDetailingOffer}>();
@@ -173,7 +179,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -182,14 +188,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();
+  token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
   try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;for(const [tenantId,attempt] of uncertainConditionalDrafts){if(attempt.actor===userId.toLowerCase())ownerDrafts.set(tenantId,{phase:'unverified',flowId:attempt.flowId});}for(const attempt of conditionalPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())conditionalPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const attempt of fieldRollbackAttempts.values()){if(attempt.actor===userId.toLowerCase())fieldRollbacks.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId,targetPublication:attempt.targetPublication});}for(const attempt of conditionalRollbackAttempts.values()){if(attempt.actor===userId.toLowerCase())conditionalRollbacks.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId,targetPublication:attempt.targetPublication});}for(const attempt of customerPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())customerPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const uncertain of uncertainDetailingScheduling.values()){if(uncertain.actor===userId.toLowerCase()){detailingScheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});detailingOffers.set(uncertain.tenantId,uncertain.offer);}}for(const uncertain of uncertainDetailing.values()){if(uncertain.actor===userId.toLowerCase())detailingOffers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainOffers.values()){if(uncertain.actor===userId)offers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainScheduling.values()){if(uncertain.actor===userId){scheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});offers.set(uncertain.tenantId,uncertain.offer);}}return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear()}
+ function signOut(){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
  const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
@@ -820,6 +826,40 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessCreation={phase:'unknown',attempt:body};throw new BusinessOnboardingError('unknown','Business creation remains unverified. This response does not prove an earlier attempt failed; retry only the same frozen key and details.');
  }
  const offerBody=(input:CreateSimpleOffer)=>JSON.stringify({name:input.name,description:input.description,price:{amount:input.price.amount,currency:input.price.currency},durationMinutes:input.durationMinutes,idempotencyKey:input.idempotencyKey});
+ async function readBookingFormAnswers(tenantId:string,bookingId:string,signal?:AbortSignal):Promise<OwnerBookingFormAnswers>{
+  if(!token||!userId||!bookingApiOrigin)throw new BookingFormAnswersError('UNAUTHENTICATED','Sign in with the configured booking service.');
+  if(!uuid(tenantId)||!uuid(bookingId))throw new BookingFormAnswersError('INVALID_REQUEST','Select a valid business and booking.');
+  tenantId=tenantId.toLowerCase();bookingId=bookingId.toLowerCase();const at=generation,actor=userId,credential=token,controller=new AbortController();
+  const current=()=>at===generation&&actor===userId&&credential===token;
+  let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;controller.abort();},15000);
+  const aborted=()=>new BookingFormAnswersError(!current()?'STALE_CONTEXT':timedOut?'UNVERIFIED':'ABORTED',!current()?'The signed-in account changed. Refresh this booking again.':timedOut?'Saved form answers could not be verified.':'Saved-answer loading was cancelled.');
+  const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();bookingAnswerReads.add(controller);
+  // Race only these GET/body reads; never change the uncertain-outcome semantics of booking writers.
+  async function wait<T>(value:Promise<T>):Promise<T>{
+   let stop!:()=>void;const cancelled=new Promise<never>((_resolve,reject)=>{stop=()=>reject(aborted());controller.signal.addEventListener('abort',stop,{once:true});if(controller.signal.aborted)stop();});
+   try{return await Promise.race([value,cancelled]);}finally{controller.signal.removeEventListener('abort',stop);}
+  }
+  const ensure=()=>{if(!current())throw new BookingFormAnswersError('STALE_CONTEXT','The signed-in account changed. Refresh this booking again.');if(controller.signal.aborted)throw aborted();};
+  const readOptions={method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal} as const;
+  try{
+   ensure();let response=await wait(transport(base.origin+`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,{...readOptions,headers:{apikey:config.publishableKey,Authorization:`Bearer ${credential}`}}));ensure();
+   if(response.status===401){signOut();throw new BookingFormAnswersError('UNAUTHENTICATED','Please sign in again before loading saved answers.');}
+   if(!response.ok)throw new BookingFormAnswersError('UNVERIFIED','Fresh owner membership could not be verified.');
+   const memberships=rows(await wait(response.json()));ensure();
+   if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>String(row.tenant_id).toLowerCase()===tenantId&&row.role==='BUSINESS_OWNER'))throw new BookingFormAnswersError('FORBIDDEN','Only an authenticated owner of this business can load saved answers.');
+   response=await wait(transport(bookingApiOrigin+'/api/booking-form-answers?tenantId='+encodeURIComponent(tenantId)+'&bookingId='+encodeURIComponent(bookingId),{...readOptions,headers:{Authorization:`Bearer ${credential}`}}));ensure();
+   if(response.status===401){signOut();throw new BookingFormAnswersError('UNAUTHENTICATED','Please sign in again before loading saved answers.');}
+   const value:unknown=await wait(response.json());ensure();
+   if(response.status===200&&exact(value,['ok','data'])&&value.ok===true){const result=OwnerBookingFormAnswers.safeParse(value.data);if(result.success&&result.data.tenantId===tenantId&&result.data.bookingId===bookingId){for(const answer of result.data.answers)Object.freeze(answer);Object.freeze(result.data.answers);if(result.data.provenance)Object.freeze(result.data.provenance);return Object.freeze(result.data);}}
+   if(exact(value,['ok','code'])&&value.ok===false){
+    if(response.status===403&&value.code==='FORBIDDEN')throw new BookingFormAnswersError('FORBIDDEN','Only an authenticated owner of this business can load saved answers.');
+    if(response.status===404&&value.code==='NOT_AVAILABLE')throw new BookingFormAnswersError('NOT_AVAILABLE','Saved form answers are unavailable for this booking.');
+    if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new BookingFormAnswersError('UNSUPPORTED_CONFIG','Saved form answers are unavailable in this workspace.');
+   }
+   throw new BookingFormAnswersError('UNVERIFIED','Saved form answers could not be verified.');
+  }catch(error){if(error instanceof BookingFormAnswersError)throw error;if(!current()||controller.signal.aborted)throw aborted();throw new BookingFormAnswersError('UNVERIFIED','Saved form answers could not be verified.');}
+  finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);bookingAnswerReads.delete(controller);}
+ }
  async function readConfirmationReceiptStatus(tenantId:string,bookingId:string):Promise<ConfirmationReceiptStatus>{
   if(!token||!userId||!bookingApiOrigin)throw new ConfirmationReceiptStatusError('UNAUTHENTICATED','Sign in with the configured notification service.');
   if(!uuid(tenantId)||!uuid(bookingId))throw new ConfirmationReceiptStatusError('INVALID_REQUEST','Select a valid business and booking.');
@@ -1102,6 +1142,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerDetailingScheduling,
   detailingSchedulingState(tenantId:string,serviceId:string):DetailingSchedulingState {const state=detailingScheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingSchedulingState:{phase:'ready'};},
+  readBookingFormAnswers,
   readConfirmationReceiptStatus,
   readConfirmationReceiptHistory,
   readNotificationPlannerConfig,saveNotificationPlannerConfig,
