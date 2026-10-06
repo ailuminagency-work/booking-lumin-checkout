@@ -1,3 +1,4 @@
+import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
 import type {PaidJourneyHoldReader} from './paid-journey-hold-read';
 import {PaidJourneyHoldInput,PaidJourneyHoldReceipt,type PaidJourneyHoldWriter} from './paid-journey-hold';
 import {PaidJourneyAvailabilityQuery,PaidJourneyAvailabilityReceipt,type PaidJourneyAvailabilityReader} from './paid-journey-availability';
@@ -104,6 +105,7 @@ export interface FlowHttpOptions{
  paidJourneyAvailability?:PaidJourneyAvailabilityReader;
  paidJourneyHold?:PaidJourneyHoldWriter;
  paidJourneyHoldRead?:PaidJourneyHoldReader;
+ paidJourneyMockPayment?:PaidJourneyMockPaymentWriter;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
@@ -174,6 +176,14 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==='/api/paid-journey-flow-sessions/mock-payment'){
+     if(!options.paidJourneySessions||!options.paidJourneyMockPayment)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST'||[...url.searchParams].length)throw new FlowError('INVALID_REQUEST');
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     z.object({}).strict().parse(await jsonBody(req));
+     const result=PaidJourneyMockPaymentReceipt.safeParse(await options.paidJourneyMockPayment(tokenHash(token),origin));
+     if(!result.success)throw new FlowError('INTERNAL_ERROR');send(res,200,{ok:true,data:result.data});return;
+    }
     if(url.pathname==='/api/paid-journey-flow-sessions/hold'&&req.method==='GET'&&options.paidJourneyHoldRead){
      if(!options.paidJourneySessions||!options.paidJourneyHoldRead)throw new FlowError('UNSUPPORTED_CONFIG');
      if([...url.searchParams].length||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
