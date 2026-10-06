@@ -545,3 +545,22 @@ jobs:
           done
           export CONFIRMATION_RECEIPT_HISTORY_CI_SERVER_HOST="$expected_server_host"
           node --import tsx apps/api/src/confirmation-receipt-history.integration.ts
+      - name: Pinned owner booking form answers and historical read isolation
+        env:
+          BOOKING_FORM_ANSWERS_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_booking_answers_ci
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_booking_answers_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_booking_answers_ci;'
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/booking-form-answers.integration.ts
