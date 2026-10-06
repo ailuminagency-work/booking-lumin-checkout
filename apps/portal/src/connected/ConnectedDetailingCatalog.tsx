@@ -1,7 +1,7 @@
-import {useEffect,useRef,useState,type FormEvent} from 'react';
-import {CreateDetailingOffer,CreateDetailingScheduling,DetailingOfferReceipt} from '@lumin/contracts';
+import {useEffect,useLayoutEffect,useRef,useState,type FormEvent} from 'react';
+import {BusinessProfile,CreateDetailingOffer,CreateDetailingScheduling,DetailingOfferReceipt} from '@lumin/contracts';
 import {BusinessOnboardingError,type RuntimeClient,type DetailingOfferState,type DetailingOfferContext,type DetailingSchedulingState} from '@lumin/runtime-client';
-type Client=Pick<RuntimeClient,'detailingOfferContext'|'createDetailingOffer'|'detailingOfferState'|'simpleOfferLocked'|'ownerDetailingScheduling'|'detailingSchedulingState'>;
+type Client=Pick<RuntimeClient,'businessProfile'|'authContextRevision'|'detailingOfferContext'|'createDetailingOffer'|'detailingOfferState'|'simpleOfferLocked'|'ownerDetailingScheduling'|'detailingSchedulingState'>;
 type Props={client:Client;tenantId:string;role?:string;staging:boolean;apiConfigured:boolean;contextBusy?:boolean;onStateChange:()=>void};
 type Row={id:string;label:string;rate:string};
 type Fields={name:string;description:string;duration:string;packages:Row[];vehicles:Row[];addons:Row[];locations:Row[]};
@@ -11,9 +11,38 @@ const groups=['packages','vehicles','addons','locations'] as const;
 const labels={packages:'Package',vehicles:'Vehicle',addons:'Addon',locations:'Location'};
 const rates=(input:CreateDetailingOffer,group:typeof groups[number])=>input[group].map(row=>row.id+': '+('label' in row?row.label:row.name)+' = '+('multiplierBp' in row?row.multiplierBp+' basis points':row.amount+' minor units')).join('; ')||'None';
 export function ConnectedDetailingCatalog(props:Props){
- if(!props.staging||!props.apiConfigured)return <section aria-label="Detailing catalog setup"><h2>Detailing catalog setup</h2><p>Detailing authoring is unavailable here. It requires the connected staging API and an explicitly enabled server capability.</p></section>;
- if(props.role!=='BUSINESS_OWNER'||!props.tenantId)return null;
- return <DetailingOwner {...props}/>;
+ if(!props.staging||!props.apiConfigured||props.role!=='BUSINESS_OWNER'||!props.tenantId)return null;
+ return <DetailingProfileGate {...props}/>;
+}
+function DetailingProfileGate(props:Props){
+ const {client,tenantId,contextBusy=false}=props,auth=client.authContextRevision(),generation=useRef(0),[retry,setRetry]=useState(0);
+ const [view,setView]=useState<{client:Client;tenantId:string;auth:number;profile:BusinessProfile|null;error:boolean}|null>(null);
+ useLayoutEffect(()=>{
+  const at=++generation.current,authAt=client.authContextRevision();setView(null);
+  void client.businessProfile(tenantId).then(value=>{
+   if(at!==generation.current)return;
+   if(authAt!==client.authContextRevision()){setView({client,tenantId,auth:authAt,profile:null,error:true});return;}
+   if(value?.status==='initialized'&&Object.keys(value).sort().join(',')==='profile,status'){
+    const profile=BusinessProfile.safeParse(value.profile);
+    if(profile.success&&profile.data.tenantId===tenantId.toLowerCase()){setView({client,tenantId,auth:authAt,profile:profile.data,error:false});return;}
+   }
+   if(value?.status==='uninitialized'&&Object.keys(value).sort().join(',')==='status,tenantId'&&value.tenantId===tenantId.toLowerCase()){setView({client,tenantId,auth:authAt,profile:null,error:false});return;}
+   throw Error('unverified');
+  }).catch(()=>{if(at===generation.current)setView({client,tenantId,auth:authAt,profile:null,error:true});});
+  return()=>{generation.current++;};
+ },[client,tenantId,auth,retry]);
+ // Withhold prior vertical authoring and reviewed prices before effects on account/business changes.
+ const current=view&&view.client===client&&view.tenantId===tenantId&&view.auth===auth?view:null;
+ const offer=client.detailingOfferState(tenantId),schedule=offer.phase==='created'?client.detailingSchedulingState(tenantId,offer.receipt.service.id):undefined;
+ const unresolved=['checking','creating','unknown'].includes(offer.phase)||!!schedule&&['checking','creating','unknown'].includes(schedule.phase);
+ const verified=current?.profile?.businessType==='AUTO_DETAILING';
+ if(verified)return <><button type="button" disabled={contextBusy} onClick={()=>setRetry(n=>n+1)}>Refresh business type</button><DetailingOwner key={auth} {...props}/></>;
+ if(!current?.error&&!unresolved)return null;
+ return <section aria-label="Business setup verification" style={{minWidth:0,overflowWrap:'anywhere'}}>
+  {current?.error&&<p role="alert">Business type could not be verified. Catalog setup remains unavailable until the selected business and signed-in owner are verified.</p>}
+  {unresolved&&<p role="status">An earlier catalog or scheduling action is pending or unverified. Its original key and reviewed details remain frozen in this session. Do not create a replacement attempt. Verify the original business type before checking or retrying that same action; contact support if this business now has a different type.</p>}
+  <button type="button" disabled={contextBusy} onClick={()=>setRetry(n=>n+1)}>Retry business type verification</button>
+ </section>;
 }
 function DetailingOwner({client,tenantId,contextBusy=false,onStateChange}:Props){
  const [snapshot,setSnapshot]=useState(()=>({client,tenantId,state:client.detailingOfferState(tenantId)})),[context,setContext]=useState<{client:Client;tenantId:string;value:DetailingOfferContext}|null>(null);
