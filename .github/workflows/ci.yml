@@ -745,3 +745,33 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_holds.sql
           export PAID_JOURNEY_HOLD_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-hold.integration.ts
+      - name: Customer journey hold recovery read isolation and unchanged lifecycle counts
+        env:
+          PAID_JOURNEY_HOLD_READ_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_hold_read_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_HOLD_READ_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_hold_read_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_hold_read_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_hold_read_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_hold_read.sql
+          export PAID_JOURNEY_HOLD_READ_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-hold-read.integration.ts
