@@ -1206,7 +1206,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,
-  paidJourneyDraftState(tenantId:string):PaidJourneyDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const key=tenantId.toLowerCase(),attempt=journeyAttempts.get(key),entry=journeyDrafts.get(key);if(attempt)return {phase:entry?.state.phase==='saving'?'saving':'unverified',flowId:attempt.flowId};if(!entry||entry.actor!==userId?.toLowerCase())return {phase:'ready'};return immutableDetailing(JSON.parse(JSON.stringify(entry.state))) as PaidJourneyDraftState;},
+  paidJourneyDraftState(tenantId:string):PaidJourneyDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const key=tenantId.toLowerCase(),attempt=journeyAttempts.get(key),entry=journeyDrafts.get(key);if(attempt){if(attempt.actor!==userId?.toLowerCase())return {phase:'ready'};return {phase:entry?.state.phase==='saving'?'saving':'unverified',flowId:attempt.flowId};}if(!entry||entry.actor!==userId?.toLowerCase())return {phase:'ready'};return immutableDetailing(JSON.parse(JSON.stringify(entry.state))) as PaidJourneyDraftState;},
   createBusiness,businessProfile,initializeBusinessProfile,businessProfileInitializationState,
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerDetailingScheduling,
