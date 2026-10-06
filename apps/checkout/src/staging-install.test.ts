@@ -4,11 +4,12 @@ import {afterEach,expect,it,vi} from 'vitest';
 const code=readFileSync('public/booking-lumin-staging.js','utf8');
 const origin='https://booking-lumin-checkout-staging.netlify.app';
 const id='c52f77b7-dcfd-4280-b52d-1714514873c8';
+const messageListeners:EventListener[]=[];
 function run(options:{parent?:string;source?:string;id?:string;mode?:string;script?:HTMLScriptElement}={}){
  const script=options.script??document.createElement('script');script.src=options.source??origin+'/booking-lumin-staging.js';script.setAttribute('data-installation',options.id??id);if(options.mode)script.setAttribute('data-mode',options.mode);if(!script.isConnected)document.body.append(script);
- runInNewContext(code,{document:{currentScript:script,createElement:document.createElement.bind(document),querySelectorAll:document.querySelectorAll.bind(document)},location:{origin:options.parent??origin},URL,Set});return script;
+ runInNewContext(code,{document:{currentScript:script,createElement:document.createElement.bind(document),querySelectorAll:document.querySelectorAll.bind(document)},window:{addEventListener:(type:string,listener:EventListener)=>{window.addEventListener(type,listener);messageListeners.push(listener);}},Event,location:{origin:options.parent??origin},URL,Set});return script;
 }
-afterEach(()=>{document.body.replaceChildren();vi.restoreAllMocks();});
+afterEach(()=>{document.body.replaceChildren();for(const listener of messageListeners.splice(0))window.removeEventListener('message',listener);vi.restoreAllMocks();});
 it('mounts a fixed immutable hosted route with test label and bounded sandbox; no message bridge',()=>{
  const listener=vi.spyOn(window,'addEventListener');run();const f=document.querySelector('iframe')!;expect(f.src).toBe(origin+'/checkout/flow/'+id);expect(f.title).toMatch(/staging/);expect(f.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-same-origin');expect(f.getAttribute('allow')).toContain("payment 'none'");expect(f.referrerPolicy).toBe('no-referrer');expect(document.body.textContent).toContain('No real money');expect(listener).not.toHaveBeenCalledWith('message',expect.anything());expect(document.querySelector('a')?.rel).toBe('noopener noreferrer');
 });
@@ -22,6 +23,37 @@ it('launcher is lazy and reopens the same iframe after closing, restoring focus'
  const [launcher,close]=Array.from(document.querySelectorAll('button'));expect(document.querySelector('iframe')).toBeNull();launcher!.click();const f=document.querySelector('iframe');expect(show).toHaveBeenCalledTimes(1);expect(launcher!.getAttribute('aria-expanded')).toBe('true');expect(document.activeElement).toBe(close);close!.click();expect(document.activeElement).toBe(launcher);expect(launcher!.getAttribute('aria-expanded')).toBe('false');launcher!.click();expect(document.querySelector('iframe')).toBe(f);expect(show).toHaveBeenCalledTimes(2);
 });
 it('offers a visible direct-link fallback when native modal support is absent',()=>{run({mode:'launcher'});const dialog=document.querySelector('dialog')!;Object.defineProperty(dialog,'showModal',{value:undefined});document.querySelector('button')!.click();expect(document.querySelector('iframe')).toBeNull();expect(document.activeElement).toBe(document.querySelector('section > a'));});
+
+function openLauncher(){
+ run({mode:'launcher',parent:'https://booking-lumin-portal-staging.netlify.app'});
+ const dialog=document.querySelector('dialog')!;
+ dialog.showModal=()=>{dialog.open=true;};dialog.close=()=>{dialog.open=false;dialog.dispatchEvent(new Event('close'));};
+ const launcher=document.querySelector('button')!;launcher.click();
+ return {dialog,launcher,frame:document.querySelector('iframe')!};
+}
+function escapeMessage(frame:HTMLIFrameElement,data:unknown='booking-lumin-staging:escape',sender=origin,source:MessageEventSource|null=frame.contentWindow){
+ window.dispatchEvent(new MessageEvent('message',{origin:sender,source,data}));
+}
+it('closes only an open matching iframe modal and restores launcher focus, keeping the same frame on reopen',()=>{
+ const {dialog,launcher,frame}=openLauncher();frame.focus();escapeMessage(frame);
+ expect(dialog.open).toBe(false);expect(document.activeElement).toBe(launcher);expect(launcher.getAttribute('aria-expanded')).toBe('false');
+ launcher.click();expect(document.querySelector('iframe')).toBe(frame);expect(dialog.open).toBe(true);
+});
+it.each([null,{},['booking-lumin-staging:escape'],{type:'booking-lumin-staging:escape'}, {type:'booking-lumin-staging:escape',token:'private'},'booking-lumin-staging:escape?private','unknown'])('rejects unknown or payload-bearing message %j',data=>{
+ const {dialog,frame}=openLauncher();escapeMessage(frame,data);expect(dialog.open).toBe(true);
+});
+it.each([origin+'.evil.test','http://booking-lumin-checkout-staging.netlify.app',origin+':444',origin+'?spoof',origin+'#spoof','https://deploy-preview-97--booking-lumin-checkout-staging.netlify.app','null'])('rejects message sender %s',sender=>{
+ const {dialog,frame}=openLauncher();escapeMessage(frame,undefined,sender);expect(dialog.open).toBe(true);
+});
+it('rejects absent/wrong iframe source and ignores Escape when the dialog is closed',()=>{
+ const {dialog,launcher,frame}=openLauncher();escapeMessage(frame,undefined,origin,null);escapeMessage(frame,undefined,origin,window);expect(dialog.open).toBe(true);
+ document.querySelectorAll('button')[1]!.click();const focus=vi.spyOn(launcher,'focus');escapeMessage(frame);expect(focus).not.toHaveBeenCalled();expect(dialog.open).toBe(false);
+});
+it('honors a canceled native dialog cancel event',()=>{const {dialog,frame}=openLauncher();dialog.addEventListener('cancel',event=>event.preventDefault());escapeMessage(frame);expect(dialog.open).toBe(true);});
+it('does not add a message listener for inline installation or reuse a neighboring iframe identity',()=>{
+ const add=vi.spyOn(window,'addEventListener');run();expect(add).not.toHaveBeenCalledWith('message',expect.anything());
+ const inline=document.querySelector('iframe')!;const {dialog,frame}=openLauncher();escapeMessage(frame,undefined,origin,inline.contentWindow);expect(dialog.open).toBe(true);
+});
 
 const approvedPreviewParent='https://deploy-preview-97--booking-lumin-portal-staging.netlify.app';
 const approvedPreviewSource='https://deploy-preview-97--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js';

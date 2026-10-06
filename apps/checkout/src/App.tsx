@@ -1,4 +1,5 @@
 import { HostedFlow } from "./flows/HostedFlow";
+import { useStagingInstallEscape } from "./staging-install-escape";
 import { Component, Suspense, lazy, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { STEP_LABELS, visibleStepsFor, WizardControls } from "./components/WizardControls";
@@ -97,6 +98,7 @@ function Shell() {
 }
 
 export function HostedInstallationFlow(props:{installationId:string;apiUrl:string;localHarness?:boolean}) {
+  useStagingInstallEscape();
   const [detailing,setDetailing]=useState(false);
   const unsupported=useCallback(()=>setDetailing(true),[]);
   return detailing ? <RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedDetailingFlow {...props}/></Suspense></RouteLoadingBoundary> : <HostedFlow {...props} onUnsupportedConfig={unsupported}/>;

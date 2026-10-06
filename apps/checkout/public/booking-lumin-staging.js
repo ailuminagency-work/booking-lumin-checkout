@@ -60,6 +60,11 @@
     function finish() { button.setAttribute('aria-expanded', 'false'); button.focus(); }
     close.addEventListener('click', () => { dialog.close(); });
     dialog.addEventListener('close', finish);
+    window.addEventListener('message', event => {
+      if (!dialog.open || !frame || event.origin !== origin || event.source !== frame.contentWindow ||
+          event.data !== 'booking-lumin-staging:escape') return;
+      if (dialog.dispatchEvent(new Event('cancel', {cancelable:true}))) dialog.close();
+    });
     dialog.append(close, fallback);
     button.addEventListener('click', () => {
       if (typeof dialog.showModal !== 'function' || typeof dialog.close !== 'function') { alternative.focus(); return; }
