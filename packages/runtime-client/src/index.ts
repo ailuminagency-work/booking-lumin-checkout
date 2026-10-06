@@ -1,3 +1,4 @@
+export interface PaidJourneyOwnerPublication {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly allowedOrigins:readonly string[];readonly render:PaidJourneyRender}
 export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
 export class PaidJourneySessionError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
 export interface PaidJourneyPublishInput {readonly schemaVersion:1;readonly expectedDraftRevision:number;readonly allowedOrigins:readonly string[]}
@@ -146,6 +147,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const profileInitializationLocked=()=>[...profileInitializations.values()].some(({state})=>state.phase==='checking'||state.phase==='initializing'||state.phase==='unknown');
  // Frozen journey save identity survives auth resets; no bearer or customer data.
  const journeyPublicationAttempts=new Map<string,{actor:string;flowId:string;draftRevision:number;generation:number}>();
+ let journeyOwnerReadSequence=0;
  let journeySessionSequence=0;
  const journeyPublications=new Map<string,{actor:string;state:Exclude<PaidJourneyPublicationState,{phase:'ready'}>}>();
  const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
@@ -503,6 +505,19 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const expiry=Date.parse(data.expiresAt),now=Date.now(),parsed=PaidJourneyRender.safeParse(data.render);
   if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000||!parsed.success)throw new PaidJourneySessionError('unknown','The session expiry or immutable journey is incompatible. No booking or payment was authorized.');
   return Object.freeze({schemaVersion:1,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:parsed.data});
+ }
+ /** Owner verification reads never reconcile any uncertain publication/save writer. */
+ async function readPaidJourneyOwnerPublication(tenantId:string,flowId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyOwnerPublication>{
+  if(!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal))||options.signal?.aborted)throw new PublicationError('not_sent','Use only an optional cancellation signal for owner publication verification.');
+  if(!bookingApiOrigin||!token||!userId||!uuid(tenantId)||!uuid(flowId))throw new PublicationError('not_sent','Sign in and choose a valid business and journey publication.');
+  const tenant=tenantId.toLowerCase(),flow=flowId.toLowerCase(),current=generation,credential=token,sequence=++journeyOwnerReadSequence,signal=options.signal;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-journey-flows/'+flow+'/publication?tenantId='+encodeURIComponent(tenant),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`},...(signal?{signal}:{})});value=await response.json();}catch{throw new PublicationError('not_sent','The owner publication could not be read. No writer was reconciled or retried.');}
+  if(current!==generation||sequence!==journeyOwnerReadSequence||signal?.aborted||response.redirected||response.status!==200||!exact(value,['ok','data'])||value.ok!==true)throw new PublicationError('not_sent','The owner publication could not be verified in this context. No writer was reconciled.');
+  const data=value.data;
+  if(!exact(data,['schemaVersion','tenantId','flowId','draftRevision','versionId','installationId','renderSchemaVersion','allowedOrigins','render'])||data.schemaVersion!==1||data.tenantId!==tenant||data.flowId!==flow||!draftRevision(data.draftRevision)||!uuid(data.versionId)||data.versionId!==data.versionId.toLowerCase()||!uuid(data.installationId)||data.installationId!==data.installationId.toLowerCase()||data.renderSchemaVersion!==8||!Array.isArray(data.allowedOrigins)||data.allowedOrigins.length<1||data.allowedOrigins.length>20||new Set(data.allowedOrigins).size!==data.allowedOrigins.length||data.allowedOrigins.some(o=>!httpsOrigin(o)||o.length>2048))throw new PublicationError('not_sent','The owner publication receipt is incompatible. No writer was reconciled.');
+  const parsed=PaidJourneyRender.safeParse(data.render);
+  if(!parsed.success||parsed.data.versionId!==data.versionId)throw new PublicationError('not_sent','The immutable published journey does not match its receipt. No writer was reconciled.');
+  return Object.freeze({schemaVersion:1,tenantId:tenant,flowId:flow,draftRevision:data.draftRevision as number,versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:8,allowedOrigins:Object.freeze([...data.allowedOrigins]) as readonly string[],render:parsed.data});
  }
  async function readPaidJourneyRender(installationId:string):Promise<PaidJourneyRender>{
   if(!bookingApiOrigin||!uuid(installationId))throw new PublicationError('not_sent','Choose a valid V8 installation and configured API.');
@@ -1265,7 +1280,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  publishPaidJourneyDraft,readPaidJourneyRender,issuePaidJourneySession,paidJourneyPublicationState,
+  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,
