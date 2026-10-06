@@ -1,3 +1,4 @@
+import {PaidJourneySessionResult} from './paid-journey-session';
 import {PaidJourneyPublicationReceipt,PaidJourneyRender} from './paid-journey-publication';
 import { ConditionalCustomerFields,ConditionalCustomerFieldAnswers,CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
@@ -52,6 +53,8 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ issue_paid_journey_session:PaidJourneySessionResult,
+ resolve_paid_journey_session:PaidJourneySessionResult,
  publish_paid_journey_draft:PaidJourneyPublicationReceipt,
  get_paid_journey_render:PaidJourneyRender,
  save_paid_journey_draft:PaidJourneyDraftReceipt.refine(postgresV2Strings,'Invalid database text'),

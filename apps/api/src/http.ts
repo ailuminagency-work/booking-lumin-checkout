@@ -1,3 +1,4 @@
+import {paidJourneySessionExpiryValid} from './paid-journey-session';
 import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
@@ -95,6 +96,8 @@ export interface FlowHttpOptions{
  paidJourneyDrafts?:boolean;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
+ /** Dedicated V8 sessions only; no booking or financial capabilities. */
+ paidJourneySessions?:boolean;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
@@ -165,6 +168,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    const journeySession=url.pathname.match(/^\/api\/paid-journey-installations\/([^/]+)\/sessions$/);
+    if(journeySession){
+     if(!options.paidJourneySessions)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+     if([...url.searchParams].length)throw new FlowError('INVALID_REQUEST');
+     z.object({}).strict().parse(await jsonBody(req));const installation=Uuid.parse(journeySession[1]).toLowerCase(),sessionToken=randomBytes(32).toString('base64url');
+     const data=RpcResults.issue_paid_journey_session.parse(await call('issue_paid_journey_session',[installation,tokenHash(sessionToken),origin]));
+     if(data.installationId!==installation||!paidJourneySessionExpiryValid(data,now()))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:{schemaVersion:1,expiresAt:data.expiresAt,render:data.render,sessionToken}});return;
+    }
     const journeyRender=url.pathname.match(/^\/api\/paid-journey-installations\/([^/]+)\/render$/);
     if(journeyRender){
      if(!options.paidJourneyPublication)throw new FlowError('UNSUPPORTED_CONFIG');
