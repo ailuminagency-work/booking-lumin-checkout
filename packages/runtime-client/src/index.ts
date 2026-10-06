@@ -1,3 +1,9 @@
+import {PaidJourney,type PaidJourneySnapshot} from '@lumin/workflow';
+export interface PaidJourneyDraftInput {readonly schemaVersion:1;readonly serviceId:string;readonly name:string;readonly presentation:PaidSimplePresentation;readonly expectedRevision:number;readonly journey:PaidJourney}
+export interface PaidJourneyDraftReceipt {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly revision:number}
+export interface PaidJourneyOwnerDraft extends PaidJourneyDraftReceipt {readonly serviceId:string;readonly name:string;readonly presentation:PaidSimplePresentation;readonly journey:PaidJourneySnapshot}
+export type PaidJourneyDraftState={phase:'ready'}|{phase:'saving'|'loading'|'unverified'|'conflict';flowId:string}|{phase:'saved';flowId:string;revision:number}|{phase:'loaded';flowId:string;revision:number;draft:PaidJourneyOwnerDraft};
+export class PaidJourneyDraftError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'conflict'|'unknown',message:string){super(message);}}
 import {OwnerBookingFormAnswers} from '@lumin/contracts';
 export type {OwnerBookingFormAnswers} from '@lumin/contracts';
 export class BookingFormAnswersError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'ABORTED'|'UNVERIFIED',message:string){super(message);}}
@@ -133,7 +139,10 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const profileInitializations=new Map<string,{actor:string;state:Exclude<BusinessProfileInitializationState,{phase:'ready'|'blocked'}>}>();
  const profileInitializationKeys=new Map<string,{actor:string;tenantId:string;body:string}>();
  const profileInitializationLocked=()=>[...profileInitializations.values()].some(({state})=>state.phase==='checking'||state.phase==='initializing'||state.phase==='unknown');
- const offerLocked=()=>offerOperationsLocked()||profileInitializationLocked();
+ // Frozen journey save identity survives auth resets; no bearer or customer data.
+ const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
+ const journeyDrafts=new Map<string,{actor:string;state:Exclude<PaidJourneyDraftState,{phase:'ready'}>}>();
+ const offerLocked=()=>offerOperationsLocked()||profileInitializationLocked()||journeyAttempts.size>0;
  const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
@@ -168,18 +177,19 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const conditionalPublicationLocked=(tenantId:string)=>conditionalPublicationReads.has(tenantId.toLowerCase())||[...conditionalPublicationAttempts.values()].some(attempt=>attempt.tenantId===tenantId.toLowerCase());
  const uncertainConditionalDrafts=new Map<string,{actor:string;flowId:string;input:PaidSimpleConditionalDraftInput}>();
  const customerPublicationLocked=(tenantId:string)=>customerPublicationReads.has(tenantId.toLowerCase())||[...customerPublicationAttempts.values()].some(attempt=>attempt.tenantId===tenantId.toLowerCase());
- const requireNoCustomerPublication=(tenantId:string)=>{if(customerPublicationLocked(tenantId)||conditionalPublicationAttempts.size>0||conditionalPublicationReads.size>0)throw new PublicationError('not_sent','Informational-field publication is pending or unverified. Verify the same frozen attempt before changing drafts or publications.');};
+ const requireNoCustomerPublication=(tenantId:string)=>{if(journeyAttempts.size>0||customerPublicationLocked(tenantId)||conditionalPublicationAttempts.size>0||conditionalPublicationReads.size>0)throw new PublicationError('not_sent','Informational-field publication or journey save is pending or unverified. Verify the same frozen attempt before changing drafts or publications.');};
  const requireNoRollback=(tenantId:string,allowCustomerAttempt=false)=>{if(conditionalRollbackAttempts.size>0)throw new PublicationError('not_sent','Conditional rollback is pending or unverified. Check the frozen target receipt before another writer.');if(uncertainConditionalDrafts.size>0)throw new PublicationError('not_sent','Verify the frozen conditional draft save before publication or rollback.');if(!allowCustomerAttempt)requireNoCustomerPublication(tenantId);if(offerLocked())throw new PublicationError('not_sent','Offer creation is pending or unverified. Finish the frozen offer attempt first.');if(businessCreationLocked())throw new PublicationError('not_sent','Business creation is pending or unverified. Finish that same attempt before changing publications.');if(rollbackLocked(tenantId))throw new PublicationError('not_sent','Rollback status is unverified or still in progress. Check its current receipt before changing drafts or publications.');};
  const savedDraftPublications=new Map<string,Exclude<PaidSimpleSavedDraftPublicationState,{phase:'ready'}>>();
  const uncertainFieldDrafts=new Map<string,{flowId:string;input:PaidSimpleFieldDraftInput|PaidSimpleConditionalDraftInput}>();
  const ownerDrafts=new Map<string,Exclude<PaidSimpleDraftState,{phase:'ready'}>>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
+  if(method!=='GET'&&path!=='/auth/v1/token?grant_type=password'&&journeyAttempts.size>0)return fail('Journey save status is pending or unverified. Do not replace this attempt with another writer.');
   if(authenticated&&!token)return fail('Please sign in again.');
   const current=generation;
   let response:Response;
   try{response=await transport(base.origin+path,{method,headers:{apikey:config.publishableKey,...(token?{Authorization:`Bearer ${token}`}:{ }), 'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})})}catch{return fail('Connection unavailable. Check your connection and retry.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
-  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
+  if(!response.ok){if(response.status===401){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();journeyDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();return fail('Please sign in again.')}return fail(response.status===403?'Access denied for this account.':'The request was not accepted. Please check your details and retry.')}
   if(response.status===204)return null;
   let parsed:unknown;try{parsed=await response.json()}catch{return fail('The server returned an invalid response.')}
   if(current!==generation)return fail('Session changed. Please sign in again.');
@@ -188,14 +198,14 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)&&value.every(v=>v&&typeof v==='object'&&!Array.isArray(v))?value:fail('The server returned an invalid response.');
  const tenant=(id:string)=>{if(!uuid(id))return fail('Invalid business selection.');return encodeURIComponent(id)};
  async function signIn(email:string,password:string){
-  token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();
+  token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();journeyDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear();
   const attempt=generation;
   const result=await request('/auth/v1/token?grant_type=password','POST',{email,password}) as {access_token?:unknown};
   if(attempt!==generation||typeof result?.access_token!=='string')return fail('Sign-in was not completed.');
   token=result.access_token;
   try{const user=await request('/auth/v1/user','GET',undefined,true) as {id?:unknown};if(!uuid(user?.id))return fail('Sign-in was not completed.');userId=user.id;for(const [tenantId,attempt] of uncertainConditionalDrafts){if(attempt.actor===userId.toLowerCase())ownerDrafts.set(tenantId,{phase:'unverified',flowId:attempt.flowId});}for(const attempt of conditionalPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())conditionalPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const attempt of fieldRollbackAttempts.values()){if(attempt.actor===userId.toLowerCase())fieldRollbacks.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId,targetPublication:attempt.targetPublication});}for(const attempt of conditionalRollbackAttempts.values()){if(attempt.actor===userId.toLowerCase())conditionalRollbacks.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId,targetPublication:attempt.targetPublication});}for(const attempt of customerPublicationAttempts.values()){if(attempt.actor===userId.toLowerCase())customerPublications.set(attempt.tenantId,{phase:'unknown',flowId:attempt.flowId,draftRevision:attempt.draftRevision,...(attempt.checkoutOrigin?{checkoutOrigin:attempt.checkoutOrigin}:{})});}for(const uncertain of uncertainDetailingScheduling.values()){if(uncertain.actor===userId.toLowerCase()){detailingScheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});detailingOffers.set(uncertain.tenantId,uncertain.offer);}}for(const uncertain of uncertainDetailing.values()){if(uncertain.actor===userId.toLowerCase())detailingOffers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainOffers.values()){if(uncertain.actor===userId)offers.set(uncertain.tenantId,{phase:'unknown',attempt:uncertain.attempt});}for(const uncertain of uncertainScheduling.values()){if(uncertain.actor===userId){scheduling.set(uncertain.tenantId+':'+uncertain.serviceId,{phase:'unknown',attempt:uncertain.attempt});offers.set(uncertain.tenantId,uncertain.offer);}}return userId}catch(error){if(attempt===generation){token=undefined;userId=undefined}throw error}
  }
- function signOut(){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear()}
+ function signOut(){token=undefined;userId=undefined;generation++;abortBookingAnswerReads();publications.clear();recovering.clear();customerPublications.clear();customerPublicationReads.clear();conditionalPublications.clear();conditionalPublicationReads.clear();ownerDrafts.clear();journeyDrafts.clear();uncertainFieldDrafts.clear();savedDraftPublications.clear();rollbacks.clear();rollbackReads.clear();histories.clear();fieldRollbacks.clear();fieldRollbackReads.clear();fieldHistories.clear();fieldHistoryReads.clear();conditionalRollbacks.clear();conditionalRollbackReads.clear();conditionalHistories.clear();conditionalHistoryReads.clear();businessCreation={phase:'ready'};offers.clear();detailingOffers.clear();detailingScheduling.clear();scheduling.clear()}
  const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
  const publicationReceipt=(response:Response,value:unknown):PaidSimplePublicationReceipt|undefined=>{
   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
@@ -417,6 +427,63 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(currentCount!==1)throw new PublicationError('not_sent','Version history could not be validated.');
   // History is evidence only; an unknown writer remains locked.
   const result=Object.freeze({flowId,versions:Object.freeze(versions)});histories.set(tenantId+'|'+flowId,result);return result;
+ }
+ function journeyAuthority(tenantId:string,flowId:string){
+  if(!token||!userId||!bookingApiOrigin)throw new PaidJourneyDraftError('not_sent','Sign in with the configured journey draft service.');
+  if(!uuid(tenantId)||!uuid(flowId))throw new PaidJourneyDraftError('not_sent','Choose a valid business and journey draft ID.');
+  const tenant=tenantId.toLowerCase(),flow=flowId.toLowerCase(),actor=userId.toLowerCase();
+  const pending=(state:{phase:string})=>['saving','loading','unverified','publishing','unknown','rolling_back'].includes(state.phase);
+  if(journeyAttempts.size>0||uncertainConditionalDrafts.size>0||uncertainFieldDrafts.size>0||conditionalRollbackAttempts.size>0||fieldRollbackAttempts.size>0||customerPublicationAttempts.size>0||conditionalPublicationAttempts.size>0||offerLocked()||businessCreationLocked()||[...ownerDrafts.values(),...publications.values(),...savedDraftPublications.values(),...rollbacks.values(),...fieldRollbacks.values(),...conditionalRollbacks.values()].some(pending))throw new PaidJourneyDraftError('not_sent','Finish the existing pending or unverified operation before changing journey drafts. A read cannot reconcile another writer.');
+  const entry=journeyDrafts.get(tenant);
+  if(entry&&['saving','loading'].includes(entry.state.phase))throw new PaidJourneyDraftError('not_sent','A journey draft operation is already in progress.');
+  return {tenant,flow,actor};
+ }
+ function journeyError(response:Response,value:unknown):PaidJourneyDraftError|undefined{
+  if(response.ok||!exact(value,['ok','code'])||value.ok!==false||typeof value.code!=='string')return;
+  if(response.status===409&&value.code==='CONFLICT')return new PaidJourneyDraftError('conflict','The journey draft revision changed. Load its current revision before editing again.');
+  const codes:Record<string,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+  if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code]){if(value.code==='UNAUTHENTICATED')signOut();return new PaidJourneyDraftError('rejected','The journey draft request was rejected. Check your owner access and draft configuration.');}
+ }
+ function journeyDraft(value:unknown,tenantId:string,flowId:string):PaidJourneyOwnerDraft|undefined{
+  if(!exact(value,['schemaVersion','tenantId','flowId','serviceId','revision','name','presentation','journey'])||value.schemaVersion!==1||value.tenantId!==tenantId||value.flowId!==flowId||!uuid(value.serviceId)||value.serviceId!==value.serviceId.toLowerCase()||!draftRevision(value.revision)||typeof value.name!=='string'||!value.name.trim()||value.name!==value.name.trim()||value.name.length>200||!presentation(value.presentation))return;
+  const parsed=PaidJourney.safeParse(value.journey);if(!parsed.success)return;
+  // Structural authoring validation only; never grants publication authority.
+  return immutableDetailing({...value,presentation:{...value.presentation},journey:parsed.data}) as unknown as PaidJourneyOwnerDraft;
+ }
+ async function loadPaidJourneyDraft(tenantId:string,flowId:string):Promise<PaidJourneyOwnerDraft>{
+  const {tenant,flow,actor}=journeyAuthority(tenantId,flowId),previous=journeyDrafts.get(tenant),current=generation,credential=token!;
+  if(previous?.actor===actor&&previous.state.phase==='unverified')throw new PaidJourneyDraftError('not_sent','This journey outcome remains unverified. A draft read cannot authorize replacing an uncertain save.');
+  const entry={actor,state:{phase:'loading' as const,flowId:flow}};journeyDrafts.set(tenant,entry);
+  try{
+   let response:Response,value:unknown;
+   try{response=await transport(bookingApiOrigin!+'/api/paid-journey-flows/'+flow+'/draft?tenantId='+encodeURIComponent(tenant),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`}});value=await response.json();}catch{throw new PaidJourneyDraftError('unknown','The journey draft could not be read. No save or publication was authorized.');}
+   if(current!==generation||journeyDrafts.get(tenant)!==entry)throw new PaidJourneyDraftError('unknown','The session changed. The journey read cannot be accepted here.');
+   const error=journeyError(response,value);if(error)throw error;
+   const draft=response.status===200&&exact(value,['ok','data'])&&value.ok===true?journeyDraft(value.data,tenant,flow):undefined;
+   if(!draft)throw new PaidJourneyDraftError('unknown','The journey draft response could not be verified. No writer was authorized.');
+   journeyDrafts.set(tenant,{actor,state:{phase:'loaded',flowId:flow,revision:draft.revision,draft}});return draft;
+  }catch(error){if(current===generation&&journeyDrafts.get(tenant)===entry){journeyDrafts.set(tenant,{actor,state:{phase:'conflict',flowId:flow}});}throw error;}
+ }
+ async function savePaidJourneyDraft(tenantId:string,flowId:string,input:PaidJourneyDraftInput):Promise<PaidJourneyDraftReceipt>{
+  const {tenant,flow,actor}=journeyAuthority(tenantId,flowId);
+  const parsed=exact(input,['schemaVersion','expectedRevision','serviceId','name','presentation','journey'])&&input.schemaVersion===1?PaidJourney.safeParse(input.journey):undefined;
+  if(!parsed?.success||!uuid(input.serviceId)||typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>200||!presentation(input.presentation)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0||input.expectedRevision>=Number.MAX_SAFE_INTEGER)throw new PaidJourneyDraftError('not_sent','Check the journey draft identity, revision, name, design and stage order.');
+  const previous=journeyDrafts.get(tenant),state=previous?.actor===actor?previous.state:undefined;
+  if(state?(state.phase!=='loaded'&&state.phase!=='saved'||state.flowId!==flow||state.revision!==input.expectedRevision):input.expectedRevision!==0)throw new PaidJourneyDraftError('not_sent','Load the current journey revision before saving. An uncertain save cannot be repeated or replaced.');
+  const requested={schemaVersion:1,expectedRevision:input.expectedRevision,serviceId:input.serviceId.toLowerCase(),name:input.name.trim(),presentation:{...input.presentation},journey:parsed.data},body=JSON.stringify(requested),current=generation,credential=token!;
+  const attempt={actor,flowId:flow,expectedRevision:input.expectedRevision};journeyAttempts.set(tenant,attempt);journeyDrafts.set(tenant,{actor,state:{phase:'saving',flowId:flow}});
+  try{
+   let response:Response,value:unknown;
+   try{response=await transport(bookingApiOrigin!+'/api/paid-journey-flows/'+flow+'/draft?tenantId='+encodeURIComponent(tenant),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body});value=await response.json();}catch{throw new PaidJourneyDraftError('unknown','Journey save status is unverified. Do not repeat or replace the save.');}
+   if(current!==generation||journeyAttempts.get(tenant)!==attempt)throw new PaidJourneyDraftError('unknown','The session changed. Journey save status remains unverified; do not repeat it.');
+   const error=journeyError(response,value);if(error)throw error;
+   const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+   if(response.status!==200||!exact(data,['schemaVersion','tenantId','flowId','revision'])||data.schemaVersion!==1||data.tenantId!==tenant||data.flowId!==flow||!draftRevision(data.revision)||data.revision!==attempt.expectedRevision+1)throw new PaidJourneyDraftError('unknown','The journey save receipt could not be verified. Do not repeat or replace the save.');
+   const receipt=Object.freeze({...data}) as unknown as PaidJourneyDraftReceipt;journeyAttempts.delete(tenant);journeyDrafts.set(tenant,{actor,state:{phase:'saved',flowId:flow,revision:receipt.revision}});return receipt;
+  }catch(error){
+   if(journeyAttempts.get(tenant)===attempt){if(error instanceof PaidJourneyDraftError&&(error.delivery==='rejected'||error.delivery==='conflict')){journeyAttempts.delete(tenant);if(current===generation){if(error.delivery==='conflict')journeyDrafts.set(tenant,{actor,state:{phase:'conflict',flowId:flow}});else if(previous?.actor===actor)journeyDrafts.set(tenant,previous);else journeyDrafts.delete(tenant);}}else journeyDrafts.set(tenant,{actor,state:{phase:'unverified',flowId:flow}});}
+   throw error;
+  }
  }
  async function loadPaidSimpleDraft(tenantId:string,flowId:string):Promise<PaidSimpleOwnerDraft>{
   draftAuthority(tenantId,flowId);requireNoCustomerPublication(tenantId);
@@ -1138,6 +1205,8 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  return {
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
+  savePaidJourneyDraft,loadPaidJourneyDraft,
+  paidJourneyDraftState(tenantId:string):PaidJourneyDraftState{if(!uuid(tenantId))return fail('Invalid business selection.');const key=tenantId.toLowerCase(),attempt=journeyAttempts.get(key),entry=journeyDrafts.get(key);if(attempt)return {phase:entry?.state.phase==='saving'?'saving':'unverified',flowId:attempt.flowId};if(!entry||entry.actor!==userId?.toLowerCase())return {phase:'ready'};return immutableDetailing(JSON.parse(JSON.stringify(entry.state))) as PaidJourneyDraftState;},
   createBusiness,businessProfile,initializeBusinessProfile,businessProfileInitializationState,
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerDetailingScheduling,
