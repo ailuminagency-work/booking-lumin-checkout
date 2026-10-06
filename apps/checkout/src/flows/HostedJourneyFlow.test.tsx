@@ -30,6 +30,7 @@ it('requires explicit opening, uses only dedicated session/availability endpoint
 it('renders immutable published order/design and customer information before schedule when published that way',async()=>{
  vi.stubGlobal('location',{protocol:'https:'});vi.stubGlobal('fetch',transport(true));render(<HostedJourneyFlow installationId={id} config={config}/>);await open();
  expect(screen.getByRole('main')).toHaveStyle({'--accent':'#0f766e',padding:'12px',minWidth:'0',boxSizing:'border-box'});
+ expect(screen.getByRole('main')).toHaveClass('hosted-flow-card','paid-form-layout-compact');
  expect(screen.getByRole('navigation').textContent).toBe('ServiceInformationScheduleReview & PaymentConfirmation');
  fireEvent.click(screen.getByRole('button',{name:'Continue'}));expect(screen.getByLabelText('Your name')).toBeVisible();expect(screen.queryByLabelText('Date (UTC)')).toBeNull();expect(screen.getByRole('button',{name:'Continue'})).toBeDisabled();
 });

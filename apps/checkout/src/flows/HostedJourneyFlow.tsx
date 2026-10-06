@@ -66,7 +66,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  const canNext=current?.kind==='schedule'?Boolean(selected&&slots.some(slot=>slot.start===selected)):current?.kind==='information'?Boolean(name.trim()&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)):Boolean(current&&current.kind!=='review_payment'&&current.kind!=='confirmation');
  const next=()=>{if(!session||Date.parse(session.expiresAt)<=Date.now()||!canNext||(current?.kind==='schedule'&&Date.parse(selected)<=Date.now()))return;setStage(value=>Math.min(value+1,stages.length-1));};
  const style={maxWidth:680,width:'100%',minWidth:0,boxSizing:'border-box',margin:'0 auto',padding:session?.render.form.presentation.layout==='compact'?12:24,overflowWrap:'anywhere','--accent':session?.render.form.presentation.accentColor} as CSSProperties;
- return <main className="checkout-card" style={style}>
+ return <main className={`checkout-card hosted-flow-card paid-form-layout-${session?.render.form.presentation.layout??'stacked'}`} style={style}>
   <h1>{session?.render.form.name??'Booking form'}</h1>
   <p>Staging · Availability preview. Booking submission is currently unavailable.</p>
   {!client?<p role="alert">This booking form is unavailable because its connected public configuration could not be verified.</p>:!session?<>
