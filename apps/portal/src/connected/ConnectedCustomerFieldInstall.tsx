@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {ConnectedBookingLinkQr} from './ConnectedBookingLinkQr';
+import {CopyInstallationSnippet} from './CopyInstallationSnippet';
 import {CustomerFieldInstallHealth,TenantId} from '@lumin/contracts';
 import type {PaidCustomerFieldPublicationReceipt,RuntimeClient} from '@lumin/runtime-client';
 
@@ -7,7 +8,7 @@ type Client=Pick<RuntimeClient,'paidCustomerFieldPublicationHealth'>;
 type Props={client:Client;tenantId:string;expected:PaidCustomerFieldPublicationReceipt};
 type View={client:Client;selection:string;phase:'idle'|'checking'|'checked'|'failed';health?:CustomerFieldInstallHealth};
 const checkout='https://booking-lumin-checkout-staging.netlify.app';
-const fieldStyle={width:'100%',maxWidth:'100%',minWidth:0} as const;
+
 const validId=(value:unknown):value is string=>typeof value==='string'&&value===value.toLowerCase()&&TenantId.safeParse(value).success;
 const exact=(value:unknown,keys:readonly string[]):value is Record<string,unknown>=>typeof value==='object'&&value!==null&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 function validExpected(value:unknown):value is PaidCustomerFieldPublicationReceipt{
@@ -45,10 +46,10 @@ function InstallEvidence({client,tenantId,expected}:Props){
   <h3>Customer information form installation</h3>
   <p>Published draft revision: {expected.draftRevision}; form: {expected.flowId}; immutable version: {r.versionId}; installation: {r.installationId}.</p>
   <p><a href={hostedUrl} target="_blank" rel="noopener noreferrer">Open staging customer information form</a></p>
-  <label>Direct staging form URL<input readOnly value={hostedUrl} style={fieldStyle}/></label>
-  <label>Website iframe code<textarea readOnly rows={5} value={iframe} style={fieldStyle}/></label>
-  <label>Staging JavaScript inline code<textarea readOnly rows={4} value={script('inline')} style={fieldStyle}/></label>
-  <label>Staging launcher / modal code<textarea readOnly rows={4} value={script('launcher')} style={fieldStyle}/></label>
+  <CopyInstallationSnippet label="Direct staging form URL" value={hostedUrl} selection={selection}/>
+  <CopyInstallationSnippet label="Website iframe code" value={iframe} selection={selection} rows={5}/>
+  <CopyInstallationSnippet label="Staging JavaScript inline code" value={script('inline')} selection={selection} rows={4}/>
+  <CopyInstallationSnippet label="Staging launcher / modal code" value={script('launcher')} selection={selection} rows={4}/>
   <p>Select and copy the code for the selected immutable installation. These controlled snippets run only on the canonical Booking Lumin staging Checkout and Portal origins. Merchant website domains are not enabled. Payments stay simulated.</p>
   <p>The launcher opens after a click and keeps the same form when closed and reopened. The direct hosted link remains available if a browser cannot open a modal. Copying code does not certify browser loading or a complete embedded booking.</p>
   <ConnectedBookingLinkQr tenantId={tenantId} expected={expected} checkoutOrigin={checkout}/>
