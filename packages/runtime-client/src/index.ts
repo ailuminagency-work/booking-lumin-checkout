@@ -117,7 +117,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  let base:URL;
  try{base=new URL(config.url)}catch{return fail('Connected mode configuration is missing or invalid.')}
  if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash||base.pathname!=='/'||!publicKey(config.publishableKey)||(!uuid(config.tenantId)&&!(config.allowMembershipDiscovery===true&&config.tenantId==='')))return fail('Connected mode configuration is missing or invalid.');
- const httpsOrigin=(value:unknown):value is string=>{try{if(typeof value!=='string')return false;const parsed=new URL(value);return parsed.protocol==='https:'&&parsed.origin===value&&!parsed.username&&!parsed.password;}catch{return false}};
+ const httpsOrigin=(value:unknown):value is string=>{try{if(typeof value!=='string'||value.includes('*'))return false;const parsed=new URL(value);return parsed.protocol==='https:'&&parsed.origin===value&&!parsed.username&&!parsed.password;}catch{return false}};
  const bookingApiOrigin=config.bookingApiOrigin;
  if(bookingApiOrigin!==undefined&&!httpsOrigin(bookingApiOrigin))return fail('Connected mode configuration is missing or invalid.');
  let token:string|undefined;let generation=0;let userId:string|undefined;
