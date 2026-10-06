@@ -1,3 +1,4 @@
+import {PaidJourneyAvailabilityQuery,PaidJourneyAvailabilityReceipt,type PaidJourneyAvailabilityReader} from './paid-journey-availability';
 import {paidJourneySessionExpiryValid} from './paid-journey-session';
 import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
@@ -98,6 +99,7 @@ export interface FlowHttpOptions{
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
  paidJourneySessions?:boolean;
+ paidJourneyAvailability?:PaidJourneyAvailabilityReader;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
@@ -156,7 +158,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const url=new URL(req.url??"/","http://127.0.0.1");
    if(serveReleaseMetadata(req,res,url.pathname,releaseMetadata))return;
    if(url.pathname==="/health"&&req.method==="GET"){send(res,200,{ok:true,data:{mode:"LOCAL_HARNESS",providerConnections:false}});return;}
-   const customer=url.pathname.startsWith('/api/paid-journey-installations/')||url.pathname.startsWith("/api/detailing-installations/")||url.pathname.startsWith("/api/detailing-flow-sessions/")||url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
+   const customer=url.pathname.startsWith('/api/paid-journey-flow-sessions/')||url.pathname.startsWith('/api/paid-journey-installations/')||url.pathname.startsWith("/api/detailing-installations/")||url.pathname.startsWith("/api/detailing-flow-sessions/")||url.pathname.startsWith("/api/installations/")||url.pathname.startsWith("/api/flow-sessions/");
    const origin=originHeader(req,customer?customerOrigins:ownerOrigins);
    res.setHeader("Access-Control-Allow-Origin",origin);res.setHeader("Vary","Origin");
    if(req.method==="OPTIONS"){
@@ -168,6 +170,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==='/api/paid-journey-flow-sessions/availability'){
+     if(!options.paidJourneySessions||!options.paidJourneyAvailability)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='GET'||[...url.searchParams.keys()].some(k=>k!=='from'&&k!=='to')||url.searchParams.getAll('from').length!==1||url.searchParams.getAll('to').length!==1||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const query=PaidJourneyAvailabilityQuery.parse({from:url.searchParams.get('from'),to:url.searchParams.get('to')});
+     const token=bearer(req);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new FlowError('UNAUTHENTICATED');
+     const result=PaidJourneyAvailabilityReceipt.safeParse(await options.paidJourneyAvailability(tokenHash(token),origin,query));
+     if(!result.success||result.data.slots.some(s=>Date.parse(s.start)<Date.parse(query.from)||Date.parse(s.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:result.data});return;
+    }
     const journeySession=url.pathname.match(/^\/api\/paid-journey-installations\/([^/]+)\/sessions$/);
     if(journeySession){
      if(!options.paidJourneySessions)throw new FlowError('UNSUPPORTED_CONFIG');
