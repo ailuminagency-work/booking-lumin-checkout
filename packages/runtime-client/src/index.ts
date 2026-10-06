@@ -1,3 +1,5 @@
+export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
+export class PaidJourneySessionError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
 export interface PaidJourneyPublishInput {readonly schemaVersion:1;readonly expectedDraftRevision:number;readonly allowedOrigins:readonly string[]}
 export interface PaidJourneyPublicationReceipt {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly replayed:boolean}
 export type PaidJourneyPublicationState={phase:'ready'}|{phase:'publishing'|'unknown'|'conflict';flowId:string;draftRevision:number}|{phase:'published';flowId:string;draftRevision:number;receipt:PaidJourneyPublicationReceipt};
@@ -144,6 +146,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const profileInitializationLocked=()=>[...profileInitializations.values()].some(({state})=>state.phase==='checking'||state.phase==='initializing'||state.phase==='unknown');
  // Frozen journey save identity survives auth resets; no bearer or customer data.
  const journeyPublicationAttempts=new Map<string,{actor:string;flowId:string;draftRevision:number;generation:number}>();
+ let journeySessionSequence=0;
  const journeyPublications=new Map<string,{actor:string;state:Exclude<PaidJourneyPublicationState,{phase:'ready'}>}>();
  const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
  const journeyDrafts=new Map<string,{actor:string;state:Exclude<PaidJourneyDraftState,{phase:'ready'}>}>();
@@ -480,6 +483,26 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
    if(response.status!==200||!exact(d,['schemaVersion','tenantId','flowId','draftRevision','versionId','installationId','renderSchemaVersion','replayed'])||d.schemaVersion!==1||d.tenantId!==tenant||d.flowId!==flow||d.draftRevision!==attempt.draftRevision||!uuid(d.versionId)||d.versionId!==d.versionId.toLowerCase()||!uuid(d.installationId)||d.installationId!==d.installationId.toLowerCase()||d.renderSchemaVersion!==8||typeof d.replayed!=='boolean')throw new PublicationError('unknown','Journey publication receipt could not be verified. Do not repeat or replace this write.');
    const receipt=Object.freeze({...d}) as unknown as PaidJourneyPublicationReceipt;journeyPublicationAttempts.delete(tenant);journeyPublications.set(tenant,{actor,state:{phase:'published',flowId:flow,draftRevision:receipt.draftRevision,receipt}});return receipt;
   }catch(error){if(journeyPublicationAttempts.get(tenant)===attempt){attempt.generation=-1;}throw error;}
+ }
+ /** A fresh issuance may create another nonfinancial session. Never retry automatically. */
+ async function issuePaidJourneySession(installationId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyCustomerSession>{
+  if(!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new PaidJourneySessionError('not_sent','Use only an optional cancellation signal; session authority comes from the server.');
+  if(!bookingApiOrigin||!uuid(installationId)||options.signal?.aborted)throw new PaidJourneySessionError('not_sent','Choose a valid V8 installation and configured API before starting a session.');
+  const current=generation,sequence=++journeySessionSequence,signal=options.signal;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/paid-journey-installations/'+installationId.toLowerCase()+'/sessions',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json'},body:'{}',...(signal?{signal}:{})});value=await response.json();}catch{throw new PaidJourneySessionError('unknown','The session response is unverified. No automatic retry was made; a new attempt may create another nonfinancial session.');}
+  if(current!==generation||sequence!==journeySessionSequence||signal?.aborted||response.redirected)throw new PaidJourneySessionError('unknown','The session context changed. This response cannot be accepted.');
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'){
+   const codes:Record<string,number>={INVALID_REQUEST:400,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+   if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code])throw new PaidJourneySessionError('rejected','The session request was rejected. Check the installation and staging configuration.');
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['schemaVersion','sessionToken','expiresAt','render'])||data.schemaVersion!==1||typeof data.sessionToken!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(data.sessionToken)||typeof data.expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(data.expiresAt))throw new PaidJourneySessionError('unknown','The session receipt could not be verified. No booking or payment was authorized.');
+  const parts=data.expiresAt.slice(0,19).split(/[-T:]/).map(Number),[year,month,day,hour,minute,second]=parts;
+  const calendar=new Date(Date.UTC(year!,month!-1,day!));
+  if(calendar.getUTCFullYear()!==year||calendar.getUTCMonth()+1!==month||calendar.getUTCDate()!==day||hour!>23||minute!>59||second!>59)throw new PaidJourneySessionError('unknown','The session expiry is malformed. No booking or payment was authorized.');
+  const expiry=Date.parse(data.expiresAt),now=Date.now(),parsed=PaidJourneyRender.safeParse(data.render);
+  if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000||!parsed.success)throw new PaidJourneySessionError('unknown','The session expiry or immutable journey is incompatible. No booking or payment was authorized.');
+  return Object.freeze({schemaVersion:1,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:parsed.data});
  }
  async function readPaidJourneyRender(installationId:string):Promise<PaidJourneyRender>{
   if(!bookingApiOrigin||!uuid(installationId))throw new PublicationError('not_sent','Choose a valid V8 installation and configured API.');
@@ -1242,7 +1265,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  publishPaidJourneyDraft,readPaidJourneyRender,paidJourneyPublicationState,
+  publishPaidJourneyDraft,readPaidJourneyRender,issuePaidJourneySession,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,
