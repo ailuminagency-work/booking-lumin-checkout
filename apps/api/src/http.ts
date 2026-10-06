@@ -280,6 +280,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   const journeyOwnerPublication=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/publication$/);
+   if(journeyOwnerPublication){
+    if(!options.paidJourneyPublication)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+    if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    const flow=Uuid.parse(journeyOwnerPublication[1]).toLowerCase(),data=RpcResults.get_paid_journey_owner_publication.parse(await call('get_paid_journey_owner_publication',[actor,tenant.toLowerCase(),flow]));
+    if(data.tenantId!==tenant.toLowerCase()||data.flowId!==flow||data.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data});return;
+   }
+
    if(url.pathname==='/api/booking-form-answers'){
     if(!options.bookingFormAnswers)throw new FlowError('UNSUPPORTED_CONFIG');
     if(req.method!=='GET'||url.searchParams.getAll('bookingId').length!==1||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
