@@ -17,7 +17,9 @@
   let failed = false;
   for (const [host, mode] of [[inline, 'inline'], [launcher, 'launcher']]) {
     const script = document.createElement('script');
-    script.src = 'https://booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js';
+    script.src = location.origin === 'https://deploy-preview-97--booking-lumin-portal-staging.netlify.app'
+      ? 'https://deploy-preview-97--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js'
+      : 'https://booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js';
     script.setAttribute('data-installation', '0fe09ceb-7660-444d-bb6a-161eb4baa665');
     script.setAttribute('data-mode', mode);
     script.referrerPolicy = 'no-referrer';

@@ -4,11 +4,14 @@
   'use strict';
   const script = document.currentScript;
   const origin = 'https://booking-lumin-checkout-staging.netlify.app';
-  const parents = new Set([origin, 'https://booking-lumin-portal-staging.netlify.app']);
+  const previewParent = 'https://deploy-preview-97--booking-lumin-portal-staging.netlify.app';
+  const previewSource = 'https://deploy-preview-97--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js';
+  const parents = new Set([origin, 'https://booking-lumin-portal-staging.netlify.app', previewParent]);
   if (!script || !parents.has(location.origin)) return;
   let source;
   try { source = new URL(script.src); } catch { return; }
-  if (source.href !== origin + '/booking-lumin-staging.js') return;
+  const expectedSource = location.origin === previewParent ? previewSource : origin + '/booking-lumin-staging.js';
+  if (source.href !== expectedSource) return;
   const id = script.getAttribute('data-installation');
   const mode = script.getAttribute('data-mode') || 'inline';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id || '') ||
