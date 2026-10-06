@@ -101,6 +101,7 @@ jobs:
             customer_session_payment_tests \
             paid_simple_publication_tests \
             paid_simple_draft_tests \
+            paid_journey_drafts \
             publish_paid_simple_draft_tests \
             paid_simple_draft_list_tests \
             paid_option_publication_tests \
