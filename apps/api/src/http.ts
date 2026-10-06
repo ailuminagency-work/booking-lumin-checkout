@@ -1,3 +1,4 @@
+import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -89,6 +90,8 @@ export interface FlowHttpOptions{
  customerMockPayment?:CustomerMockPayment;
  /** Explicit staging test-publication gate; owner identity remains required. */
  paidSimplePublication?:boolean;
+ /** Versioned journey authoring only; off until a coherent release enables it. */
+ paidJourneyDrafts?:boolean;
  paidPublication?:PaidPublicationReader;
  paidCustomerFieldPublication?:CustomerFieldPublicationReader;
  paidConditionalCustomerFieldPublication?:ConditionalCustomerFieldPublicationReader;
@@ -409,6 +412,24 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=PaidSimpleDraftList.safeParse(await options.paidDrafts(actor,tenant));
     if(!result.success)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
+   }
+   const journeyDraft=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/draft$/);
+   if(journeyDraft){
+    if(!options.paidJourneyDrafts)throw new FlowError('UNSUPPORTED_CONFIG');
+    const flow=Uuid.parse(journeyDraft[1]).toLowerCase(),targetTenant=tenant.toLowerCase();
+    if(req.method==='GET'){
+     if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const data=RpcResults.get_paid_journey_draft.parse(await call('get_paid_journey_draft',[actor,targetTenant,flow]));
+     if(data.flowId!==flow||data.tenantId!==targetTenant)throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data});return;
+    }
+    if(req.method==='POST'){
+     const raw=await jsonBody(req);if(!postgresV2Strings(raw))throw new FlowError('INVALID_REQUEST');
+     const body=SavePaidJourneyDraft.parse(raw),data=RpcResults.save_paid_journey_draft.parse(await call('save_paid_journey_draft',[actor,targetTenant,flow,body.serviceId.toLowerCase(),body.expectedRevision,body.name,body.presentation,body.journey]));
+     if(data.flowId!==flow||data.tenantId!==targetTenant||data.revision!==body.expectedRevision+1)throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data});return;
+    }
+    throw new FlowError('NOT_AVAILABLE');
    }
    const paidDraft=url.pathname.match(/^\/api\/paid-simple-flows\/([^/]+)\/draft$/);
    if(paidDraft){

@@ -1,5 +1,6 @@
 import { ConditionalCustomerFields,ConditionalCustomerFieldAnswers,CustomerDraftFields,RosterVersion,parseRosterSnapshot } from "@lumin/contracts";
 import { z } from "zod";
+import {PaidJourneyDraft,PaidJourneyDraftReceipt} from './paid-journey-draft';
 import { isDeepStrictEqual } from "node:util";
 import { PaidConditionalCustomerFieldRender,PaidCustomerFieldRender,CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
@@ -50,6 +51,8 @@ export function postgresV2Strings(value:unknown):boolean{
  }else if(v&&typeof v==="object"){for(const [k,x] of Object.entries(v)){pending.push(k,x);}}}return true;
 }
 export const RpcResults={
+ save_paid_journey_draft:PaidJourneyDraftReceipt.refine(postgresV2Strings,'Invalid database text'),
+ get_paid_journey_draft:PaidJourneyDraft.refine(postgresV2Strings,'Invalid database text'),
  publish_paid_conditional_customer_field_draft:z.object({flowId:Uuid,draftRevision:PaidSimpleDraftRevision,versionId:Uuid,installationId:Uuid,renderSchemaVersion:z.literal(6),replayed:z.boolean()}).strict(),
  save_paid_conditional_customer_field_draft:z.object({schemaVersion:z.literal(3),flowId:Uuid,revision:PaidSimpleDraftRevision}).strict(),
  submit_conditional_customer_field_request:z.object({reference:z.string().min(1).max(100),state:z.literal("draft"),confirmed:z.literal(false)}).strict(),
