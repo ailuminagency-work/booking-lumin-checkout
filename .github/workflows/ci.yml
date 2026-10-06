@@ -102,6 +102,7 @@ jobs:
             paid_simple_publication_tests \
             paid_simple_draft_tests \
             paid_journey_drafts \
+            paid_journey_publication \
             publish_paid_simple_draft_tests \
             paid_simple_draft_list_tests \
             paid_option_publication_tests \
