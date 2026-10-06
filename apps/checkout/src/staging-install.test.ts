@@ -22,3 +22,27 @@ it('launcher is lazy and reopens the same iframe after closing, restoring focus'
  const [launcher,close]=Array.from(document.querySelectorAll('button'));expect(document.querySelector('iframe')).toBeNull();launcher!.click();const f=document.querySelector('iframe');expect(show).toHaveBeenCalledTimes(1);expect(launcher!.getAttribute('aria-expanded')).toBe('true');expect(document.activeElement).toBe(close);close!.click();expect(document.activeElement).toBe(launcher);expect(launcher!.getAttribute('aria-expanded')).toBe('false');launcher!.click();expect(document.querySelector('iframe')).toBe(f);expect(show).toHaveBeenCalledTimes(2);
 });
 it('offers a visible direct-link fallback when native modal support is absent',()=>{run({mode:'launcher'});const dialog=document.querySelector('dialog')!;Object.defineProperty(dialog,'showModal',{value:undefined});document.querySelector('button')!.click();expect(document.querySelector('iframe')).toBeNull();expect(document.activeElement).toBe(document.querySelector('section > a'));});
+
+const approvedPreviewParent='https://deploy-preview-97--booking-lumin-portal-staging.netlify.app';
+const approvedPreviewSource='https://deploy-preview-97--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js';
+it('loads the exact preview controller only for the exact Portal97 preview, keeping the customer frame canonical',()=>{
+ run({parent:approvedPreviewParent,source:approvedPreviewSource});
+ expect(document.querySelector('iframe')?.src).toBe(origin+'/checkout/flow/'+id);
+ expect(document.querySelector('iframe')?.getAttribute('allow')).toContain("payment 'none'");
+});
+it.each([
+ [approvedPreviewParent,origin+'/booking-lumin-staging.js'],
+ [origin,approvedPreviewSource],
+ ['https://booking-lumin-portal-staging.netlify.app',approvedPreviewSource],
+ ['https://deploy-preview-98--booking-lumin-portal-staging.netlify.app',approvedPreviewSource],
+ [approvedPreviewParent,approvedPreviewSource+'?token=PRIVATE_TOKEN'],
+ [approvedPreviewParent,approvedPreviewSource+'#PRIVATE_TOKEN'],
+ [approvedPreviewParent,'https://deploy-preview-98--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js'],
+ [approvedPreviewParent,'http://deploy-preview-97--booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js'],
+ ['https://deploy-preview-97--booking-lumin-portal-staging.netlify.app.evil.test',approvedPreviewSource],
+ ['http://deploy-preview-97--booking-lumin-portal-staging.netlify.app',approvedPreviewSource],
+ ['https://deploy-preview-97--booking-lumin-portal-staging.netlify.app:444',approvedPreviewSource]
+])('rejects mismatched preview parent/source %s %s without any form', (parent,source)=>{
+ run({parent,source});expect(document.querySelector('section,iframe,a,button')).toBeNull();
+ expect(document.body.textContent).not.toContain('PRIVATE_TOKEN');
+});
