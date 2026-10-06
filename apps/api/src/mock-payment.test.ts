@@ -23,3 +23,13 @@ it('retains the owner simple eligibility path and existing sole confirmation aft
  const calls=query.mock.calls.map(([sql])=>sql);expect(calls.indexOf('lock table public.payments in share row exclusive mode')).toBeLessThan(calls.findIndex(s=>s.startsWith('select * from public.bookings')));expect(calls.filter(s=>s.includes('confirm_succeeded_payment'))).toHaveLength(1);expect(calls.some(s=>s.includes("state='confirmed'"))).toBe(false);
 });
 it('shared staging tail rejects mismatched persisted pricing and never accepts zero-price evidence',async()=>{const query=vi.fn(async()=>({rows:[]})),c={query} as never,b={id:booking,tenant_id:tenant,state:'draft',payment_id:null,pricing:{}};await expect(stagingMockEvidenceInTransaction(c,tenant,booking,b,[],price,true)).rejects.toMatchObject({code:'CONFLICT'});await expect(stagingMockEvidenceInTransaction(c,tenant,booking,b,[],{...price,total:{amount:0,currency:'USD'}})).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG'});expect(query).not.toHaveBeenCalled();});
+it('rejects dedicated journey provenance before generic pricing/payment/confirmation even when simple-shaped',async()=>{
+ const query=vi.fn(async(sql:string)=>{if(sql.startsWith('select t.id'))return{rows:[{id:tenant}]};if(sql.startsWith('select * from public.bookings'))return{rows:[{id:booking,tenant_id:tenant,selection:{serviceId:service},state:'draft',payment_id:null,pricing:{}}]};if(sql.includes('assert_legacy_mock_payment_booking'))throw Object.assign(Error('private-journey-details'),{code:'0A000'});return{rows:[]};});
+ await expect(createMockPaymentWriter({connect:async()=>({query,release:vi.fn()})} as never,{BOOKING_LUMIN_FAKE_PAYMENTS:'1',BOOKING_LUMIN_ENV:'staging'})(actor,tenant,booking)).rejects.toMatchObject({code:'UNSUPPORTED_CONFIG',message:'UNSUPPORTED_CONFIG'});
+ const sql=query.mock.calls.map(([value])=>value);expect(sql.some(v=>v.startsWith('select s.*'))).toBe(false);expect(sql.some(v=>v.startsWith('insert into public.payments'))).toBe(false);expect(sql.some(v=>v.includes('confirm_succeeded_payment'))).toBe(false);expect(sql.at(-1)).toBe('rollback');
+});
+it('preserves the dedicated journey exclusion for every shared staging evidence caller',async()=>{
+ const query=vi.fn(async(sql:string)=>{if(sql.includes('assert_legacy_mock_payment_booking'))throw Object.assign(Error('private'),{code:'0A000'});return{rows:[]};});
+ await expect(stagingMockEvidenceInTransaction({query} as never,tenant,booking,{id:booking,tenant_id:tenant,state:'draft',payment_id:null,pricing:price},[],price,true)).rejects.toMatchObject({code:'0A000'});
+ expect(query).toHaveBeenCalledTimes(1);expect(query.mock.calls[0]?.[0]).toContain('assert_legacy_mock_payment_booking');
+});

@@ -61,6 +61,7 @@ export async function mockPaymentInTransaction(c:PoolClient,tenant:string,bookin
    const payments=await c.query('select * from public.payments where booking_id=$1::uuid order by id for update',[booking]);
    const result=await c.query('select * from public.bookings where id=$1::uuid and tenant_id=$2::uuid for update',[booking,tenant]);
    if(result.rows.length!==1)throw new FlowError('NOT_AVAILABLE');
+   await c.query('select public.assert_legacy_mock_payment_booking($1::uuid,$2::uuid)',[tenant,booking]);
    const b=result.rows[0];const selection=Selection.safeParse(b.selection);
    if(!selection.success)throw new FlowError('UNSUPPORTED_CONFIG');
    // Parse the shared contract before the service lookup so a canonical
@@ -101,6 +102,9 @@ export async function stagingMockEvidenceInTransaction(c:PoolClient,tenant:strin
    const amount=pricing.total.amount,currency=pricing.total.currency;
    if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
    if(b.id!==booking||b.tenant_id.toLowerCase()!==tenant.toLowerCase()||(pricingAlreadyPersisted&&!isDeepStrictEqual(b.pricing,pricing)))throw new FlowError('CONFLICT');
+   // Every shared evidence caller must retain this exclusion, including callers
+   // with an independently computed price. V8 payment authority is unavailable.
+   await c.query('select public.assert_legacy_mock_payment_booking($1::uuid,$2::uuid)',[tenant,booking]);
    let paymentId:string;
    if(payments.length){
     const p=payments[0];

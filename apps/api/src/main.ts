@@ -1,4 +1,5 @@
 import {createPaidJourneyAvailabilityReader} from './paid-journey-availability';
+import {createPaidJourneyHoldWriter} from './paid-journey-hold';
 import {createBookingFormAnswersReader} from './booking-form-answers';
 import {createNotificationPlannerConfigApi} from './notification-planner-config';
 import {createConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -146,7 +147,7 @@ function main(): void {
     repository: createFlowRepository(pool),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'?{paidJourneyDrafts:true}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true}:{}),
-    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool)}:{}),
+    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool),paidJourneyHold:createPaidJourneyHoldWriter(pool)}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool),confirmationReceiptHistory:createConfirmationReceiptHistoryReader(pool)}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'?{bookingFormAnswers:createBookingFormAnswersReader(pool)}:{}),
     tenantProfile: createTenantProfileReader(pool),
