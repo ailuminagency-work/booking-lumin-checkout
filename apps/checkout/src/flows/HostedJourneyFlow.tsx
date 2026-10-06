@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useRef,useState,type CSSProperties} from 'react';
-import {createRuntimeClient,type PublicRuntimeConfig,type PaidJourneyCustomerSession,type PaidJourneyAvailability,type PaidJourneyHoldInput,type PaidJourneyHoldReceipt,type RuntimeClient} from '@lumin/runtime-client';
+import {createRuntimeClient,type PublicRuntimeConfig,type PaidJourneyCustomerSession,type PaidJourneyAvailability,type PaidJourneyHoldInput,type PaidJourneyHoldReceipt,type PaidJourneyPaymentReceipt,type RuntimeClient} from '@lumin/runtime-client';
 
 const field:CSSProperties={width:'100%',minWidth:0,maxWidth:'100%',boxSizing:'border-box'};
 const timeoutMs=30000;
@@ -13,11 +13,12 @@ function windowFor(date:string){
 
 // Memory only. Unmount/context replacement must not permit a new orphan attempt.
 // A full page reload loses the private token; this cannot recover missing credentials.
-type RetainedHold={context:string;owner:symbol;client?:RuntimeClient;session?:PaidJourneyCustomerSession;input?:PaidJourneyHoldInput;phase:'pending'|'checking'|'unknown'|'held';checked:boolean;receipt?:PaidJourneyHoldReceipt;controller:AbortController;timeout?:ReturnType<typeof setTimeout>;expiryTimer?:ReturnType<typeof setTimeout>;sequence:number};
+type RetainedPayment={phase:'pending'|'unknown'|'confirmed';revoked:boolean;receipt?:PaidJourneyPaymentReceipt;controller:AbortController;sequence:number;timeout?:ReturnType<typeof setTimeout>};
+type RetainedHold={context:string;owner:symbol;client?:RuntimeClient;session?:PaidJourneyCustomerSession;input?:PaidJourneyHoldInput;phase:'pending'|'checking'|'unknown'|'held';checked:boolean;receipt?:PaidJourneyHoldReceipt;payment?:RetainedPayment;controller:AbortController;timeout?:ReturnType<typeof setTimeout>;expiryTimer?:ReturnType<typeof setTimeout>;sequence:number};
 let retainedHold:RetainedHold|undefined;
 const holdListeners=new Set<()=>void>();
 const notifyHold=()=>{for(const listener of holdListeners)listener();};
-function uncertain(hold:RetainedHold){hold.phase='unknown';hold.checked=false;clearTimeout(hold.timeout);hold.controller.abort();notifyHold();}
+function uncertain(hold:RetainedHold){hold.phase='unknown';hold.checked=false;clearTimeout(hold.timeout);hold.controller.abort();if(hold.payment?.phase==='pending'){hold.payment.phase='unknown';clearTimeout(hold.payment.timeout);hold.payment.controller.abort();}notifyHold();}
 function forget(hold:RetainedHold){clearTimeout(hold.timeout);clearTimeout(hold.expiryTimer);hold.input=undefined;hold.session=undefined;hold.client=undefined;if(retainedHold===hold)retainedHold=undefined;notifyHold();}
 const validText=(value:string,max:number)=>value.length>0&&value.length<=max&&value===value.trim()&&!/[\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(value);
 const validCustomer=(name:string,email:string)=>validText(name,200)&&validText(email,254)&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email);
@@ -41,7 +42,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  const session=sessionReceipt?.context===context?sessionReceipt.session:null;
  const setSession=(value:PaidJourneyCustomerSession|null)=>setSessionReceipt(value?{session:value,context}:null);
  const currentContext=useRef(context);currentContext.current=context;
- useEffect(()=>{const listener=()=>setHoldVersion(value=>value+1);holdListeners.add(listener);return()=>{holdListeners.delete(listener);const hold=retainedHold;if(hold?.owner===holdOwner.current&&(hold.phase==='pending'||hold.phase==='checking'))uncertain(hold);};},[context]);
+ useEffect(()=>{const listener=()=>setHoldVersion(value=>value+1);holdListeners.add(listener);const existing=retainedHold;if(existing?.payment&&existing.context!==context){existing.payment.revoked=true;uncertain(existing);}return()=>{holdListeners.delete(listener);const hold=retainedHold;if(hold?.payment&&hold.context!==currentContext.current)hold.payment.revoked=true;if(hold?.owner===holdOwner.current&&(hold.phase==='pending'||hold.phase==='checking'||hold.payment?.phase==='pending'))uncertain(hold);};},[context]);
  useEffect(()=>{
   epoch.current++;openingRef.current=false;openingAbort.current?.abort();clearTimeout(openingTimer.current);
   setOpening(false);setSession(null);setMessage('');setHoldMessage('');setAvailability(null);setSelected('');setStage(0);setName('');setEmail('');setDate(today());
@@ -75,7 +76,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  },[session,date,client,context,holdVersion]);
  async function sendHold(hold:RetainedHold,retry:boolean){
   const sdk=hold.client,originalSession=hold.session,input=hold.input;
-  if(retainedHold!==hold||!sdk||!originalSession||!input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||(hold.phase==='pending'||hold.phase==='checking'||!hold.checked)&&retry)return;
+  if(hold.payment||retainedHold!==hold||!sdk||!originalSession||!input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||(hold.phase==='pending'||hold.phase==='checking'||!hold.checked)&&retry)return;
   const sequence=++hold.sequence,controller=new AbortController();hold.phase='pending';hold.checked=false;hold.controller=controller;hold.owner=holdOwner.current;notifyHold();
   const timeout=setTimeout(()=>{if(retainedHold===hold&&hold.sequence===sequence&&hold.phase==='pending')uncertain(hold);},timeoutMs);hold.timeout=timeout;
   try{const receipt=await sdk.holdPaidJourneySlot(installationId,originalSession,input,{signal:controller.signal,...(retry?{retry:true as const}:{})});
@@ -89,7 +90,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  }
  async function checkHold(hold:RetainedHold){
   const sdk=hold.client,originalSession=hold.session;
-  if(retainedHold!==hold||!sdk||!originalSession||!hold.input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||hold.phase==='pending'||hold.phase==='checking')return;
+  if(hold.payment||retainedHold!==hold||!sdk||!originalSession||!hold.input||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||hold.phase==='pending'||hold.phase==='checking')return;
   const sequence=++hold.sequence,controller=new AbortController();hold.phase='checking';hold.checked=false;hold.controller=controller;hold.owner=holdOwner.current;notifyHold();
   const timeout=setTimeout(()=>{if(retainedHold===hold&&hold.sequence===sequence&&hold.phase==='checking')uncertain(hold);},timeoutMs);hold.timeout=timeout;
   const active=()=>retainedHold===hold&&hold.sequence===sequence&&!controller.signal.aborted&&hold.context===currentContext.current&&Date.parse(originalSession.expiresAt)>Date.now();
@@ -97,6 +98,21 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
    if(!active())return;hold.receipt=receipt;hold.phase='held';hold.checked=true;
   }catch(error){if(retainedHold!==hold||hold.sequence!==sequence)return;hold.phase='unknown';hold.checked=active()&&(error as {code?:unknown})?.code==='UNVERIFIED';
   }finally{clearTimeout(timeout);if(retainedHold===hold&&hold.sequence===sequence){if(hold.phase==='checking')hold.phase='unknown';if(Date.parse(originalSession.expiresAt)<=Date.now()){hold.checked=false;hold.input=undefined;hold.session=undefined;hold.client=undefined;}notifyHold();}}
+ }
+ async function pay(hold:RetainedHold,retry=false){
+  const sdk=hold.client,originalSession=hold.session;
+  if(retainedHold!==hold||!sdk||!originalSession||hold.context!==currentContext.current||Date.parse(originalSession.expiresAt)<=Date.now()||hold.phase==='pending'||hold.phase==='checking')return;
+  let payment=hold.payment;
+  if(payment){if(!retry||payment.revoked||payment.phase!=='unknown')return;}
+  else{if(retry||hold.phase!=='held'||!hold.receipt||Date.parse(hold.receipt.expiresAt)<=Date.now()||sdk.paidJourneyHoldState().phase!=='held'||sdk.paidJourneyPaymentState().phase!=='ready')return;payment={phase:'pending',revoked:false,controller:new AbortController(),sequence:0};hold.payment=payment;}
+  const sequence=++payment.sequence,controller=new AbortController();payment.phase='pending';payment.controller=controller;hold.owner=holdOwner.current;notifyHold();
+  const retained=payment;
+  const active=()=>retainedHold===hold&&hold.payment===retained&&retained.sequence===sequence&&!controller.signal.aborted&&!retained.revoked&&hold.context===currentContext.current&&Date.parse(originalSession.expiresAt)>Date.now();
+  retained.timeout=setTimeout(()=>{if(retainedHold===hold&&retained.sequence===sequence&&retained.phase==='pending'){controller.abort();retained.phase='unknown';notifyHold();}},timeoutMs);
+  try{const receipt=await sdk.mockPayPaidJourney(installationId,originalSession,{signal:controller.signal,...(retry?{retry:true as const}:{})});
+   if(!active())return;retained.receipt=receipt;retained.phase='confirmed';
+  }catch{if(retainedHold===hold&&hold.payment===retained&&retained.sequence===sequence)retained.phase=retained.receipt?'confirmed':'unknown';}
+  finally{clearTimeout(retained.timeout);if(retainedHold===hold&&hold.payment===retained&&retained.sequence===sequence){if(retained.phase==='pending')retained.phase='unknown';if(Date.parse(originalSession.expiresAt)<=Date.now()){hold.input=undefined;hold.session=undefined;hold.client=undefined;}notifyHold();}}
  }
  async function reserve(){
   if(retainedHold||!client||!session||current?.kind!=='review_payment'||Date.parse(session.expiresAt)<=Date.now()||!validCustomer(name,email)||!availability?.slots.some(slot=>slot.start===selected&&Date.parse(slot.start)>Date.now()))return;
@@ -119,11 +135,11 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
  const style={maxWidth:680,width:'100%',minWidth:0,boxSizing:'border-box',margin:'0 auto',padding:session?.render.form.presentation.layout==='compact'?12:24,overflowWrap:'anywhere','--accent':session?.render.form.presentation.accentColor} as CSSProperties;
  return <main className={`checkout-card hosted-flow-card paid-form-layout-${session?.render.form.presentation.layout??'stacked'}`} style={style}>
   <h1>{session?.render.form.name??'Booking form'}</h1>
-  <p>Staging · Temporary reservation. Booking submission is currently unavailable until payment and confirmation are connected.</p>
+  <p>Staging · TEST payments only. No real money is collected.</p>
   {hold?!compatibleHold?<p role="alert">An earlier reservation attempt must be resolved before opening a different form. Booking and payment status have not been checked.</p>:<section aria-label="Reservation draft">
-   <h2>Reservation draft</h2>
-   {hold.phase==='pending'||hold.phase==='checking'?<p role="status">{hold.phase==='checking'?'Checking the existing reservation… This check does not create or renew a hold.':'Reserving the selected time… Do not start another attempt.'}</p>:verifiedHold?<><p role="status">Temporary hold verified. Booking remains DRAFT. Payment is unavailable and no booking has been confirmed.</p><p>Draft reference: {verifiedHold.reference}</p><p>Hold active until {new Date(verifiedHold.expiresAt).toISOString().slice(11,19)} UTC.</p></>:<><p role="alert">Reservation status could not be verified. A draft and hold may exist. Do not start another booking. No payment or confirmation was authorized.</p>{hold.receipt&&<p>Last verified draft reference: {hold.receipt.reference}. Its current hold status has not been checked.</p>}</>}
-   {hold.phase!=='pending'&&hold.phase!=='checking'&&hold.session&&hold.client&&hold.input&&Date.parse(hold.session.expiresAt)>Date.now()&&(!hold.receipt||Date.parse(hold.receipt.expiresAt)>Date.now())?<><button type="button" onClick={()=>void checkHold(hold)}>Check existing reservation</button><p>This reads the original attempt only. It does not create, renew or confirm a booking.</p>{hold.phase==='unknown'&&hold.checked&&<><button type="button" onClick={()=>void sendHold(hold,true)}>Retry same hold request</button><p>The check could not verify a hold. This explicitly sends the original unchanged request; its outcome may still be uncertain.</p></>}</>:hold.phase!=='pending'&&hold.phase!=='checking'&&<p>The session or known hold is no longer available for retry. Contact the business to resolve this draft before starting another attempt.</p>}
+   <h2>{hold.payment?'Test booking status':'Reservation draft'}</h2>
+   {hold.payment?hold.payment.revoked?<p role="alert">The booking context changed. Payment status cannot be shown here. Contact the business; do not start another attempt.</p>:hold.payment.phase==='pending'?<><p role="status">Confirming this TEST booking… Do not start another payment or reservation.</p><button type="button" onClick={()=>uncertain(hold)}>Stop waiting for response</button><p>Stopping the wait does not cancel the server transaction.</p></>:hold.payment.phase==='confirmed'&&hold.payment.receipt?<><p role="status">TEST booking confirmed · Simulated payment. No real money was collected.</p><p>Booking reference: {hold.payment.receipt.reference}</p><p>Test amount: {hold.payment.receipt.currency} {(hold.payment.receipt.amount/100).toFixed(2)}</p><p>Payment reference: {hold.payment.receipt.paymentId}</p></>:<><p role="alert">Test payment status could not be verified. The original booking may already be confirmed. Do not start another booking or payment.</p>{hold.session&&hold.client&&Date.parse(hold.session.expiresAt)>Date.now()?<><button type="button" onClick={()=>void pay(hold,true)}>Retry same test payment</button><p>This explicitly retries only the original financial attempt.</p></>:<p>Contact the business to resolve this booking. Its session expired; no replacement payment will be started.</p>}</>:hold.phase==='pending'||hold.phase==='checking'?<p role="status">{hold.phase==='checking'?'Checking the existing reservation… This check does not create or renew a hold.':'Reserving the selected time… Do not start another attempt.'}</p>:verifiedHold?<><p role="status">Temporary hold verified. Booking remains DRAFT. No payment has been made and no booking has been confirmed.</p><p>Draft reference: {verifiedHold.reference}</p><p>Hold active until {new Date(verifiedHold.expiresAt).toISOString().slice(11,19)} UTC.</p>{hold.session&&Date.parse(hold.session.expiresAt)>Date.now()&&<><p>TEST amount: {hold.session.render.service.price.currency} {(hold.session.render.service.price.amount/100).toFixed(2)} · Simulated payment only.</p><button type="button" onClick={()=>void pay(hold)}>Confirm test booking</button></>}</>:<><p role="alert">Reservation status could not be verified. A draft and hold may exist. Do not start another booking. No payment or confirmation was authorized.</p>{hold.receipt&&<p>Last verified draft reference: {hold.receipt.reference}. Its current hold status has not been checked.</p>}</>}
+   {!hold.payment&&(hold.phase!=='pending'&&hold.phase!=='checking'&&hold.session&&hold.client&&hold.input&&Date.parse(hold.session.expiresAt)>Date.now()&&(!hold.receipt||Date.parse(hold.receipt.expiresAt)>Date.now())?<><button type="button" onClick={()=>void checkHold(hold)}>Check existing reservation</button><p>This reads the original attempt only. It does not create, renew or confirm a booking.</p>{hold.phase==='unknown'&&hold.checked&&<><button type="button" onClick={()=>void sendHold(hold,true)}>Retry same hold request</button><p>The check could not verify a hold. This explicitly sends the original unchanged request; its outcome may still be uncertain.</p></>}</>:hold.phase!=='pending'&&hold.phase!=='checking'&&<p>The session or known hold is no longer available for retry. Contact the business to resolve this draft before starting another attempt.</p>)}
   </section>:!client?<p role="alert">This booking form is unavailable because its connected public configuration could not be verified.</p>:!session?<>
    {message&&<p role="alert">{message}</p>}
    {opening&&<p role="status">Opening temporary booking session…</p>}
@@ -139,7 +155,7 @@ export function HostedJourneyFlow({installationId,config}:{installationId:string
      {!loading&&!availabilityMessage&&availability&&<fieldset style={{minWidth:0,border:0,padding:0}}><legend>Available times (UTC)</legend>{slots.length?slots.map(slot=><label key={slot.start} style={{display:'block',padding:8}}><input type="radio" name="journey-slot" value={slot.start} checked={selected===slot.start} onChange={()=>setSelected(slot.start)}/>{slot.start.slice(11,16)}–{slot.end.slice(11,16)} UTC</label>):<p>No available times for this date.</p>}</fieldset>}
      <p>Times are checked against server capacity. Selecting a time does not reserve it.</p>
     </>}
-    {current?.kind==='review_payment'&&<><p>{session.render.service.name}</p><p>{selected?`${selected.slice(0,10)} ${selected.slice(11,16)} UTC`:'No time selected.'}</p><p>Booking submission and test payment are currently unavailable beyond a temporary draft. Reserve only a temporary time hold; no booking will be confirmed.</p>{holdMessage&&<p role="alert">{holdMessage}</p>}<button type="button" disabled={!validCustomer(name,email)||!availability?.slots.some(slot=>slot.start===selected&&Date.parse(slot.start)>Date.now())} onClick={()=>void reserve()}>Reserve this time (staging)</button></>}
+    {current?.kind==='review_payment'&&<><p>{session.render.service.name}</p><p>{selected?`${selected.slice(0,10)} ${selected.slice(11,16)} UTC`:'No time selected.'}</p><p>First reserve a temporary hold. Then explicitly confirm a TEST booking using simulated payment; no real money is collected.</p>{holdMessage&&<p role="alert">{holdMessage}</p>}<button type="button" disabled={!validCustomer(name,email)||!availability?.slots.some(slot=>slot.start===selected&&Date.parse(slot.start)>Date.now())} onClick={()=>void reserve()}>Reserve this time (staging)</button></>}
     {current?.kind==='confirmation'&&<p>No booking has been confirmed. This stage is unavailable until server-authoritative booking submission is connected.</p>}
    </section>
    <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:16}}>{stage>0&&<button type="button" onClick={()=>setStage(value=>value-1)}>Back</button>}{current?.kind!=='review_payment'&&current?.kind!=='confirmation'&&<button type="button" disabled={!canNext} onClick={next}>Continue</button>}</div>

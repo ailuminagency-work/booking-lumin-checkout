@@ -6,7 +6,7 @@ const denial=(code:string)=>new Response(JSON.stringify({ok:false,code}),{status
 it.each(['/journey/flow/'+id,'/checkout/journey/flow/'+id])('dispatches explicit V8 route %s without consuming a legacy session',async pathname=>{
  vi.resetModules();vi.stubGlobal('location',{protocol:'https:',pathname});vi.stubEnv('BASE_URL','/');vi.stubEnv('VITE_RUNTIME_ENV','staging');vi.stubEnv('VITE_RUNTIME_MODE','supabase');vi.stubEnv('VITE_SUPABASE_URL','https://child.supabase.co');vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY','sb_publishable_stagingpublic');vi.stubEnv('VITE_TENANT_ID',id);vi.stubEnv('VITE_FLOW_API_URL','https://api.example');
  const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);const App=(await import('./App')).default;render(<App/>);
- expect(await screen.findByRole('button',{name:'Open booking form'})).toBeVisible();expect(screen.getByText(/Booking submission is currently unavailable/)).toBeVisible();expect(fetcher).not.toHaveBeenCalled();expect(screen.queryByText('Detailing quote')).toBeNull();
+ expect(await screen.findByRole('button',{name:'Open booking form'})).toBeVisible();expect(screen.getByText(/Staging · TEST payments only\. No real money is collected\./)).toBeVisible();expect(fetcher).not.toHaveBeenCalled();expect(screen.queryByText('Detailing quote')).toBeNull();
 });
 it('announces delayed Journey route loading without issuing a session before the chunk arrives',async()=>{
  vi.resetModules();let finish!:()=>void;const pending=new Promise<void>(resolve=>finish=resolve);vi.doMock('./flows/HostedJourneyFlow',async()=>{await pending;return vi.importActual('./flows/HostedJourneyFlow');});
