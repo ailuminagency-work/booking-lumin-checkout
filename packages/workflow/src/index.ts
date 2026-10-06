@@ -32,3 +32,4 @@ export * from './paidCustomerFieldPublication';
 export * from './paidConditionalCustomerFieldPublication';
 
 export * from "./detailingPublication";
+export * from './paidJourney';
