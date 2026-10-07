@@ -876,3 +876,14 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_publication.sql
           export PAID_JOURNEY_CUSTOMER_FIELD_PUBLICATION_LOCAL_TEST=1
           node --import tsx apps/api/src/paid-journey-customer-field-publication.integration.ts
+          createdb lumin_journey_fields_reader_ci
+          export PGDATABASE=lumin_journey_fields_reader_ci
+          actual_reader_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_reader_fixture" == "$expected_server_host|5432|lumin_journey_fields_reader_ci|postgres" ]] || { echo 'Disposable reader fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_public_reader.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_PUBLIC_READER_LOCAL_TEST=1
+          node --import tsx apps/api/src/paid-journey-customer-field-public-reader.integration.ts
