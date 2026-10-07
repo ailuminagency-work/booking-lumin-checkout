@@ -413,3 +413,31 @@ it('counts hidden optional steps at the sixteen-step limit without blocking a fi
  const advice=screen.getByText(/Journey steps: 16 of 16 used/),add=screen.getByRole('button',{name:'Add customer information step'});expect(advice).toHaveTextContent('Step limit reached.');expect(add.getAttribute('aria-describedby')?.split(' ')).toContain(advice.id);expect(add).toBeDisabled();expect(screen.getByRole('button',{name:'Add customer text field'})).toBeEnabled();
  fireEvent.click(screen.getByRole('button',{name:'Remove informational_10 question step'}));expect(screen.queryByText(/Step limit reached/)).toBeNull();expect(add).toBeEnabled();expect(screen.getByText(/Journey steps: 15 of 16 used/)).toBeVisible();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
 });
+
+it('shows persistent saved revision and blocks unchanged resubmission before and after reload',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('New draft.');
+ edit();expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('Unsaved draft changes.');
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 1/);
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('Saved draft revision 1. No unsaved changes.');
+ expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeDisabled();
+ fireEvent.submit(screen.getByRole('form',{name:'Save conditional journey draft'}));expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+ vi.mocked(client.loadPaidJourneyCustomerFieldDraft).mockImplementation(async(_tenant,id)=>({...draft,flowId:id}));
+ fireEvent.click(screen.getByRole('button',{name:'Reload customer questions draft'}));await screen.findByText('Loaded conditional journey revision 2.');
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('Saved draft revision 2.');
+ fireEvent.submit(screen.getByRole('form',{name:'Save conditional journey draft'}));expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Owner changed question'}});
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('Unsaved draft changes.');
+ expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeEnabled();
+});
+it('never calls an uncertain save saved and removes prior revision on owner context change',async()=>{
+ const {client}=fixture();vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockRejectedValue(Error('private transport failure'));
+ const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();edit();
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Conditional save outcome is unverified/);
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).toHaveTextContent('Save status unverified.');
+ expect(screen.getByRole('status',{name:'Customer questions draft save status'})).not.toHaveTextContent('Saved draft revision');
+ expect(document.body.textContent).not.toContain('private transport failure');
+ view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);
+ expect(screen.queryByRole('status',{name:'Customer questions draft save status'})).toBeNull();
+ expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+});
