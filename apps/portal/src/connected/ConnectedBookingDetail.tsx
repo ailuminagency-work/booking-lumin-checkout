@@ -1,5 +1,5 @@
 import {ConnectedBookingFormAnswers,type BookingFormAnswersClient} from './ConnectedBookingFormAnswers';
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {ConnectedConfirmationReceipts,type ConfirmationReceiptsClient} from './ConnectedConfirmationReceipts';
 import {Link,useParams} from 'react-router-dom';
 import {formatMoney} from '@lumin/contracts';
@@ -24,11 +24,13 @@ function phoneLink(value:string|null):string|undefined{
 
 export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{client:Pick<RuntimeClient,'bookingDetail'>&Partial<ConfirmationReceiptsClient>&Partial<BookingFormAnswersClient>;tenantId:string;bookingId:string;services:ServiceRow[]}){
  const auth=client.authContextRevision?.()??0;
- const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;auth:number;data:ConnectedBookingDetail|null;error:string}|null>(null);
+ const [result,setResult]=useState<{client:typeof client;tenant:string;id:string;auth:number;revision:number;data:ConnectedBookingDetail|null;error:string}|null>(null);
  const [retry,setRetry]=useState(0);
- useEffect(()=>{let active=true;setResult(null);void client.bookingDetail(tenantId,bookingId).then(data=>{if(active)setResult({client,tenant:tenantId,id:bookingId,auth,data,error:''})},()=>{if(active)setResult({client,tenant:tenantId,id:bookingId,auth,data:null,error:'Booking details could not be loaded. Check your connection or sign in again.'})});return()=>{active=false}},[client,tenantId,bookingId,retry,auth]);
+ const readPending=useRef(true);
+ useEffect(()=>{let active=true;readPending.current=true;setResult(null);void client.bookingDetail(tenantId,bookingId).then(data=>{if(active){readPending.current=false;setResult({client,tenant:tenantId,id:bookingId,auth,revision:retry,data,error:''});}},()=>{if(active){readPending.current=false;setResult({client,tenant:tenantId,id:bookingId,auth,revision:retry,data:null,error:'Booking details could not be loaded. Check your connection or sign in again.'});}});return()=>{active=false}},[client,tenantId,bookingId,retry,auth]);
  // Withhold the old connection's private record and error before passive effects.
- const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId&&result.auth===auth?result:null;
+ const current=result?.client===client&&result.tenant===tenantId&&result.id===bookingId&&result.auth===auth&&result.revision===retry?result:null;
+ const refresh=()=>{if(!current||readPending.current)return;readPending.current=true;setRetry(n=>n+1);};
  const error=current?.error??'';
  const detail=current?.data;
  const emailHref=detail?.customer?emailLink(detail.customer.email):undefined;
@@ -50,7 +52,8 @@ export function ConnectedBookingRecord({client,tenantId,bookingId,services}:{cli
  };
  return <section style={{minWidth:0,maxWidth:'100%',overflowWrap:'anywhere'}}><p><Link to="/bookings">Back to bookings</Link></p>
   <h1>{detail?`Booking ${detail.reference}`:'Booking detail'}</h1>
-  {error?<p role="alert">{error} <button onClick={()=>setRetry(n=>n+1)}>Retry</button></p>:!current?<p role="status">Loading booking…</p>:!detail?<p>No booking is available for this business and reference.</p>:<>
+  <button type="button" disabled={!current} onClick={refresh}>Refresh booking</button>
+  {error?<p role="alert">{error} <button type="button" onClick={refresh}>Retry</button></p>:!current?<p role="status">Loading booking…</p>:!detail?<p>No booking is available for this business and reference.</p>:<>
    <p>Status: {detail.state.replaceAll('_',' ')}</p>
    <h2>Customer</h2>{detail.customer?<dl><dt>Name</dt><dd>{detail.customer.name}</dd><dt>Email</dt><dd>{emailHref?<a href={emailHref} aria-label="Email saved customer">{detail.customer.email}</a>:detail.customer.email}</dd><dt>Phone</dt><dd>{phoneHref?<a href={phoneHref} aria-label="Call saved customer">{detail.customer.phone}</a>:detail.customer.phone??'Not provided'}</dd></dl>:<p>No customer record is linked.</p>}
    <h2>Service and schedule</h2><dl><dt>Service</dt><dd>{services.find(s=>s.id===detail.serviceId&&s.tenant_id===tenantId)?.name??detail.serviceId}</dd><dt>Starts</dt><dd>{when(detail.slotStart)}</dd><dt>Ends</dt><dd>{when(detail.slotEnd)}</dd><dt>Timezone shown</dt><dd>{Intl.DateTimeFormat().resolvedOptions().timeZone}</dd><dt>Duration</dt><dd>{(Date.parse(detail.slotEnd)-Date.parse(detail.slotStart))/60000} minutes</dd></dl>
