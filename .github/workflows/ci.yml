@@ -865,6 +865,14 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_drafts.sql
           export PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-customer-field-draft.integration.ts
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_fields_pub_ci;'
+          export PGDATABASE=lumin_journey_fields_pub_ci
+          actual_publication_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_publication_fixture" == "$expected_server_host|5432|lumin_journey_fields_pub_ci|postgres" ]] || { echo 'Disposable publication fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_publication.sql
           export PAID_JOURNEY_CUSTOMER_FIELD_PUBLICATION_LOCAL_TEST=1
           node --import tsx apps/api/src/paid-journey-customer-field-publication.integration.ts
