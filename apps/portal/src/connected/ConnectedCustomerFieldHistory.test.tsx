@@ -1,6 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
-import {createRuntimeClient,type CustomerFieldRollbackReceipt,type RuntimeClient} from '@lumin/runtime-client';
+import {createRuntimeClient,PublicationError,type CustomerFieldRollbackReceipt,type RuntimeClient} from '@lumin/runtime-client';
 import {ConnectedCustomerFieldHistory} from './ConnectedCustomerFieldHistory';
 const tenant='11111111-1111-4111-8111-111111111111',flow='22222222-2222-4222-8222-222222222222',version='33333333-3333-4333-8333-333333333333',installation='44444444-4444-4444-8444-444444444444',prior='55555555-5555-4555-8555-555555555555',priorInstallation='66666666-6666-4666-8666-666666666666',actor='77777777-7777-4777-8777-777777777777';
 const fields=[{id:'custom_access',kind:'text',label:'Entry instructions',required:true,maxLength:100},{id:'custom_notes',kind:'text',label:'Notes',required:false,maxLength:50}];
@@ -45,4 +45,49 @@ it.each(['unmount','tenant','client','auth'] as const)('cannot expose or notify 
 });
 it('uses the current explicit selection callback after replacement without triggering either callback automatically',async()=>{
  const {client,calls}=await fixture(async()=>json({ok:true,data:history}));const old=vi.fn(),current=vi.fn();const view=render(<ConnectedCustomerFieldHistory client={client} {...props} onViewCurrentInstallation={old}/>);await load();view.rerender(<ConnectedCustomerFieldHistory client={client} {...props} onViewCurrentInstallation={current}/>);expect(old).not.toHaveBeenCalled();expect(current).not.toHaveBeenCalled();const before=calls.mock.calls.length;fireEvent.click(screen.getByRole('button',{name:'View current installation'}));expect(old).not.toHaveBeenCalled();expect(current).toHaveBeenCalledWith(history,client.authContextRevision());expect(calls).toHaveBeenCalledTimes(before);
+});
+
+
+it.each(['not_sent','rejected','unknown'] as const)('never renders typed history error details (%s) and supports an explicit read retry',async delivery=>{
+ const {client}=await fixture(async()=>json({ok:true,data:history}));
+ const read=vi.spyOn(client,'customerFieldVersionHistory');
+ const error=new PublicationError(delivery,'private typed error: bearer secret');
+ const message=vi.fn(()=> 'private typed error: bearer secret');Object.defineProperty(error,'message',{configurable:true,get:message});
+ read.mockRejectedValueOnce(error);
+ render(<ConnectedCustomerFieldHistory client={client} {...props}/>);
+ fireEvent.change(screen.getByLabelText('Publication history form ID'),{target:{value:flow}});
+ fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('Publication history could not be checked. An uncertain action remains locked.');
+ expect(document.body.textContent).not.toContain('private typed error');expect(message).not.toHaveBeenCalled();
+ expect(screen.queryByRole('link')).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));
+ await screen.findByRole('heading',{name:'Current cleaning'});expect(read).toHaveBeenCalledTimes(2);
+});
+it('sanitizes a rejected rollback while requiring fresh history before another review',async()=>{
+ const {client,calls}=await fixture(async(_path,init)=>init?.method==='POST'?json({ok:false,code:'CONFLICT'},409):json({ok:true,data:history}));
+ const rollback=client.rollbackCustomerFieldPublication;
+ vi.spyOn(client,'rollbackCustomerFieldPublication').mockImplementation(async(...args)=>{try{return await rollback(...args);}catch(error){throw new PublicationError((error as PublicationError).delivery,'private rejection detail');}});
+ render(<ConnectedCustomerFieldHistory client={client} {...props}/>);await load();await review();
+ fireEvent.click(screen.getByRole('button',{name:'Confirm publication rollback'}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('Rollback was not accepted. Refresh publication history and review eligibility before another explicit action.');
+ expect(document.body.textContent).not.toContain('private rejection detail');expect(screen.queryByRole('button',{name:'Review rollback'})).toBeNull();
+ expect(calls.mock.calls.filter(([url])=>String(url).includes('/rollback?'))).toHaveLength(1);
+ fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));await screen.findByRole('heading',{name:'Current cleaning'});
+ expect(screen.getByRole('button',{name:'Review rollback'})).toBeDisabled();
+});
+it('sanitizes uncertain writer and receipt errors without unlocking or repeating the rollback',async()=>{
+ let receiptAvailable=false;
+ const {client,calls}=await fixture(async(path,init)=>init?.method==='POST'?json({ok:false,code:'INTERNAL_ERROR'},500):path.includes('/rollback-receipt?')?receiptAvailable?json({ok:true,data:receipt}):json({ok:false,code:'NOT_AVAILABLE'},404):json({ok:true,data:history}));
+ const rollback=client.rollbackCustomerFieldPublication,reconcile=client.reconcileCustomerFieldRollback;
+ vi.spyOn(client,'rollbackCustomerFieldPublication').mockImplementation(async(...args)=>{try{return await rollback(...args);}catch{throw new PublicationError('unknown','private writer detail');}});
+ vi.spyOn(client,'reconcileCustomerFieldRollback').mockImplementation(async(...args)=>{try{return await reconcile(...args);}catch{throw new PublicationError('unknown','private receipt detail');}});
+ render(<ConnectedCustomerFieldHistory client={client} {...props}/>);await load();await review();
+ fireEvent.click(screen.getByRole('button',{name:'Confirm publication rollback'}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.');
+ const frozen=client.customerFieldRollbackState(tenant);expect(frozen.phase).toBe('unknown');
+ fireEvent.click(screen.getByRole('button',{name:'Check rollback outcome'}));
+ await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('The rollback receipt could not be verified. The frozen target remains locked.'));
+ expect(client.customerFieldRollbackState(tenant)).toEqual(frozen);expect(document.body.textContent).not.toContain('private writer detail');expect(document.body.textContent).not.toContain('private receipt detail');
+ receiptAvailable=true;fireEvent.click(screen.getByRole('button',{name:'Check rollback outcome'}));await screen.findByText(/Rollback target verified at last check/);
+ expect(calls.mock.calls.filter(([url])=>String(url).includes('/rollback?'))).toHaveLength(1);
+ expect(calls.mock.calls.filter(([url])=>String(url).includes('/rollback-receipt?'))).toHaveLength(2);
 });

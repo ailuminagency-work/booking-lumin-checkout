@@ -41,7 +41,7 @@ function HistoryPanel({client,tenantId,blocked,onStateChange,onVerifiedHistory,o
   event.preventDefault();if(inFlight.current||rollback.phase==='rolling_back')return;const flowId=(locked?rollback.flowId:view.flowId).trim().toLowerCase();if(!uuid(flowId)){setSnapshot({...view,error:'Enter the known form ID for this business.'});return;}
   onHistoryInvalidated?.();const at=++generation.current;inFlight.current=true;setSelected('');setReview(null);setSnapshot({client,tenantId,auth,flowId,phase:'loading',error:''});
   try{const history=await client.customerFieldVersionHistory(tenantId,flowId);if(!safeHistory(history,flowId))throw new PublicationError('not_sent','Publication history could not be validated. No installation or rollback authority was granted.');if(active(at)){setSnapshot({client,tenantId,auth,flowId,phase:'loaded',history,error:''});onVerifiedHistory?.(history,auth);}}
-  catch(error){if(active(at))setSnapshot({client,tenantId,auth,flowId,phase:'failed',error:error instanceof PublicationError?error.message:'Publication history could not be checked. An uncertain action remains locked.'});}
+  catch{if(active(at))setSnapshot({client,tenantId,auth,flowId,phase:'failed',error:'Publication history could not be checked. An uncertain action remains locked.'});}
   finally{if(active(at))inFlight.current=false;}
  }
  function viewCurrentInstallation(){if(blocked||currentInstallationBlocked||locked||inFlight.current||view.phase!=='loaded'||!view.history||!safeHistory(view.history,view.flowId)||(client.authContextRevision?.()??0)!==auth||current?.renderSchemaVersion!==5||current.publication?.renderSchemaVersion!==5)return;onViewCurrentInstallation?.(view.history,auth);}
@@ -52,13 +52,13 @@ function HistoryPanel({client,tenantId,blocked,onStateChange,onVerifiedHistory,o
   if(!review||blocked||locked||inFlight.current)return;const at=generation.current,reviewed=review;inFlight.current=true;setReview(null);setSelected('');setSnapshot({...view,history:undefined,error:''});
   onHistoryInvalidated?.('write');const pending=client.rollbackCustomerFieldPublication(tenantId,reviewed.flowId,{expectedCurrentVersionId:reviewed.currentVersionId,targetVersionId:reviewed.targetVersionId});notify();
   try{await pending;if(active(at)){setSnapshot({...view,history:undefined,error:''});notify(true);}}
-  catch(error){if(active(at)){setSnapshot({...view,history:undefined,error:error instanceof PublicationError?error.message:'Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.'});notify();}}
+  catch(error){if(active(at)){setSnapshot({...view,history:undefined,error:error instanceof PublicationError&&(error.delivery==='not_sent'||error.delivery==='rejected')?'Rollback was not accepted. Refresh publication history and review eligibility before another explicit action.':'Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.'});notify();}}
   finally{if(active(at))inFlight.current=false;}
  }
  async function reconcile(){
   if(inFlight.current||checking||rollback.phase!=='unknown')return;onHistoryInvalidated?.('write');const at=generation.current;inFlight.current=true;setChecking(true);setSnapshot({...view,error:''});
   try{await client.reconcileCustomerFieldRollback(tenantId);if(active(at)){setSnapshot({...view,history:undefined,error:''});notify(true);}}
-  catch(error){if(active(at))setSnapshot({...view,error:error instanceof PublicationError?error.message:'The rollback receipt could not be verified. The frozen target remains locked.'});}
+  catch{if(active(at))setSnapshot({...view,error:'The rollback receipt could not be verified. The frozen target remains locked.'});}
   finally{if(active(at)){inFlight.current=false;setChecking(false);}}
  }
  const verified=rollback.phase==='verified'&&uuid(rollback.flowId)&&rollback.receipt.flowId===rollback.flowId&&safeReceipt({versionId:rollback.receipt.versionId,installationId:rollback.receipt.installationId,renderSchemaVersion:rollback.receipt.renderSchemaVersion,hostedPath:rollback.receipt.hostedPath})?rollback:null;
