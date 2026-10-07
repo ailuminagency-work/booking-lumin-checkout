@@ -199,3 +199,31 @@ it.each(['tenant','booking','auth'] as const)('withholds old saved contact links
  mounted.rerender(<MemoryRouter><Observer tenantId={context==='tenant'?other:tenant} bookingId={context==='booking'?other:booking}/></MemoryRouter>);
  expect(observed).not.toContain('PRIVATE_CONTACT');expect(observed).not.toContain('mailto:');expect(observed).not.toContain('tel:');expect(observed).toContain('Loading booking');
 });
+
+it('explicitly refreshes a saved booking, hides old private data and suppresses duplicate reads',async()=>{
+ let finish!:(data:ConnectedBookingDetail)=>void;
+ const bookingDetail=vi.fn().mockResolvedValueOnce(fixture('BEFORE_REFRESH')).mockImplementationOnce(()=>new Promise<ConnectedBookingDetail>(resolve=>finish=resolve));
+ render(view({bookingDetail},[]));await screen.findByText('BEFORE_REFRESH');
+ const button=screen.getByRole('button',{name:'Refresh booking'});fireEvent.click(button);fireEvent.click(button);
+ expect(screen.queryByText('BEFORE_REFRESH')).toBeNull();expect(button).toBeDisabled();
+ await waitFor(()=>expect(bookingDetail).toHaveBeenCalledTimes(2));
+ const updated=fixture('AFTER_REFRESH');updated.state='completed';finish(updated);
+ await screen.findByText('AFTER_REFRESH');expect(screen.getByText('Status: completed')).toBeVisible();
+ expect(button).toBeEnabled();expect(bookingDetail.mock.calls).toEqual([[tenant,booking],[tenant,booking]]);
+});
+it('allows explicit rechecking of a missing booking and removes an old record on refresh failure',async()=>{
+ const bookingDetail=vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(fixture('RECOVERED_BOOKING')).mockRejectedValueOnce(Error('PRIVATE_REFRESH_ERROR'));
+ render(view({bookingDetail},[]));await screen.findByText('No booking is available for this business and reference.');
+ fireEvent.click(screen.getByRole('button',{name:'Refresh booking'}));await screen.findByText('RECOVERED_BOOKING');
+ fireEvent.click(screen.getByRole('button',{name:'Refresh booking'}));await screen.findByRole('alert');
+ expect(screen.queryByText('RECOVERED_BOOKING')).toBeNull();expect(document.body.textContent).not.toContain('PRIVATE_REFRESH_ERROR');
+ expect(bookingDetail).toHaveBeenCalledTimes(3);
+});
+it('does not restore a booking from a late refresh after switching business',async()=>{
+ let finish!:(data:ConnectedBookingDetail)=>void;
+ const bookingDetail=vi.fn().mockResolvedValueOnce(fixture('ORIGINAL_BOOKING')).mockImplementationOnce(()=>new Promise<ConnectedBookingDetail>(resolve=>finish=resolve)).mockResolvedValueOnce({...fixture('CURRENT_BUSINESS'),tenantId:other});
+ const client={bookingDetail};const mounted=render(view(client,[]));await screen.findByText('ORIGINAL_BOOKING');
+ fireEvent.click(screen.getByRole('button',{name:'Refresh booking'}));await waitFor(()=>expect(bookingDetail).toHaveBeenCalledTimes(2));
+ mounted.rerender(view(client,[],other));await screen.findByText('CURRENT_BUSINESS');finish(fixture('LATE_PRIVATE_BOOKING'));
+ await waitFor(()=>expect(screen.queryByText('LATE_PRIVATE_BOOKING')).toBeNull());expect(screen.getByText('CURRENT_BUSINESS')).toBeVisible();
+});
