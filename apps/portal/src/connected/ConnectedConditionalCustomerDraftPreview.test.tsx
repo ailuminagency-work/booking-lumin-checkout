@@ -40,3 +40,30 @@ it('clears reset feedback on a business change and never offers a reset for inva
  view.rerender(<ConnectedConditionalCustomerDraftPreview fields={[{...fields[0]!,id:'invalid'}]} scopeKey="other" disabled={false}/>);
  expect(screen.getByRole('alert')).toBeVisible();expect(screen.queryByRole('button')).toBeNull();
 });
+
+it('checks visible required fields with shared exact-match rules without submitting a surrounding form',()=>{
+ const submit=vi.fn();render(<form onSubmit={event=>{event.preventDefault();submit();}}><ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/></form>);
+ const check=screen.getByRole('button',{name:'Check preview answers'});
+ fireEvent.click(check);expect(screen.getByRole('status')).toHaveTextContent('Complete the visible required preview fields');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'   '}});expect(screen.queryByRole('status')).toBeNull();
+ fireEvent.click(check);expect(screen.getByRole('status')).toHaveTextContent('Complete the visible required preview fields');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'No'}});fireEvent.click(check);
+ expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass the local field rules. Nothing was saved or submitted.');
+ expect(screen.queryByRole('textbox',{name:'Preview value: Notes'})).toBeNull();
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Yes'}});expect(screen.queryByRole('status')).toBeNull();fireEvent.click(check);
+ expect(screen.getByRole('status')).toHaveTextContent('Complete the visible required preview fields');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Notes'}),{target:{value:'More'}});fireEvent.click(check);
+ expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass');expect(screen.getByRole('textbox',{name:'Preview value: More'})).toHaveValue('');expect(submit).not.toHaveBeenCalled();
+});
+it('clears a local check on reset and context change and does not check while locked',()=>{
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'No'}});fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass');
+ fireEvent.click(screen.getByRole('button',{name:'Reset preview scenario'}));expect(screen.getByRole('status')).toHaveTextContent('Preview scenario cleared');expect(screen.queryByText(/Visible preview answers pass/)).toBeNull();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled/>);const check=screen.getByRole('button',{name:'Check preview answers'});expect(check).toBeDisabled();fireEvent.click(check);expect(screen.queryByRole('status')).toBeNull();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);fireEvent.click(check);expect(screen.getByRole('status')).toHaveTextContent('Complete the visible required preview fields');
+});
+it.each([{definition:[]},{definition:[{...fields[0]!,required:false}]}])('accepts a local scenario with no visible required values and stores nothing',({definition})=>{
+ const beforeSession=sessionStorage.length,beforeLocal=localStorage.length,before=JSON.stringify(definition);
+ render(<ConnectedConditionalCustomerDraftPreview fields={definition} scopeKey="tenant" disabled={false}/>);fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));
+ expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass');expect(sessionStorage.length).toBe(beforeSession);expect(localStorage.length).toBe(beforeLocal);expect(JSON.stringify(definition)).toBe(before);
+});
