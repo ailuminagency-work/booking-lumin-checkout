@@ -1,6 +1,11 @@
+export interface PaidJourneyCustomerFieldSessionProjection {readonly schemaVersion:2;readonly installationId:string;readonly expiresAt:string;readonly render:PaidJourneyCustomerFieldRender}
+export class PaidJourneyCustomerFieldSessionReadError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyAvailability {readonly schemaVersion:1;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
 export interface PaidJourneyAvailabilityWindow {readonly from:string;readonly to:string}
 export class PaidJourneyAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
+export interface PaidJourneyCustomerFieldSession {readonly schemaVersion:2;readonly installationId:string;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyCustomerFieldRender}
+export type PaidJourneyCustomerFieldSessionState={readonly phase:'ready'|'unknown'}|{readonly phase:'issuing';readonly installationId:string}|{readonly phase:'issued';readonly installationId:string;readonly expiresAt:string};
+export class PaidJourneyCustomerFieldSessionError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
 export class PaidJourneyCustomerFieldRenderError extends Error {constructor(readonly code:'INVALID_REQUEST'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyOwnerPublication {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly allowedOrigins:readonly string[];readonly render:PaidJourneyRender}
 export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
@@ -196,7 +201,10 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const journeyHistories=new Map<string,{actor:string;generation:number;history:PaidJourneyVersionHistory}>();
  const journeyHistoryReads=new Set<string>();
  const journeyRollbackLocked=()=>[...journeyRollbacks.values()].some(v=>v.phase!=='verified');
- const offerLocked=()=>journeyFieldLocked()||journeyRollbackLocked()||offerOperationsLocked()||profileInitializationLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0;
+ let journeyFieldLegacySessionStarted=false;
+ let journeyFieldSessionAttempt:{generation:number;installationId:string;phase:'issuing'|'unknown'}|undefined;
+ let journeyFieldSessionIssued:{generation:number;installationId:string;expiresAt:string}|undefined;
+ const offerLocked=()=>!!journeyFieldSessionAttempt||journeyFieldLocked()||journeyRollbackLocked()||offerOperationsLocked()||profileInitializationLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0;
  const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
@@ -237,7 +245,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const uncertainFieldDrafts=new Map<string,{flowId:string;input:PaidSimpleFieldDraftInput|PaidSimpleConditionalDraftInput}>();
  const ownerDrafts=new Map<string,Exclude<PaidSimpleDraftState,{phase:'ready'}>>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
-  if(method!=='GET'&&path!=='/auth/v1/token?grant_type=password'&&(journeyFieldLocked()||journeyRollbackLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0))return fail('Journey save or rollback status is pending or unverified. Do not replace this attempt with another writer.');
+  if(method!=='GET'&&path!=='/auth/v1/token?grant_type=password'&&(!!journeyFieldSessionAttempt||journeyFieldLocked()||journeyRollbackLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0))return fail('Journey save or rollback status is pending or unverified. Do not replace this attempt with another writer.');
   if(authenticated&&!token)return fail('Please sign in again.');
   const current=generation;
   let response:Response;
@@ -586,10 +594,12 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  /** A fresh issuance may create another nonfinancial session. Never retry automatically. */
  async function issuePaidJourneySession(installationId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyCustomerSession>{
+  if(journeyFieldSessionAttempt||journeyFieldSessionIssued)throw new PaidJourneySessionError('not_sent','Resolve the retained V9 session issuance before starting another customer session.');
   if(!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new PaidJourneySessionError('not_sent','Use only an optional cancellation signal; session authority comes from the server.');
   if(!bookingApiOrigin||!uuid(installationId)||options.signal?.aborted)throw new PaidJourneySessionError('not_sent','Choose a valid V8 installation and configured API before starting a session.');
   if(journeyPaymentAttempt||journeyHoldRecoveryPending||(journeyHoldAttempt&&journeyHoldAttempt.phase!=='held'))throw new PaidJourneySessionError('not_sent','Resolve the retained reservation attempt before opening a different session.');
   if(journeyHoldAttempt?.phase==='held')journeyHoldAttempt=undefined;
+  journeyFieldLegacySessionStarted=true;
   const current=generation,sequence=++journeySessionSequence,signal=options.signal;let response:Response,value:unknown;
   try{response=await transport(bookingApiOrigin+'/api/paid-journey-installations/'+installationId.toLowerCase()+'/sessions',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json'},body:'{}',...(signal?{signal}:{})});value=await response.json();}catch{throw new PaidJourneySessionError('unknown','The session response is unverified. No automatic retry was made; a new attempt may create another nonfinancial session.');}
   if(current!==generation||sequence!==journeySessionSequence||signal?.aborted||response.redirected||journeyHoldAttempt)throw new PaidJourneySessionError('unknown','The session context changed. This response cannot be accepted.');
@@ -609,6 +619,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  /** No automatic retry. Unknown writes keep their exact private request identity. */
  async function holdPaidJourneySlot(installationId:string,session:PaidJourneyCustomerSession,input:PaidJourneyHoldInput,options:{signal?:AbortSignal;retry?:true}={}):Promise<PaidJourneyHoldReceipt>{
   const reject=(message:string)=>new PaidJourneyHoldError('not_sent',message);
+  if(journeyFieldSessionAttempt||journeyFieldSessionIssued)throw reject('Keep customer operations in their original V9 session protocol.');
   if(journeyPaymentAttempt||journeyHoldRecoveryPending)throw reject('Resolve the retained reservation before sending another request.');
   const utc=(value:unknown,offset=false):number=>{if(typeof value!=='string'||!(offset?/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/:/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/).test(value))return NaN;const parts=value.slice(0,19).split(/[-T:]/).map(Number),calendar=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!)),n=Date.parse(value);return calendar.getUTCFullYear()===parts[0]&&calendar.getUTCMonth()+1===parts[1]&&calendar.getUTCDate()===parts[2]&&parts[3]!<=23&&parts[4]!<=59&&parts[5]!<=59&&Number.isFinite(n)?n:NaN;};
   const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length>0&&v.length<=max&&v===v.trim()&&!/[\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(v);
@@ -670,6 +681,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  /** Staging mock only. Explicit retries retain the same original financial attempt. */
  async function mockPayPaidJourney(installationId:string,session:PaidJourneyCustomerSession,options:{signal?:AbortSignal;retry?:true}={}):Promise<PaidJourneyPaymentReceipt>{
   const reject=()=>new PaidJourneyPaymentError('not_sent','Use the original verified reservation and session; retry only the same financial attempt explicitly.');
+  if(journeyFieldSessionAttempt||journeyFieldSessionIssued)throw reject();
   const hold=journeyHoldAttempt;
   if(!bookingApiOrigin||!uuid(installationId)||!(exact(options,[])||exact(options,['signal'])||exact(options,['retry'])||exact(options,['signal','retry']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal))||(options.retry!==undefined&&options.retry!==true)||options.signal?.aborted||!exact(session,['schemaVersion','sessionToken','expiresAt','render'])||session.schemaVersion!==1||!hold||!hold.receipt||journeyHoldRecoveryPending||hold.phase==='holding'||hold.generation!==generation||hold.sequence!==journeySessionSequence||hold.installationId!==installationId.toLowerCase()||hold.sessionToken!==session.sessionToken||hold.expiresAt!==Date.parse(session.expiresAt)||hold.expiresAt<=Date.now())throw reject();
   const render=PaidJourneyRender.safeParse(session.render);
@@ -730,6 +742,66 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const parsed=PaidJourneyRender.safeParse(data.render);
   if(!parsed.success||parsed.data.versionId!==data.versionId)throw new PublicationError('not_sent','The immutable published journey does not match its receipt. No writer was reconciled.');
   return Object.freeze({schemaVersion:1,tenantId:tenant,flowId:flow,draftRevision:data.draftRevision as number,versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:8,allowedOrigins:Object.freeze([...data.allowedOrigins]) as readonly string[],render:parsed.data});
+ }
+ /** Creates presentation-only V9 authority once; uncertain issuance is never retried. */
+ async function issuePaidJourneyCustomerFieldSession(installationId:string,options:{origin:string;signal?:AbortSignal}):Promise<PaidJourneyCustomerFieldSession>{
+  const invalid=()=>new PaidJourneyCustomerFieldSessionError('not_sent','Use a canonical V9 installation and exact approved HTTPS browser origin.');
+  if(!bookingApiOrigin||!uuid(installationId)||installationId!==installationId.toLowerCase()||typeof options!=='object'||options===null||Array.isArray(options)||(Object.getPrototypeOf(options)!==Object.prototype&&Object.getPrototypeOf(options)!==null))throw invalid();
+  const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(options);
+  if(keys.some(key=>typeof key!=='string'||!['origin','signal'].includes(key))||!Object.hasOwn(descriptors,'origin')||Object.values(descriptors).some(value=>!value.enumerable||!Object.hasOwn(value,'value')))throw invalid();
+  const origin=descriptors.origin!.value as unknown,signal=descriptors.signal?.value as unknown;
+  if(typeof origin!=='string'||origin.length>2048||!httpsOrigin(origin)||(signal!==undefined&&!(signal instanceof AbortSignal))||signal instanceof AbortSignal&&signal.aborted)throw invalid();
+  if(offerLocked()||journeyFieldLegacySessionStarted||journeyPaymentAttempt||journeyHoldRecoveryPending||journeyHoldAttempt)throw new PaidJourneyCustomerFieldSessionError('not_sent','Resolve the retained operation before starting another customer session.');
+  const attempt={generation,installationId,phase:'issuing' as 'issuing'|'unknown'};journeyFieldSessionAttempt=attempt;journeyFieldSessionIssued=undefined;
+  const unknown=()=>{attempt.phase='unknown';return new PaidJourneyCustomerFieldSessionError('unknown','Session issuance could not be verified. No automatic retry, reservation or payment was made.');};
+  let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/public/paid-journey-customer-field-installations/'+installationId+'/sessions',{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}',...(signal instanceof AbortSignal?{signal}:{})});value=await response.json();}catch{throw unknown();}
+  if(attempt.generation!==generation||signal instanceof AbortSignal&&signal.aborted||response.redirected)throw unknown();
+  if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'){
+   const codes:Record<string,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,NOT_AVAILABLE:404,CONFLICT:409,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+   if(Object.hasOwn(codes,value.code)&&response.status===codes[value.code]){journeyFieldSessionAttempt=undefined;throw new PaidJourneyCustomerFieldSessionError('rejected','The customer session request was rejected.');}
+  }
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(response.status!==200||!exact(data,['schemaVersion','installationId','sessionToken','expiresAt','render'])||data.schemaVersion!==2||data.installationId!==installationId||typeof data.sessionToken!=='string'||!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(data.sessionToken)||typeof data.expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(data.expiresAt))throw unknown();
+  const expiry=Date.parse(data.expiresAt),parts=data.expiresAt.slice(0,19).split(/[-T:]/).map(Number),date=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!)),render=PaidJourneyCustomerFieldRender.safeParse(data.render),now=Date.now();
+  if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000+1000||date.getUTCFullYear()!==parts[0]||date.getUTCMonth()+1!==parts[1]||date.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59||!render.success)throw unknown();
+  const receipt=Object.freeze({schemaVersion:2 as const,installationId,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:immutableDetailing(render.data) as PaidJourneyCustomerFieldRender});
+  journeyFieldSessionAttempt=undefined;journeyFieldSessionIssued={generation,installationId,expiresAt:data.expiresAt};return receipt;
+ }
+ let journeyFieldSessionReadSequence=0;
+ /** Reads one private V9 capability without settling issuance or changing any writer fence. */
+ async function readPaidJourneyCustomerFieldSession(session:PaidJourneyCustomerFieldSession,options:{origin:string;signal?:AbortSignal}):Promise<PaidJourneyCustomerFieldSessionProjection>{
+  const fail=(code:PaidJourneyCustomerFieldSessionReadError['code'])=>new PaidJourneyCustomerFieldSessionReadError(code,'The V9 customer session could not be verified. No writer was retried or reconciled.');
+  const ownData=(value:unknown,required:string[],optional:string[]=[])=>{
+   if(!value||typeof value!=='object'||Array.isArray(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+   const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(value);
+   return required.every(key=>Object.hasOwn(descriptors,key))&&keys.every(key=>typeof key==='string'&&[...required,...optional].includes(key))&&Object.values(descriptors).every(d=>d.enumerable&&Object.hasOwn(d,'value'));
+  };
+  if(!bookingApiOrigin||!ownData(session,['schemaVersion','installationId','sessionToken','expiresAt','render'])||!ownData(options,['origin'],['signal']))throw fail('INVALID_REQUEST');
+  const {schemaVersion,installationId,sessionToken,expiresAt,render:inputRender}=session,{origin,signal}=options;
+  if(schemaVersion!==2||!uuid(installationId)||installationId!==installationId.toLowerCase()||typeof sessionToken!=='string'||!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(sessionToken)||typeof origin!=='string'||origin.length>2048||!httpsOrigin(origin)||signal!==undefined&&!(signal instanceof AbortSignal))throw fail('INVALID_REQUEST');
+  if(signal?.aborted)throw fail('ABORTED');
+  if(typeof expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(expiresAt))throw fail('INVALID_REQUEST');
+  const expiry=Date.parse(expiresAt),parts=expiresAt.slice(0,19).split(/[-T:]/).map(Number),date=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!));
+  if(!Number.isFinite(expiry)||expiry>Date.now()+901000||date.getUTCFullYear()!==parts[0]||date.getUTCMonth()+1!==parts[1]||date.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59)throw fail('INVALID_REQUEST');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  const parsed=PaidJourneyCustomerFieldRender.safeParse(inputRender);if(!parsed.success)throw fail('INVALID_REQUEST');
+  const pinned=JSON.stringify(parsed.data),current=generation,sequence=++journeyFieldSessionReadSequence;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/public/paid-journey-customer-field-flow-sessions/render',{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Origin:origin,Authorization:`Bearer ${sessionToken}`},...(signal?{signal}:{})});value=await response.json();}catch{throw fail(signal?.aborted?'ABORTED':'UNVERIFIED');}
+  if(signal?.aborted)throw fail('ABORTED');
+  if(current!==generation||sequence!==journeyFieldSessionReadSequence)throw fail('STALE_CONTEXT');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  if(response.redirected)throw fail('UNVERIFIED');
+  if(response.status!==200)throw fail('REJECTED');
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(!exact(data,['schemaVersion','installationId','expiresAt','render'])||data.schemaVersion!==2||data.installationId!==installationId||data.expiresAt!==expiresAt)throw fail('UNVERIFIED');
+  const read=PaidJourneyCustomerFieldRender.safeParse(data.render);if(!read.success||JSON.stringify(read.data)!==pinned)throw fail('UNVERIFIED');
+  return Object.freeze({schemaVersion:2 as const,installationId,expiresAt,render:immutableDetailing(read.data) as PaidJourneyCustomerFieldRender});
+ }
+ function paidJourneyCustomerFieldSessionState():PaidJourneyCustomerFieldSessionState{
+  if(journeyFieldSessionAttempt)return Object.freeze(journeyFieldSessionAttempt.generation===generation&&journeyFieldSessionAttempt.phase==='issuing'?{phase:'issuing',installationId:journeyFieldSessionAttempt.installationId}:{phase:'unknown'});
+  const issued=journeyFieldSessionIssued;
+  return issued&&issued.generation===generation&&Date.parse(issued.expiresAt)>Date.now()?Object.freeze({phase:'issued',installationId:issued.installationId,expiresAt:issued.expiresAt}):Object.freeze({phase:'ready'});
  }
  let journeyFieldPublicReadSequence=0;
  /** Immutable V9 presentation only; never creates a customer session or settles a writer. */
@@ -1610,7 +1682,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
+  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,issuePaidJourneyCustomerFieldSession,readPaidJourneyCustomerFieldSession,paidJourneyCustomerFieldSessionState,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   publishPaidJourneyCustomerFieldDraft,readPaidJourneyCustomerFieldOwnerPublication,paidJourneyCustomerFieldPublicationState,savePaidJourneyCustomerFieldDraft,loadPaidJourneyCustomerFieldDraft,paidJourneyCustomerFieldDraftState,savePaidJourneyDraft,loadPaidJourneyDraft,
