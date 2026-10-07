@@ -1,3 +1,5 @@
+export interface PaidJourneyCustomerFieldSessionProjection {readonly schemaVersion:2;readonly installationId:string;readonly expiresAt:string;readonly render:PaidJourneyCustomerFieldRender}
+export class PaidJourneyCustomerFieldSessionReadError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyAvailability {readonly schemaVersion:1;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
 export interface PaidJourneyAvailabilityWindow {readonly from:string;readonly to:string}
 export class PaidJourneyAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
@@ -765,6 +767,36 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!Number.isFinite(expiry)||expiry<=now||expiry>now+15*60000+1000||date.getUTCFullYear()!==parts[0]||date.getUTCMonth()+1!==parts[1]||date.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59||!render.success)throw unknown();
   const receipt=Object.freeze({schemaVersion:2 as const,installationId,sessionToken:data.sessionToken,expiresAt:data.expiresAt,render:immutableDetailing(render.data) as PaidJourneyCustomerFieldRender});
   journeyFieldSessionAttempt=undefined;journeyFieldSessionIssued={generation,installationId,expiresAt:data.expiresAt};return receipt;
+ }
+ let journeyFieldSessionReadSequence=0;
+ /** Reads one private V9 capability without settling issuance or changing any writer fence. */
+ async function readPaidJourneyCustomerFieldSession(session:PaidJourneyCustomerFieldSession,options:{origin:string;signal?:AbortSignal}):Promise<PaidJourneyCustomerFieldSessionProjection>{
+  const fail=(code:PaidJourneyCustomerFieldSessionReadError['code'])=>new PaidJourneyCustomerFieldSessionReadError(code,'The V9 customer session could not be verified. No writer was retried or reconciled.');
+  const ownData=(value:unknown,required:string[],optional:string[]=[])=>{
+   if(!value||typeof value!=='object'||Array.isArray(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+   const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(value);
+   return required.every(key=>Object.hasOwn(descriptors,key))&&keys.every(key=>typeof key==='string'&&[...required,...optional].includes(key))&&Object.values(descriptors).every(d=>d.enumerable&&Object.hasOwn(d,'value'));
+  };
+  if(!bookingApiOrigin||!ownData(session,['schemaVersion','installationId','sessionToken','expiresAt','render'])||!ownData(options,['origin'],['signal']))throw fail('INVALID_REQUEST');
+  const {schemaVersion,installationId,sessionToken,expiresAt,render:inputRender}=session,{origin,signal}=options;
+  if(schemaVersion!==2||!uuid(installationId)||installationId!==installationId.toLowerCase()||typeof sessionToken!=='string'||!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(sessionToken)||typeof origin!=='string'||origin.length>2048||!httpsOrigin(origin)||signal!==undefined&&!(signal instanceof AbortSignal))throw fail('INVALID_REQUEST');
+  if(signal?.aborted)throw fail('ABORTED');
+  if(typeof expiresAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(expiresAt))throw fail('INVALID_REQUEST');
+  const expiry=Date.parse(expiresAt),parts=expiresAt.slice(0,19).split(/[-T:]/).map(Number),date=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!));
+  if(!Number.isFinite(expiry)||expiry>Date.now()+901000||date.getUTCFullYear()!==parts[0]||date.getUTCMonth()+1!==parts[1]||date.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59)throw fail('INVALID_REQUEST');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  const parsed=PaidJourneyCustomerFieldRender.safeParse(inputRender);if(!parsed.success)throw fail('INVALID_REQUEST');
+  const pinned=JSON.stringify(parsed.data),current=generation,sequence=++journeyFieldSessionReadSequence;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/public/paid-journey-customer-field-flow-sessions/render',{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Origin:origin,Authorization:`Bearer ${sessionToken}`},...(signal?{signal}:{})});value=await response.json();}catch{throw fail(signal?.aborted?'ABORTED':'UNVERIFIED');}
+  if(signal?.aborted)throw fail('ABORTED');
+  if(current!==generation||sequence!==journeyFieldSessionReadSequence)throw fail('STALE_CONTEXT');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  if(response.redirected)throw fail('UNVERIFIED');
+  if(response.status!==200)throw fail('REJECTED');
+  const data=exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(!exact(data,['schemaVersion','installationId','expiresAt','render'])||data.schemaVersion!==2||data.installationId!==installationId||data.expiresAt!==expiresAt)throw fail('UNVERIFIED');
+  const read=PaidJourneyCustomerFieldRender.safeParse(data.render);if(!read.success||JSON.stringify(read.data)!==pinned)throw fail('UNVERIFIED');
+  return Object.freeze({schemaVersion:2 as const,installationId,expiresAt,render:immutableDetailing(read.data) as PaidJourneyCustomerFieldRender});
  }
  function paidJourneyCustomerFieldSessionState():PaidJourneyCustomerFieldSessionState{
   if(journeyFieldSessionAttempt)return Object.freeze(journeyFieldSessionAttempt.generation===generation&&journeyFieldSessionAttempt.phase==='issuing'?{phase:'issuing',installationId:journeyFieldSessionAttempt.installationId}:{phase:'unknown'});
@@ -1650,7 +1682,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,issuePaidJourneyCustomerFieldSession,paidJourneyCustomerFieldSessionState,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
+  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,issuePaidJourneyCustomerFieldSession,readPaidJourneyCustomerFieldSession,paidJourneyCustomerFieldSessionState,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   publishPaidJourneyCustomerFieldDraft,readPaidJourneyCustomerFieldOwnerPublication,paidJourneyCustomerFieldPublicationState,savePaidJourneyCustomerFieldDraft,loadPaidJourneyCustomerFieldDraft,paidJourneyCustomerFieldDraftState,savePaidJourneyDraft,loadPaidJourneyDraft,
