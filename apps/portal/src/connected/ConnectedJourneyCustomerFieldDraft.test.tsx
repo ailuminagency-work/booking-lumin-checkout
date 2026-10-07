@@ -7,7 +7,7 @@ const profile={schemaVersion:1 as const,tenantId:tenant,businessType:'HOUSEKEEPI
 const form={name:'Stored questions',presentation:{accentColor:'#0e7490' as const,layout:'compact' as const},journey:{schemaVersion:1 as const,stages:(['service','options','schedule','information','review_payment','confirmation'] as const).map(kind=>({id:kind,kind,label:kind,enabled:kind!=='options'}))},customerFields:[{id:'custom_gate',kind:'text' as const,label:'Gate',required:false,maxLength:100}],fieldBindings:[{fieldId:'custom_gate',stageId:'information'}]};
 const draft:PaidJourneyCustomerFieldOwnerDraft={schemaVersion:2,tenantId:tenant,flowId:flow,serviceId:service,revision:2,form};
 const props={tenantId:tenant,role:'BUSINESS_OWNER',staging:true,services:[{id:service,tenant_id:tenant,name:'Cleaning',currency:'USD',duration_minutes:60,base_price:12500,active:true}],catalogLoading:false};
-afterEach(()=>{cleanup();sessionStorage.clear();});
+afterEach(()=>{cleanup();sessionStorage.clear();Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined});});
 function fixture(){let auth=1,state:PaidJourneyCustomerFieldDraftState={phase:'ready'},global=false;const client:JourneyCustomerFieldDraftClient={authContextRevision:()=>auth,simpleOfferLocked:()=>global||['saving','unverified'].includes(state.phase),businessProfile:vi.fn(async()=>({status:'initialized' as const,profile})),paidJourneyCustomerFieldDraftState:()=>state,loadPaidJourneyCustomerFieldDraft:vi.fn(async()=>{state={phase:'loaded',flowId:flow,revision:2,draft};return draft;}),savePaidJourneyCustomerFieldDraft:vi.fn(async(_tenant,id,input)=>{state={phase:'saved',flowId:id,revision:input.expectedRevision+1};return{schemaVersion:2 as const,tenantId:tenant,flowId:id,revision:input.expectedRevision+1};})};return {client,changeAuth:()=>auth++,setState:(value:PaidJourneyCustomerFieldDraftState)=>state=value,globalLock:()=>global=true};}
 async function open(){fireEvent.click(screen.getByRole('button',{name:'Check customer questions editor'}));await screen.findByRole('form',{name:'Save conditional journey draft'});}
 function edit(){fireEvent.change(screen.getByLabelText('Customer questions service'),{target:{value:service}});fireEvent.change(screen.getByLabelText('Customer questions form name'),{target:{value:'New questions'}});}
@@ -53,3 +53,40 @@ it.each([{allowedOrigins:[checkoutOrigin+' ']},{allowedOrigins:[checkoutOrigin,c
 
 it('maps strictly read V9 owner publication origins to the explicit read-only route',async()=>{const {client}=publicationFixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();expect(screen.queryByRole('link')).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));const link=await screen.findByRole('link',{name:'Open published form preview (staging) - '+checkoutOrigin});expect(link).toHaveAttribute('href',checkoutOrigin+'/checkout/journey-fields/flow/'+installation);expect(link).toHaveAttribute('rel','noopener noreferrer');expect(screen.getByText(/Scheduling, reservations, payments and confirmation are not connected/)).toBeVisible();expect(client.publishPaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();});
 it.each(['https://foreign.example/path','https://foreign.example?token=private','https://foreign.example#private'])('rejects non-origin installation redirects %s',async origin=>{const {client}=publicationFixture();client.readPaidJourneyCustomerFieldOwnerPublication=vi.fn(async()=>({...ownerPublication(),allowedOrigins:[origin]}));render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));await screen.findByText(/current publication could not be verified/);expect(screen.queryByRole('link')).toBeNull();});
+
+
+it('offers verified published URLs for explicit copying without publishing or copying editable origins',async()=>{
+ const {client}=publicationFixture();const secondOrigin='https://second.example.test';
+ client.readPaidJourneyCustomerFieldOwnerPublication=vi.fn(async()=>({...ownerPublication(),allowedOrigins:[checkoutOrigin,secondOrigin]}));
+ const write=vi.fn().mockResolvedValue(undefined);Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:write}});
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ expect(screen.queryByRole('button',{name:/Copy Published form URL/})).toBeNull();
+ fireEvent.change(screen.getByLabelText('Approved customer questions Checkout origins'),{target:{value:'https://unsaved.example.test'}});
+ fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));
+ const label='Published form URL (staging) - '+secondOrigin;
+ const field=await screen.findByLabelText(label);expect(field).toHaveAttribute('readonly');
+ expect(field).toHaveValue(secondOrigin+'/checkout/journey-fields/flow/'+installation);expect(write).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'Copy '+label}));await screen.findByText('Copied '+label+'.');
+ expect(write).toHaveBeenCalledExactlyOnceWith(secondOrigin+'/checkout/journey-fields/flow/'+installation);
+ expect(client.publishPaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
+it('keeps a selectable published URL when clipboard permission is denied without reflecting browser errors',async()=>{
+ const {client}=publicationFixture();const write=vi.fn().mockRejectedValue(Error('private clipboard detail'));
+ Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:write}});
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));
+ const label='Published form URL (staging) - '+checkoutOrigin;await screen.findByLabelText(label);
+ fireEvent.click(screen.getByRole('button',{name:'Copy '+label}));await screen.findByText('Could not copy '+label+'. Select and copy it manually.');
+ expect(screen.getByLabelText(label)).toHaveValue(checkoutOrigin+'/checkout/journey-fields/flow/'+installation);
+ expect(document.body.textContent).not.toContain('private clipboard detail');
+});
+it('removes published copy controls and ignores an outstanding copy after business selection changes',async()=>{
+ const {client}=publicationFixture();let finish!:()=>void;const write=vi.fn(()=>new Promise<void>(resolve=>{finish=resolve;}));
+ Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:write}});
+ const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));
+ const button=await screen.findByRole('button',{name:'Copy Published form URL (staging) - '+checkoutOrigin});fireEvent.click(button);
+ view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);
+ await waitFor(()=>expect(screen.queryByRole('button',{name:/Copy Published form URL/})).toBeNull());finish();
+ await waitFor(()=>expect(screen.queryByText(/^Copied Published form URL/)).toBeNull());expect(write).toHaveBeenCalledTimes(1);
+});
