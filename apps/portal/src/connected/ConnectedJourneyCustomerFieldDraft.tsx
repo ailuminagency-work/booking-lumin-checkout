@@ -58,6 +58,8 @@ function Editor({client,tenantId,role,staging,services,catalogLoading,auth,fence
  const view=snapshot.client===client&&snapshot.tenantId===tenantId&&snapshot.auth===auth?snapshot:initial();
  const publicationSupported=!!(client.publishPaidJourneyCustomerFieldDraft&&client.readPaidJourneyCustomerFieldOwnerPublication&&client.paidJourneyCustomerFieldPublicationState),publicationState=client.paidJourneyCustomerFieldPublicationState?.(tenantId);
  const state=client.paidJourneyCustomerFieldDraftState(tenantId),unknown=(!busy&&fences.has(tenantId))||state.phase==='unverified'||publicationState?.phase==='unknown';
+ const warnBeforeLeaving=view.dirty||unknown||fences.has(tenantId)||state.phase==='saving'||publicationState?.phase==='publishing';
+ useEffect(()=>{if(!warnBeforeLeaving)return;const listener=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};window.addEventListener('beforeunload',listener);return()=>window.removeEventListener('beforeunload',listener);},[warnBeforeLeaving]);
  const live=(at:number)=>at===epoch.current&&context.current.client===client&&context.current.tenantId===tenantId&&context.current.auth===auth&&context.current.role==='BUSINESS_OWNER'&&context.current.staging&&client.authContextRevision()===auth;
  const allowed=()=>staging&&role==='BUSINESS_OWNER'&&uuid(tenantId)&&!catalogLoading&&client.authContextRevision()===auth;
  const lockedNow=()=>{const latest=client.paidJourneyCustomerFieldDraftState(tenantId);return fences.has(tenantId)||['unverified','saving','loading'].includes(latest.phase)||client.simpleOfferLocked();};
