@@ -73,7 +73,7 @@ it('identifies only missing visible required fields with linked accessible feedb
  const access=screen.getByRole('textbox',{name:'Preview value: Access'});
  expect(access).not.toHaveAttribute('aria-invalid');expect(screen.queryByText('Enter a fictional value for this required preview field.')).toBeNull();
  fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(access).toHaveAttribute('aria-invalid','true');
- expect(access).toHaveAccessibleDescription('Required when visible - maximum 30 characters Enter a fictional value for this required preview field.');
+ expect(access).toHaveAccessibleDescription('Required when visible - maximum 30 characters Preview length: 0 of 30 allowed. Enter a fictional value for this required preview field.');
  expect(screen.queryByRole('textbox',{name:'Preview value: Notes'})).toBeNull();
  fireEvent.change(access,{target:{value:'Yes'}});expect(access).not.toHaveAttribute('aria-invalid');
  const notes=screen.getByRole('textbox',{name:'Preview value: Notes'});expect(notes).not.toHaveAttribute('aria-invalid');
@@ -144,4 +144,18 @@ it('does not move focus while locked or on reset/context replacement without a n
  const reset=screen.getByRole('button',{name:'Reset preview scenario'});reset.focus();fireEvent.click(reset);expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveFocus();
  view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled/>);const input=screen.getByRole('textbox',{name:'Preview value: Access'}),focus=vi.spyOn(input,'focus');fireEvent.click(check);expect(focus).not.toHaveBeenCalled();
  view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveFocus();fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(screen.getByRole('textbox',{name:'Preview value: Access'})).toHaveFocus();
+});
+
+
+it('shows exact local length allowance and limit feedback without accepting overlong input',()=>{
+ const definition=[{...fields[0]!,maxLength:3}];render(<ConnectedConditionalCustomerDraftPreview fields={definition} scopeKey="tenant" disabled={false}/>);const input=screen.getByRole('textbox',{name:'Preview value: Access'}),length=screen.getByText('Preview length: 0 of 3 allowed.');expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(length.id);
+ fireEvent.change(input,{target:{value:'abc'}});expect(length).toHaveTextContent('Preview length: 3 of 3 allowed. Limit reached.');fireEvent.change(input,{target:{value:'abcd'}});expect(input).toHaveValue('abc');expect(length).toHaveTextContent('Preview length: 3 of 3 allowed. Limit reached.');fireEvent.change(input,{target:{value:'a'}});expect(length).toHaveTextContent('Preview length: 1 of 3 allowed.');expect(length).not.toHaveTextContent('Limit reached');
+});
+it('uses the same UTF-16 allowance as validation and resets without echoing answer text in feedback',()=>{
+ render(<ConnectedConditionalCustomerDraftPreview fields={[{...fields[0]!,maxLength:4}]} scopeKey="tenant" disabled={false}/>);const input=screen.getByRole('textbox',{name:'Preview value: Access'});fireEvent.change(input,{target:{value:'\u{1F600}x'}});const length=screen.getByText('Preview length: 3 of 4 allowed.');expect(length.textContent).not.toContain('\u{1F600}');fireEvent.change(input,{target:{value:'\u{1F600}xy'}});expect(length).toHaveTextContent('Limit reached.');fireEvent.click(screen.getByRole('button',{name:'Reset preview scenario'}));expect(length).toHaveTextContent('Preview length: 0 of 4 allowed.');
+});
+it('clears hidden and replaced counts and keeps length feedback read-only while locked',()=>{
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Yes'}});fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Notes'}),{target:{value:'Secret'}});expect(screen.getByText('Preview length: 6 of 100 allowed.')).toBeVisible();
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'No'}});expect(screen.queryByText('Preview length: 6 of 100 allowed.')).toBeNull();fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Yes'}});expect(screen.getByText('Preview length: 0 of 100 allowed.')).toBeVisible();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled/>);fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Ignored'}});expect(screen.getByText('Preview length: 3 of 30 allowed.')).toBeVisible();view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);expect(screen.getByText('Preview length: 0 of 30 allowed.')).toBeVisible();expect(screen.queryByText('Preview length: 0 of 100 allowed.')).toBeNull();
 });
