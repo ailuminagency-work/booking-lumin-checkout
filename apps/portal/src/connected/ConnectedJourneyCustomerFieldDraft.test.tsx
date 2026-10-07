@@ -122,3 +122,28 @@ it('locks fictional V9 inputs during a pending save and removes them after a ten
  view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByRole('region',{name:'Conditional draft preview'})).toBeNull();
  finish({});await waitFor(()=>expect(screen.queryByText(/Saved conditional journey/)).toBeNull());
 });
+
+it('removes only an unused optional journey step after its field is explicitly moved, preserving the field in the save',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));
+ const remove=screen.getByRole('button',{name:'Remove informational_1 question step'});expect(remove).toBeDisabled();fireEvent.click(remove);expect(screen.getByLabelText('informational_1 question step label')).toBeVisible();
+ expect(screen.getByText("Move or remove this step's fields before removing the step.")).toBeVisible();
+ expect(screen.queryByRole('button',{name:'Remove information question step'})).toBeNull();expect(screen.queryByRole('button',{name:'Remove review_payment question step'})).toBeNull();
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Preserved access question'}});fireEvent.change(screen.getByLabelText('Field 1 step'),{target:{value:'information'}});
+ expect(remove).toBeEnabled();fireEvent.click(remove);expect(screen.queryByLabelText('informational_1 question step label')).toBeNull();expect(screen.getByLabelText('Field 1 label')).toHaveValue('Preserved access question');
+ expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 1/);
+ const saved=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2];expect(saved.form.journey.stages.map(stage=>stage.id)).toEqual(['service','options','schedule','information','review_payment','confirmation']);
+ expect(saved.form.customerFields).toHaveLength(1);expect(saved.form.customerFields[0]!.label).toBe('Preserved access question');expect(saved.form.fieldBindings).toEqual([{fieldId:'custom_field_1',stageId:'information'}]);
+});
+it('lets the owner remove a disabled empty step and add a replacement without stale field bindings',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));
+ fireEvent.click(screen.getByRole('button',{name:'Remove field 1'}));expect(screen.getByLabelText('Show Additional information 1 step')).not.toBeChecked();
+ fireEvent.click(screen.getByRole('button',{name:'Remove informational_1 question step'}));fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));
+ expect(screen.getByLabelText('Show Additional information 1 step')).toBeChecked();expect(screen.getByLabelText('Field 1 step')).toHaveValue('informational_1');
+ expect(screen.getByRole('button',{name:'Remove informational_1 question step'})).toBeDisabled();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
+it('does not remove an unused step during a pending or uncertain save',async()=>{
+ const {client}=fixture();let reject!:(error:unknown)=>void;vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockImplementation(()=>new Promise((_resolve,fail)=>{reject=fail;}));
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('button',{name:'Remove field 1'}));
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));const remove=screen.getByRole('button',{name:'Remove informational_1 question step'});expect(remove).toBeDisabled();fireEvent.click(remove);expect(screen.getByLabelText('informational_1 question step label')).toBeInTheDocument();
+ reject(Error('lost response'));await screen.findByText(/Save outcome is unverified. Do not repeat/);expect(remove).toBeDisabled();fireEvent.click(remove);expect(screen.getByLabelText('informational_1 question step label')).toBeInTheDocument();expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+});
