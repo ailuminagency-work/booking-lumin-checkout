@@ -1,6 +1,7 @@
 import {SavePaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldDraftReceipt,PaidJourneyCustomerFieldDraft,type PaidJourneyCustomerFieldDraftReader,type PaidJourneyCustomerFieldDraftWriter} from './paid-journey-customer-field-draft';
 import {PublishPaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldPublicationReceipt,PaidJourneyCustomerFieldOwnerPublication,type createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import type {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
+import {PaidJourneyCustomerFieldSessionResult,paidJourneyCustomerFieldSessionExpiryValid,type PaidJourneyCustomerFieldSessionIssuer} from './paid-journey-customer-field-session';
 import {PaidJourneyCustomerFieldRender} from '@lumin/workflow';
 import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
@@ -109,6 +110,7 @@ export interface FlowHttpOptions{
  paidJourneyCustomerFieldDraftSave?:PaidJourneyCustomerFieldDraftWriter;
  paidJourneyCustomerFieldPublication?:ReturnType<typeof createPaidJourneyCustomerFieldPublicationOperations>;
  paidJourneyCustomerFieldPublicRead?:ReturnType<typeof createPaidJourneyCustomerFieldPublicReader>;
+ paidJourneyCustomerFieldSessionIssue?:PaidJourneyCustomerFieldSessionIssuer;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
@@ -187,6 +189,19 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    const conditionalJourneySession=url.pathname.match(/^\/api\/public\/paid-journey-customer-field-installations\/([^/]+)\/sessions$/);
+    if(conditionalJourneySession){
+     if(!options.paidJourneyCustomerFieldSessionIssue)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+     if(req.url?.includes('?'))throw new FlowError('INVALID_REQUEST');
+     const installation=Uuid.parse(conditionalJourneySession[1]);
+     if(installation!==installation.toLowerCase())throw new FlowError('INVALID_REQUEST');
+     z.object({}).strict().parse(await jsonBody(req));
+     const sessionToken=randomBytes(32).toString('base64url');
+     const result=PaidJourneyCustomerFieldSessionResult.safeParse(await options.paidJourneyCustomerFieldSessionIssue(installation,tokenHash(sessionToken),origin));
+     if(!result.success||result.data.installationId!==installation||!paidJourneyCustomerFieldSessionExpiryValid(result.data,now()))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:{...result.data,sessionToken}});return;
+    }
     const conditionalJourneyRender=url.pathname.match(/^\/api\/public\/paid-journey-customer-field-installations\/([^/]+)\/render$/);
     if(conditionalJourneyRender){
      if(!options.paidJourneyCustomerFieldPublicRead)throw new FlowError('UNSUPPORTED_CONFIG');
