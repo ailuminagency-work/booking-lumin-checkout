@@ -1,8 +1,9 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
+import {ConnectedJourneyCustomerFieldDraft,type JourneyCustomerFieldDraftClient} from './ConnectedJourneyCustomerFieldDraft';
 import {BusinessProfile} from '@lumin/contracts';
 import {PaidJourney,PaidJourneyRender} from '@lumin/workflow';
 import {PAID_SIMPLE_ACCENT_COLORS,PaidJourneyDraftError,PublicationError,type PaidJourneyPublicationReceipt,type PaidJourneyOwnerPublication,type PaidJourneyVersionHistory,type PaidJourneyRollbackReceipt,type PaidJourneyOwnerDraft,type PaidJourneyDraftInput,type RuntimeClient,type ServiceRow} from '@lumin/runtime-client';
-export type JourneyDraftClient=Pick<RuntimeClient,'businessProfile'|'savePaidJourneyDraft'|'loadPaidJourneyDraft'|'paidJourneyDraftState'|'simpleOfferLocked'>&Partial<Pick<RuntimeClient,'authContextRevision'|'publishPaidJourneyDraft'|'readPaidJourneyRender'|'readPaidJourneyOwnerPublication'|'paidJourneyPublicationState'|'paidJourneyVersionHistory'|'rollbackPaidJourney'|'paidJourneyRollbackState'>>;
+export type JourneyDraftClient=Pick<RuntimeClient,'businessProfile'|'savePaidJourneyDraft'|'loadPaidJourneyDraft'|'paidJourneyDraftState'|'simpleOfferLocked'>&Partial<Pick<RuntimeClient,'authContextRevision'|'savePaidJourneyCustomerFieldDraft'|'loadPaidJourneyCustomerFieldDraft'|'paidJourneyCustomerFieldDraftState'|'publishPaidJourneyDraft'|'readPaidJourneyRender'|'readPaidJourneyOwnerPublication'|'paidJourneyPublicationState'|'paidJourneyVersionHistory'|'rollbackPaidJourney'|'paidJourneyRollbackState'>>;
 type Props={client:JourneyDraftClient;tenantId:string;role?:string;staging:boolean;services:ServiceRow[];catalogLoading:boolean};
 const primary=['service','options','schedule','information','review_payment','confirmation'] as const;
 const labels=['Service','Options','Schedule','Customer information','Review & payment','Confirmation'];
@@ -14,7 +15,15 @@ function remember(tenantId:string,flowId:string){const url=new URL(window.locati
 const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 const fields=(draft:PaidJourneyOwnerDraft):PaidJourneyDraftInput=>({schemaVersion:1,expectedRevision:draft.revision,serviceId:draft.serviceId,name:draft.name,presentation:{...draft.presentation},journey:copy(draft.journey) as PaidJourney});
 /** Authoring only. Existing publishers retain their separate, versioned authority. */
-export function ConnectedPaidJourneyDraft(props:Props){const auth=props.client.authContextRevision?.()??0;return <Editor key={props.tenantId+':'+auth} {...props} auth={auth}/>;}
+export function ConnectedPaidJourneyDraft(props:Props){
+ const clients=useRef(new Set<JourneyDraftClient>());clients.current.add(props.client);
+ let priorWriteLocked=false;
+ for(const client of clients.current){if(client===props.client)continue;try{if(client.simpleOfferLocked())priorWriteLocked=true;else clients.current.delete(client);}catch{priorWriteLocked=true;}}
+ const auth=props.client.authContextRevision?.()??0;
+ if(priorWriteLocked)return <p role="alert">An earlier Booking Form write is pending or unverified. Changing the connected account cannot unlock another editor.</p>;
+ const fieldClient=typeof props.client.authContextRevision==='function'&&typeof props.client.savePaidJourneyCustomerFieldDraft==='function'&&typeof props.client.loadPaidJourneyCustomerFieldDraft==='function'&&typeof props.client.paidJourneyCustomerFieldDraftState==='function'?props.client as JourneyCustomerFieldDraftClient:undefined;
+ return <>{fieldClient&&<ConnectedJourneyCustomerFieldDraft {...props} client={fieldClient}/>}<Editor key={props.tenantId+':'+auth} {...props} auth={auth}/></>;
+}
 function Editor({client,tenantId,role,staging,services,catalogLoading,auth}:Props&{auth:number}){
  const initial=()=>({client,tenantId,auth,verified:false,flowId:locator(tenantId),input:blank(),baseline:undefined as PaidJourneyOwnerDraft|undefined,dirty:false,notice:'',error:''});
  const [snapshot,setSnapshot]=useState(initial),[busy,setBusy]=useState(false),[reloadReview,setReloadReview]=useState(false),[changeReview,setChangeReview]=useState<string|undefined>(),[viewport,setViewport]=useState<'Mobile'|'Tablet'|'Desktop'>('Mobile'),[rollbackFence,setRollbackFence]=useState(false),[publicationEpoch,setPublicationEpoch]=useState(0);
