@@ -223,3 +223,26 @@ it('blocks step duplication at the stage limit and while an otherwise valid save
  const duplicate=screen.getByRole('button',{name:'Duplicate informational_1 question step'});expect(duplicate).toBeDisabled();fireEvent.click(screen.getByRole('button',{name:'Remove informational_10 question step'}));expect(duplicate).toBeEnabled();fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));expect(duplicate).toBeDisabled();fireEvent.click(duplicate);expect(screen.queryByLabelText('informational_10 question step label')).toBeNull();
  finish({});await screen.findByText(/Save outcome is unverified. Do not repeat/);expect(duplicate).toBeDisabled();
 });
+
+function departureWarning(){const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}
+it('warns before page departure for unsaved draft edits and clears the warning after deliberate discard or unmount',async()=>{
+ const {client}=fixture();const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);expect(departureWarning()).toBe(false);await open();await load();expect(departureWarning()).toBe(false);
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Unsaved question'}});expect(departureWarning()).toBe(true);expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'Discard customer questions edits'}));expect(departureWarning()).toBe(true);fireEvent.click(screen.getByRole('button',{name:'Discard edits and restore saved questions'}));expect(departureWarning()).toBe(false);
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'More edits'}});expect(departureWarning()).toBe(true);view.unmount();expect(departureWarning()).toBe(false);
+});
+it('retains the departure warning during save and releases it only after a verified save receipt',async()=>{
+ const {client}=fixture();let finish!:()=>void;vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockImplementation((_tenant,id,input)=>new Promise(resolve=>{finish=()=>resolve({schemaVersion:2,tenantId:tenant,flowId:id,revision:input.expectedRevision+1});}));
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Saved question'}});fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));expect(departureWarning()).toBe(true);
+ finish();await screen.findByText(/Saved conditional journey revision 3/);expect(departureWarning()).toBe(false);expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+});
+it('warns for pending and unknown publication of a clean draft without retrying on page departure',async()=>{
+ const {client}=publicationFixture();let reject!:(error:unknown)=>void;vi.mocked(client.publishPaidJourneyCustomerFieldDraft!).mockImplementation(()=>new Promise((_resolve,fail)=>{reject=fail;}));
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();await reviewPublication();expect(departureWarning()).toBe(false);fireEvent.click(screen.getByRole('button',{name:'Confirm customer questions publication'}));expect(departureWarning()).toBe(true);
+ reject(Error('lost response'));await screen.findByText(/Publication outcome is unverified/);expect(departureWarning()).toBe(true);expect(client.publishPaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+});
+it('does not warn for fictional preview edits or clean history reads and drops old-tenant draft warning',async()=>{
+ const {client}=publicationFixture();const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Gate'}),{target:{value:'Fictional'}});expect(departureWarning()).toBe(false);
+ fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));await screen.findByRole('region',{name:'Immutable customer questions publication'});expect(departureWarning()).toBe(false);
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Old tenant edit'}});expect(departureWarning()).toBe(true);view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(departureWarning()).toBe(false);
+});
