@@ -2,6 +2,7 @@ import {createPaidJourneyCustomerFieldDraftOperations} from './paid-journey-cust
 import {createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
 import {createPaidJourneyCustomerFieldSessionIssuer} from './paid-journey-customer-field-session';
+import {createPaidJourneyCustomerFieldSessionReader} from './paid-journey-customer-field-session-read';
 import {createPaidJourneyMockPaymentWriter} from './paid-journey-payment';
 import {createPaidJourneyHistoryRollback} from './paid-journey-history-rollback';
 import {createPaidJourneyAvailabilityReader} from './paid-journey-availability';
@@ -152,7 +153,7 @@ function main(): void {
 
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
-    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyCustomerFieldPublication:createPaidJourneyCustomerFieldPublicationOperations(pool,{configuredCustomerOrigins:customerOrigins}),paidJourneyCustomerFieldPublicRead:createPaidJourneyCustomerFieldPublicReader(pool,customerOrigins),paidJourneyCustomerFieldSessionIssue:createPaidJourneyCustomerFieldSessionIssuer(pool,customerOrigins)}:{}),
+    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyCustomerFieldPublication:createPaidJourneyCustomerFieldPublicationOperations(pool,{configuredCustomerOrigins:customerOrigins}),paidJourneyCustomerFieldPublicRead:createPaidJourneyCustomerFieldPublicReader(pool,customerOrigins),paidJourneyCustomerFieldSessionIssue:createPaidJourneyCustomerFieldSessionIssuer(pool,customerOrigins),paidJourneyCustomerFieldSessionRead:createPaidJourneyCustomerFieldSessionReader(pool,{configuredCustomerOrigins:customerOrigins})}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'?{paidJourneyDrafts:true,...(()=>{const operations=createPaidJourneyCustomerFieldDraftOperations(pool);return{paidJourneyCustomerFieldDraftRead:operations.read,paidJourneyCustomerFieldDraftSave:operations.save};})()}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true,...(()=>{const operations=createPaidJourneyHistoryRollback(pool,customerOrigins);return{paidJourneyHistory:operations.history,paidJourneyRollback:operations.rollback};})()}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool),paidJourneyHold:createPaidJourneyHoldWriter(pool),paidJourneyHoldRead:createPaidJourneyHoldReader(pool),...(mockPaymentsEnabled(process.env)?{paidJourneyMockPayment:createPaidJourneyMockPaymentWriter(pool,process.env)}:{})}:{}),

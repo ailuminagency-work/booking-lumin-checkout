@@ -899,3 +899,14 @@ jobs:
           export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_LOCAL_TEST=1
           export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-customer-field-session.integration.ts
+          createdb lumin_journey_fields_session_read_ci
+          export PGDATABASE=lumin_journey_fields_session_read_ci
+          actual_session_read_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_session_read_fixture" == "$expected_server_host|5432|lumin_journey_fields_session_read_ci|postgres" ]] || { echo 'Disposable session reader fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_session_read.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_READ_LOCAL_TEST=1
+          node --import tsx apps/api/src/paid-journey-customer-field-session-read.integration.ts
