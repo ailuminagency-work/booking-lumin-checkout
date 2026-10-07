@@ -351,3 +351,18 @@ it('updates source field numbers after reorder without retargeting the condition
  expect(within(screen.getByLabelText('Field 1 show when')).getAllByRole('option')).toHaveLength(1);expect(within(screen.getByLabelText('Field 2 show when')).getAllByRole('option')).toHaveLength(2);
  fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Updated source'}});expect(within(source).getByRole('option',{name:'Field 1: Updated source'})).toHaveValue('custom_field_1');expect(source).toHaveValue('custom_field_1');expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
 });
+
+
+it('distinguishes same-label information steps and saves the explicitly selected binding',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('button',{name:'Duplicate informational_1 question step'}));
+ const choices=screen.getByLabelText('Field 2 step');expect(within(choices).getByRole('option',{name:'Step 5: Additional information 1'})).toHaveValue('informational_1');expect(within(choices).getByRole('option',{name:'Step 6: Additional information 1'})).toHaveValue('informational_2');expect(within(choices).getAllByRole('option')).toHaveLength(3);
+ fireEvent.change(choices,{target:{value:'informational_2'}});expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();fireEvent.click(screen.getAllByRole('checkbox',{name:'Show Additional information 1 step'})[0]!);
+ expect(within(choices).queryByRole('option',{name:'Step 5: Additional information 1'})).toBeNull();expect(choices).toHaveValue('informational_2');fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 3/);
+ const saved=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2];expect(saved.form.fieldBindings[1]).toEqual({fieldId:'custom_field_1',stageId:'informational_2'});expect(saved.form.journey.stages.find(stage=>stage.id==='informational_1')?.enabled).toBe(false);
+});
+it('updates step choice ordinals after reorder while preserving each field binding and excluding core action steps',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('button',{name:'Duplicate informational_1 question step'}));fireEvent.click(screen.getByRole('button',{name:'Move informational_2 question step earlier'}));
+ const choices=screen.getByLabelText('Field 2 step');expect(choices).toHaveValue('informational_2');expect(within(choices).getByRole('option',{name:'Step 5: Additional information 1'})).toHaveValue('informational_2');expect(within(choices).getByRole('option',{name:'Step 6: Additional information 1'})).toHaveValue('informational_1');
+ fireEvent.change(screen.getByLabelText('informational_2 question step label'),{target:{value:'Arrival details'}});expect(within(choices).getByRole('option',{name:'Step 5: Arrival details'})).toHaveValue('informational_2');expect(choices).toHaveValue('informational_2');
+ expect(within(choices).getAllByRole('option').map(option=>(option as HTMLOptionElement).value)).toEqual(['information','informational_2','informational_1']);expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
