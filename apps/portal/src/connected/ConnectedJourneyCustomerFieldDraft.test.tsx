@@ -379,3 +379,20 @@ it('clears blank-condition guidance after explicit Always shown selection and re
  fireEvent.change(screen.getByLabelText('Field 2 condition value'),{target:{value:'Yes'}});expect(screen.queryByText('Enter a non-blank exact match value or choose Always shown.')).toBeNull();expect(screen.getByText(/This condition is longer/)).toBeVisible();
  fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:''}});expect(screen.queryByText(/This condition is longer/)).toBeNull();expect(screen.queryByLabelText('Field 2 condition value')).toBeNull();expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeEnabled();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
 });
+
+
+it('identifies every direct dependent before removal and enables removal only after explicit condition changes',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:'custom_gate'}});fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_gate'}});
+ const remove=screen.getByRole('button',{name:'Remove field 1'}),advice=screen.getByText(/Before removing this question/);expect(advice).toHaveTextContent('Field 2: Additional information 1; Field 3: Additional information 2');expect(remove).toHaveAttribute('aria-describedby',advice.id);expect(remove).toBeDisabled();fireEvent.click(remove);expect(screen.getByLabelText('Field 1 label')).toHaveValue('Gate');
+ fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_field_1'}});expect(screen.getAllByText(/Before removing this question/)[0]).toHaveTextContent('Field 2: Additional information 1.');expect(remove).toBeDisabled();
+ fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:''}});expect(remove).toBeEnabled();expect(remove).not.toHaveAttribute('aria-describedby');fireEvent.click(remove);
+ expect(screen.getByLabelText('Field 1 label')).toHaveValue('Additional information 1');expect(screen.getByLabelText('Field 2 show when')).toHaveValue('custom_field_1');expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
+it('keeps dependency advice aligned with duplicate labels, current field numbers and context',async()=>{
+ const {client}=fixture();const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:'custom_gate'}});fireEvent.click(screen.getByRole('button',{name:'Duplicate field 2'}));
+ expect(screen.getByText(/Before removing this question/)).toHaveTextContent('Field 2: Additional information 1; Field 3: Additional information 1');
+ fireEvent.change(screen.getByLabelText('Field 3 label'),{target:{value:'<b>Later question</b>'}});expect(screen.getByText(/Before removing this question/)).toHaveTextContent('Field 3: <b>Later question</b>');expect(screen.getByText(/Before removing this question/).querySelector('b')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Move field 3 earlier'}));expect(screen.getByText(/Before removing this question/)).toHaveTextContent('Field 2: <b>Later question</b>; Field 3: Additional information 1');
+ view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByText(/Before removing this question/)).toBeNull();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
