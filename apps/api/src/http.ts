@@ -7,6 +7,7 @@ import {PaidJourneyCustomerFieldAvailabilityQuery,PaidJourneyCustomerFieldAvaila
 import {PaidJourneyCustomerFieldRender} from '@lumin/workflow';
 import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
+import {PaidJourneyCustomerFieldHoldInput,PaidJourneyCustomerFieldHoldReceipt,type PaidJourneyCustomerFieldHoldWriter} from './paid-journey-customer-field-hold';
 import type {PaidJourneyHoldReader} from './paid-journey-hold-read';
 import {PaidJourneyHoldInput,PaidJourneyHoldReceipt,type PaidJourneyHoldWriter} from './paid-journey-hold';
 import {PaidJourneyAvailabilityQuery,PaidJourneyAvailabilityReceipt,type PaidJourneyAvailabilityReader} from './paid-journey-availability';
@@ -115,6 +116,7 @@ export interface FlowHttpOptions{
  paidJourneyCustomerFieldSessionIssue?:PaidJourneyCustomerFieldSessionIssuer;
  paidJourneyCustomerFieldSessionRead?:PaidJourneyCustomerFieldSessionReader;
  paidJourneyCustomerFieldAvailability?:PaidJourneyCustomerFieldAvailabilityReader;
+ paidJourneyCustomerFieldHold?:PaidJourneyCustomerFieldHoldWriter;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
@@ -193,6 +195,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==='/api/public/paid-journey-customer-field-flow-sessions/hold'){
+     if(!options.paidJourneyCustomerFieldHold)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+     if(req.url?.includes('?'))throw new FlowError('INVALID_REQUEST');
+     const token=bearer(req);
+     if(!/^[A-Za-z0-9_-]{43}$/.test(token)||Buffer.from(token,'base64url').length!==32||Buffer.from(token,'base64url').toString('base64url')!==token)throw new FlowError('UNAUTHENTICATED');
+     const input=PaidJourneyCustomerFieldHoldInput.parse(await jsonBody(req));
+     const result=PaidJourneyCustomerFieldHoldReceipt.safeParse(await options.paidJourneyCustomerFieldHold(tokenHash(token),origin,input));
+     if(!result.success||result.data.slot.start!==input.requestedStart||Date.parse(result.data.slot.end)-Date.parse(result.data.slot.start)>1440*60000||Date.parse(result.data.expiresAt)<=now()||Date.parse(result.data.expiresAt)>now()+301000)throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:result.data});return;
+    }
     if(url.pathname==='/api/public/paid-journey-customer-field-flow-sessions/availability'){
      if(!options.paidJourneyCustomerFieldAvailability)throw new FlowError('UNSUPPORTED_CONFIG');
      if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');

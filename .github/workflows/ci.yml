@@ -922,3 +922,19 @@ jobs:
           export PAID_JOURNEY_CUSTOMER_FIELD_AVAILABILITY_LOCAL_TEST=1
           export PAID_JOURNEY_CUSTOMER_FIELD_AVAILABILITY_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-customer-field-availability.integration.ts
+
+      - name: Conditional customer-field hold authority, replay, capacity and legacy payment exclusion
+        run: |
+          expected_server_host="$(psql -X -v ON_ERROR_STOP=1 -Atc 'select host(inet_server_addr())')"
+          createdb lumin_journey_fields_hold_ci
+          export PGDATABASE=lumin_journey_fields_hold_ci
+          actual_fields_hold_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fields_hold_fixture" == "$expected_server_host|5432|lumin_journey_fields_hold_ci|postgres" ]] || { echo 'Disposable conditional hold fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_hold.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_HOLD_LOCAL_TEST=1
+          export PAID_JOURNEY_CUSTOMER_FIELD_HOLD_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-hold.integration.ts
