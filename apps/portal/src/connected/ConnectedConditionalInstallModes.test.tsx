@@ -14,7 +14,7 @@ it('renders only immutable V6 staging inline and launcher snippets without reque
   expect(box).toHaveValue(`<script src="https://booking-lumin-checkout-staging.netlify.app/booking-lumin-staging.js" data-installation="${id}" data-mode="${mode}"></script>`);
  }
  expect(document.querySelector('script')).toBeNull();
- expect(screen.getAllByRole('button')).toHaveLength(4);
+ expect(screen.getAllByRole('button',{name:/^Copy /})).toHaveLength(4);expect(screen.getAllByRole('button',{name:/^Select /})).toHaveLength(4);expect(screen.getAllByRole('button')).toHaveLength(8);
  expect(screen.queryByRole('link')).toBeNull();
  expect(screen.getByText(/Merchant website domains are not enabled/)).toBeTruthy();
  expect(screen.getByText(/Snippets alone do not certify browser loading/)).toBeTruthy();

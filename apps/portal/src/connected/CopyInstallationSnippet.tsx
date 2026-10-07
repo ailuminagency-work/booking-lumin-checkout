@@ -10,8 +10,8 @@ export function CopyInstallationSnippet(props:Props){
 }
 
 function CopySelection({label,value,rows}:Props){
- const mounted=useRef(false),busy=useRef(false);
- const [phase,setPhase]=useState<'idle'|'copying'|'copied'|'unavailable'|'denied'>('idle');
+ const mounted=useRef(false),busy=useRef(false),field=useRef<HTMLInputElement|HTMLTextAreaElement|null>(null);
+ const [phase,setPhase]=useState<'idle'|'copying'|'copied'|'unavailable'|'denied'|'selected'|'selection-unavailable'>('idle');
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
  const valid=value.length>0&&value.length<=8192;
  async function copy(){
@@ -28,10 +28,14 @@ function CopySelection({label,value,rows}:Props){
   }catch{if(mounted.current)setPhase('denied');}
   finally{busy.current=false;}
  }
+ function selectText(){if(busy.current||!valid||!field.current)return;try{field.current.focus();field.current.select();setPhase(field.current.selectionStart===0&&field.current.selectionEnd===value.length?'selected':'selection-unavailable');}catch{setPhase('selection-unavailable');}}
  return <div style={{minWidth:0}}>
-  <label>{label}{rows===undefined?<input readOnly value={valid?value:''} style={fieldStyle}/>:<textarea readOnly rows={rows} value={valid?value:''} style={fieldStyle}/>}</label>
+  <label>{label}{rows===undefined?<input ref={node=>{field.current=node;}} readOnly value={valid?value:''} style={fieldStyle}/>:<textarea ref={node=>{field.current=node;}} readOnly rows={rows} value={valid?value:''} style={fieldStyle}/>}</label>
   <button type="button" disabled={!valid||phase==='copying'} onClick={()=>void copy()} aria-label={`Copy ${label}`}>{phase==='copying'?'Copying...':'Copy'}</button>
+  <button type="button" disabled={!valid||phase==='copying'} onClick={selectText} aria-label={`Select ${label}`}>Select text</button>
   {!valid&&<p role="status">This installation snippet is unavailable.</p>}
+  {phase==='selected'&&<p role="status">Selected {label}. Use your device copy command to copy it.</p>}
+  {phase==='selection-unavailable'&&<p role="status">Could not select {label}. Select the text manually to copy it.</p>}
   {phase==='copied'&&<p role="status">Copied {label}.</p>}
   {phase==='copying'&&<p role="status">Copying {label}...</p>}
   {phase==='unavailable'&&<p role="status">Clipboard is unavailable. Select and copy {label} manually.</p>}
