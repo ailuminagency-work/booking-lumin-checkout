@@ -3,6 +3,7 @@ import {PublishPaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldPublication
 import type {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
 import {PaidJourneyCustomerFieldSessionResult,paidJourneyCustomerFieldSessionExpiryValid,type PaidJourneyCustomerFieldSessionIssuer} from './paid-journey-customer-field-session';
 import {PaidJourneyCustomerFieldSessionContext,type PaidJourneyCustomerFieldSessionReader} from './paid-journey-customer-field-session-read';
+import {PaidJourneyCustomerFieldAvailabilityQuery,PaidJourneyCustomerFieldAvailabilityReceipt,type PaidJourneyCustomerFieldAvailabilityReader} from './paid-journey-customer-field-availability';
 import {PaidJourneyCustomerFieldRender} from '@lumin/workflow';
 import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
@@ -113,6 +114,7 @@ export interface FlowHttpOptions{
  paidJourneyCustomerFieldPublicRead?:ReturnType<typeof createPaidJourneyCustomerFieldPublicReader>;
  paidJourneyCustomerFieldSessionIssue?:PaidJourneyCustomerFieldSessionIssuer;
  paidJourneyCustomerFieldSessionRead?:PaidJourneyCustomerFieldSessionReader;
+ paidJourneyCustomerFieldAvailability?:PaidJourneyCustomerFieldAvailabilityReader;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
@@ -191,6 +193,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const owner=async()=>{if(!options.authenticateOwner)throw new FlowError("UNAUTHENTICATED");let id:unknown;try{id=await options.authenticateOwner(bearer(req));}catch{throw new FlowError("UNAUTHENTICATED");}if(!Uuid.safeParse(id).success)throw new FlowError("UNAUTHENTICATED");return id as string;};
    const call=async(name:FlowRpc,params:readonly unknown[])=>{const value=await options.repository.call(name,params);try{return RpcResults[name].parse(value);}catch{throw new FlowError("INTERNAL_ERROR");}};
    if(customer){
+    if(url.pathname==='/api/public/paid-journey-customer-field-flow-sessions/availability'){
+     if(!options.paidJourneyCustomerFieldAvailability)throw new FlowError('UNSUPPORTED_CONFIG');
+     if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+     if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||[...url.searchParams.keys()].some(key=>key!=='from'&&key!=='to')||url.searchParams.getAll('from').length!==1||url.searchParams.getAll('to').length!==1)throw new FlowError('INVALID_REQUEST');
+     const query=PaidJourneyCustomerFieldAvailabilityQuery.parse({from:url.searchParams.get('from'),to:url.searchParams.get('to')});
+     const token=bearer(req);
+     if(!/^[A-Za-z0-9_-]{43}$/.test(token)||Buffer.from(token,'base64url').length!==32||Buffer.from(token,'base64url').toString('base64url')!==token)throw new FlowError('UNAUTHENTICATED');
+     const result=PaidJourneyCustomerFieldAvailabilityReceipt.safeParse(await options.paidJourneyCustomerFieldAvailability(tokenHash(token),origin,query));
+     if(!result.success||result.data.slots.some(slot=>Date.parse(slot.start)<Date.parse(query.from)||Date.parse(slot.end)>Date.parse(query.to)))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:result.data});return;
+    }
     if(url.pathname==='/api/public/paid-journey-customer-field-flow-sessions/render'){
      if(!options.paidJourneyCustomerFieldSessionRead)throw new FlowError('UNSUPPORTED_CONFIG');
      if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
