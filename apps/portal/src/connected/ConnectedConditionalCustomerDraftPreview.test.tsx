@@ -121,3 +121,27 @@ it('omits the rule guide when there are no conditional questions or the definiti
  view.rerender(<ConnectedConditionalCustomerDraftPreview fields={[{...fields[1]!,when:{fieldId:'custom_missing',equals:'private-rule'}}]} scopeKey="tenant" disabled={false}/>);
  expect(screen.getByRole('alert')).toBeVisible();expect(screen.queryByText('View conditional question rules')).toBeNull();expect(document.body.textContent).not.toContain('private-rule');
 });
+
+
+it('focuses the first missing visible required field only after an explicit incomplete check',()=>{
+ render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ const access=screen.getByRole('textbox',{name:'Preview value: Access'}),check=screen.getByRole('button',{name:'Check preview answers'});
+ check.focus();expect(check).toHaveFocus();fireEvent.click(check);expect(access).toHaveFocus();expect(access).toHaveAttribute('aria-invalid','true');
+ fireEvent.change(access,{target:{value:'Yes'}});const notes=screen.getByRole('textbox',{name:'Preview value: Notes'});check.focus();fireEvent.click(check);expect(notes).toHaveFocus();
+ fireEvent.change(notes,{target:{value:'   '}});check.focus();fireEvent.click(check);expect(notes).toHaveFocus();
+ fireEvent.change(notes,{target:{value:'More'}});check.focus();fireEvent.click(check);expect(check).toHaveFocus();expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass');
+});
+it('skips optional and hidden questions and selects the first missing field in definition order',()=>{
+ const ordered=[{...fields[0]!,required:false},fields[1]!,{id:'custom_first',kind:'text' as const,label:'First required',required:true,maxLength:20},{id:'custom_second',kind:'text' as const,label:'Second required',required:true,maxLength:20}];
+ render(<ConnectedConditionalCustomerDraftPreview fields={ordered} scopeKey="tenant" disabled={false}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(screen.getByRole('textbox',{name:'Preview value: First required'})).toHaveFocus();
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: First required'}),{target:{value:'Filled'}});fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(screen.getByRole('textbox',{name:'Preview value: Second required'})).toHaveFocus();
+ expect(screen.queryByRole('textbox',{name:'Preview value: Notes'})).toBeNull();
+});
+it('does not move focus while locked or on reset/context replacement without a new check',()=>{
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ const check=screen.getByRole('button',{name:'Check preview answers'});fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Yes'}});
+ const reset=screen.getByRole('button',{name:'Reset preview scenario'});reset.focus();fireEvent.click(reset);expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveFocus();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled/>);const input=screen.getByRole('textbox',{name:'Preview value: Access'}),focus=vi.spyOn(input,'focus');fireEvent.click(check);expect(focus).not.toHaveBeenCalled();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveFocus();fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(screen.getByRole('textbox',{name:'Preview value: Access'})).toHaveFocus();
+});
