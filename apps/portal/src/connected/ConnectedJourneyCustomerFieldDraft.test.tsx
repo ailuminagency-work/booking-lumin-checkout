@@ -90,3 +90,35 @@ it('removes published copy controls and ignores an outstanding copy after busine
  await waitFor(()=>expect(screen.queryByRole('button',{name:/Copy Published form URL/})).toBeNull());finish();
  await waitFor(()=>expect(screen.queryByText(/^Copied Published form URL/)).toBeNull());expect(write).toHaveBeenCalledTimes(1);
 });
+
+
+it('previews V9 conditional branches locally without saving fictional answers or changing the draft',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();
+ fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:'custom_field_1'}});fireEvent.change(screen.getByLabelText('Field 2 condition value'),{target:{value:'yes'}});
+ expect(screen.queryByRole('textbox',{name:'Preview value: Additional information 2'})).toBeNull();
+ const source=screen.getByRole('textbox',{name:'Preview value: Additional information 1'});
+ fireEvent.change(source,{target:{value:'yes'}});expect(screen.getByRole('textbox',{name:'Preview value: Additional information 2'})).toBeVisible();
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Additional information 2'}),{target:{value:'Fictional branch value'}});
+ expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();expect(JSON.stringify(sessionStorage)).not.toContain('Fictional');
+ fireEvent.click(screen.getByRole('button',{name:'Reset preview scenario'}));expect(source).toHaveValue('');expect(screen.queryByRole('textbox',{name:'Preview value: Additional information 2'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 1/);
+ const saved=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2];expect(JSON.stringify(saved)).not.toContain('Fictional');expect(saved.form.customerFields[1]!.when).toEqual({fieldId:'custom_field_1',equals:'yes'});
+});
+it('resets the V9 scenario when journey definitions change and suppresses it for invalid step bindings',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Additional information 1'}),{target:{value:'Fictional'}});
+ fireEvent.change(screen.getByLabelText('Customer questions form name'),{target:{value:'Updated draft name'}});
+ expect(screen.getByRole('textbox',{name:'Preview value: Additional information 1'})).toHaveValue('');
+ fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));
+ fireEvent.change(screen.getByLabelText('Field 1 step'),{target:{value:'informational_1'}});fireEvent.change(screen.getByLabelText('Field 2 step'),{target:{value:'information'}});
+ expect(screen.queryByRole('region',{name:'Conditional draft preview'})).toBeNull();expect(screen.getByText(/Fix the draft fields and journey step bindings/)).toBeVisible();
+});
+it('locks fictional V9 inputs during a pending save and removes them after a tenant change',async()=>{
+ const {client}=fixture();let finish!:(value:unknown)=>void;vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockImplementation(()=>new Promise(resolve=>{finish=resolve as (value:unknown)=>void;}));
+ const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Additional information 1'}),{target:{value:'Fictional'}});fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));
+ expect(screen.getByRole('textbox',{name:'Preview value: Additional information 1'})).toBeDisabled();expect(screen.getByRole('button',{name:'Reset preview scenario'})).toBeDisabled();
+ view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByRole('region',{name:'Conditional draft preview'})).toBeNull();
+ finish({});await waitFor(()=>expect(screen.queryByText(/Saved conditional journey/)).toBeNull());
+});
