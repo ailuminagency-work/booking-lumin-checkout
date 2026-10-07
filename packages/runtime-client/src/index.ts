@@ -591,6 +591,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
  /** A fresh issuance may create another nonfinancial session. Never retry automatically. */
  async function issuePaidJourneySession(installationId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyCustomerSession>{
+  if(journeyFieldSessionAttempt)throw new PaidJourneySessionError('not_sent','Resolve the retained V9 session issuance before starting another customer session.');
   if(!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal)))throw new PaidJourneySessionError('not_sent','Use only an optional cancellation signal; session authority comes from the server.');
   if(!bookingApiOrigin||!uuid(installationId)||options.signal?.aborted)throw new PaidJourneySessionError('not_sent','Choose a valid V8 installation and configured API before starting a session.');
   if(journeyPaymentAttempt||journeyHoldRecoveryPending||(journeyHoldAttempt&&journeyHoldAttempt.phase!=='held'))throw new PaidJourneySessionError('not_sent','Resolve the retained reservation attempt before opening a different session.');
