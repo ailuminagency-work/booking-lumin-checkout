@@ -246,3 +246,31 @@ it('does not warn for fictional preview edits or clean history reads and drops o
  fireEvent.click(screen.getByRole('button',{name:'Read current customer questions publication'}));await screen.findByRole('region',{name:'Immutable customer questions publication'});expect(departureWarning()).toBe(false);
  fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Old tenant edit'}});expect(departureWarning()).toBe(true);view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(departureWarning()).toBe(false);
 });
+
+
+it('copies only a verified saved locator, never local form content or an unverified typed ID',async()=>{
+ const {client}=fixture(),write=vi.fn().mockResolvedValue(undefined);Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:write}});
+ render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();
+ fireEvent.change(screen.getByLabelText('Customer questions draft ID'),{target:{value:flow}});
+ expect(screen.queryByRole('button',{name:'Copy Saved customer questions draft ID'})).toBeNull();
+ await load();fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Private unsaved question'}});
+ fireEvent.click(screen.getByRole('button',{name:'Copy Saved customer questions draft ID'}));await screen.findByText('Copied Saved customer questions draft ID.');
+ expect(write).toHaveBeenCalledExactlyOnceWith(flow);expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+ expect(screen.getByText(/It is not a customer form link and does not grant access/)).toBeVisible();
+});
+it('offers the new locator only after a verified save and supports manual clipboard fallback',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();
+ expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 1/);
+ const id=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![1];expect(screen.getByLabelText('Saved customer questions draft ID')).toHaveValue(id);
+ fireEvent.click(screen.getByRole('button',{name:'Copy Saved customer questions draft ID'}));await screen.findByText('Clipboard is unavailable. Select and copy Saved customer questions draft ID manually.');
+ expect(client.savePaidJourneyCustomerFieldDraft).toHaveBeenCalledTimes(1);
+});
+it('hides locator copying for pending and unknown saves and clears it on business change',async()=>{
+ const {client}=fixture();let reject!:(e:Error)=>void;vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockImplementation(()=>new Promise((_yes,no)=>{reject=no;}));
+ const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Changed'}});fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));
+ expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();reject(Error('private response'));
+ await screen.findByText('Save outcome is unverified. Do not repeat or replace this write.');expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();
+ view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();
+});
