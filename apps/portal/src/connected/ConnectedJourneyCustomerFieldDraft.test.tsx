@@ -1,4 +1,4 @@
-import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
+import {render,screen,fireEvent,waitFor,cleanup,within} from '@testing-library/react';
 import {afterEach,expect,it,vi} from 'vitest';
 import {createRuntimeClient,PaidJourneyDraftError,type PaidJourneyCustomerFieldDraftState,type PaidJourneyCustomerFieldOwnerDraft} from '@lumin/runtime-client';
 import {ConnectedJourneyCustomerFieldDraft,type JourneyCustomerFieldDraftClient} from './ConnectedJourneyCustomerFieldDraft';
@@ -336,4 +336,18 @@ it('preserves an empty edited value on source switch but starts a new default af
  const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
  fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_gate'}});expect(screen.getByLabelText('Field 3 condition value')).toHaveValue('yes');fireEvent.change(screen.getByLabelText('Field 3 condition value'),{target:{value:''}});fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_field_1'}});expect(screen.getByLabelText('Field 3 condition value')).toHaveValue('');expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeDisabled();
  fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:''}});expect(screen.queryByLabelText('Field 3 condition value')).toBeNull();fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_gate'}});expect(screen.getByLabelText('Field 3 condition value')).toHaveValue('yes');expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
+
+
+it('distinguishes duplicate source labels by current field number while saving the selected stable ID',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Duplicate field 1'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ const source=screen.getByLabelText('Field 3 show when');expect(within(source).getByRole('option',{name:'Field 1: Gate'})).toHaveValue('custom_gate');expect(within(source).getByRole('option',{name:'Field 2: Gate'})).toHaveValue('custom_field_1');
+ expect(within(source).getAllByRole('option')).toHaveLength(3);fireEvent.change(source,{target:{value:'custom_field_1'}});fireEvent.change(screen.getByLabelText('Field 3 condition value'),{target:{value:'Exact choice'}});
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 3/);expect(vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2].form.customerFields[2]!.when).toEqual({fieldId:'custom_field_1',equals:'Exact choice'});
+});
+it('updates source field numbers after reorder without retargeting the condition or exposing later fields',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Duplicate field 1'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_field_1'}});
+ fireEvent.click(screen.getByRole('button',{name:'Move field 2 earlier'}));const source=screen.getByLabelText('Field 3 show when');expect(source).toHaveValue('custom_field_1');expect(within(source).getByRole('option',{name:'Field 1: Gate'})).toHaveValue('custom_field_1');expect(within(source).getByRole('option',{name:'Field 2: Gate'})).toHaveValue('custom_gate');
+ expect(within(screen.getByLabelText('Field 1 show when')).getAllByRole('option')).toHaveLength(1);expect(within(screen.getByLabelText('Field 2 show when')).getAllByRole('option')).toHaveLength(2);
+ fireEvent.change(screen.getByLabelText('Field 1 label'),{target:{value:'Updated source'}});expect(within(source).getByRole('option',{name:'Field 1: Updated source'})).toHaveValue('custom_field_1');expect(source).toHaveValue('custom_field_1');expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
 });
