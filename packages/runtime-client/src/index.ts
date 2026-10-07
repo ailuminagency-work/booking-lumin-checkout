@@ -1,6 +1,7 @@
 export interface PaidJourneyAvailability {readonly schemaVersion:1;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
 export interface PaidJourneyAvailabilityWindow {readonly from:string;readonly to:string}
 export class PaidJourneyAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
+export class PaidJourneyCustomerFieldRenderError extends Error {constructor(readonly code:'INVALID_REQUEST'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyOwnerPublication {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number;readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly allowedOrigins:readonly string[];readonly render:PaidJourneyRender}
 export interface PaidJourneyCustomerSession {readonly schemaVersion:1;readonly sessionToken:string;readonly expiresAt:string;readonly render:PaidJourneyRender}
 export interface PaidJourneyHoldInput {readonly schemaVersion:1;readonly idempotencyKey:string;readonly requestedStart:string;readonly customer:Readonly<{name:string;email:string}>;readonly answers:Readonly<Record<string,never>>}
@@ -729,6 +730,28 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   const parsed=PaidJourneyRender.safeParse(data.render);
   if(!parsed.success||parsed.data.versionId!==data.versionId)throw new PublicationError('not_sent','The immutable published journey does not match its receipt. No writer was reconciled.');
   return Object.freeze({schemaVersion:1,tenantId:tenant,flowId:flow,draftRevision:data.draftRevision as number,versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:8,allowedOrigins:Object.freeze([...data.allowedOrigins]) as readonly string[],render:parsed.data});
+ }
+ let journeyFieldPublicReadSequence=0;
+ /** Immutable V9 presentation only; never creates a customer session or settles a writer. */
+ async function loadPaidJourneyCustomerFieldRender(installationId:string,options:{origin:string;signal?:AbortSignal}):Promise<PaidJourneyCustomerFieldRender>{
+  const invalid=()=>new PaidJourneyCustomerFieldRenderError('INVALID_REQUEST','Choose a canonical V9 installation and exact approved Checkout origin.');
+  if(!bookingApiOrigin||!uuid(installationId)||installationId!==installationId.toLowerCase()||!options||typeof options!=='object'||![Object.prototype,null].includes(Object.getPrototypeOf(options)))throw invalid();
+  const descriptors=Object.getOwnPropertyDescriptors(options),names=Reflect.ownKeys(options);
+  if(names.some(name=>typeof name!=='string'||!['origin','signal'].includes(name))||!descriptors.origin||Object.values(descriptors).some(p=>!p.enumerable||!('value' in p)))throw invalid();
+  const origin=descriptors.origin.value,signal=descriptors.signal?.value;
+  if(!httpsOrigin(origin)||origin.length>2048||signal!==undefined&&!(signal instanceof AbortSignal))throw invalid();
+  if(signal?.aborted)throw new PaidJourneyCustomerFieldRenderError('ABORTED','Preview read was cancelled.');
+  const current=generation,sequence=++journeyFieldPublicReadSequence;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/public/paid-journey-customer-field-installations/'+installationId+'/render',{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Origin:origin},...(signal?{signal}:{})});value=await response.json();}
+  catch{throw new PaidJourneyCustomerFieldRenderError(signal?.aborted?'ABORTED':'UNVERIFIED','Preview could not be read. No writer was retried or reconciled.');}
+  if(signal?.aborted)throw new PaidJourneyCustomerFieldRenderError('ABORTED','Preview read was cancelled.');
+  if(current!==generation||sequence!==journeyFieldPublicReadSequence)throw new PaidJourneyCustomerFieldRenderError('STALE_CONTEXT','Preview belongs to an older request or account context.');
+  if(response.redirected)throw new PaidJourneyCustomerFieldRenderError('UNVERIFIED','Redirected preview cannot be verified.');
+  if(response.status!==200)throw new PaidJourneyCustomerFieldRenderError('REJECTED','Preview is unavailable in this context.');
+  if(!exact(value,['ok','data'])||value.ok!==true)throw new PaidJourneyCustomerFieldRenderError('UNVERIFIED','Preview response is incompatible.');
+  const parsed=PaidJourneyCustomerFieldRender.safeParse(value.data);
+  if(!parsed.success)throw new PaidJourneyCustomerFieldRenderError('UNVERIFIED','Immutable V9 preview is incompatible.');
+  return parsed.data;
  }
  async function readPaidJourneyRender(installationId:string):Promise<PaidJourneyRender>{
   if(!bookingApiOrigin||!uuid(installationId))throw new PublicationError('not_sent','Choose a valid V8 installation and configured API.');
@@ -1587,7 +1610,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
+  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   publishPaidJourneyCustomerFieldDraft,readPaidJourneyCustomerFieldOwnerPublication,paidJourneyCustomerFieldPublicationState,savePaidJourneyCustomerFieldDraft,loadPaidJourneyCustomerFieldDraft,paidJourneyCustomerFieldDraftState,savePaidJourneyDraft,loadPaidJourneyDraft,
