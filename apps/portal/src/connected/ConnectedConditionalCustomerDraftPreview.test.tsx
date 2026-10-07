@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {cleanup,fireEvent,render,screen} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import type {ConditionalCustomerTextField} from '@lumin/contracts';
 import {ConnectedConditionalCustomerDraftPreview} from './ConnectedConditionalCustomerDraftPreview';
 const fields:ConditionalCustomerTextField[]=[{id:'custom_access',kind:'text',label:'Access',required:true,maxLength:30},{id:'custom_notes',kind:'text',label:'Notes',required:true,maxLength:100,when:{fieldId:'custom_access',equals:'Yes'}},{id:'custom_more',kind:'text',label:'More',required:false,maxLength:50,when:{fieldId:'custom_notes',equals:'More'}}];
@@ -92,4 +92,32 @@ it('clears required-field feedback on reset, definition and tenant changes witho
  expect(screen.getByRole('textbox',{name:'Preview value: Changed access'})).not.toHaveAttribute('aria-invalid');
  fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);
  expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveAttribute('aria-invalid');expect(screen.queryByText('Enter a fictional value for this required preview field.')).toBeNull();
+});
+
+
+it('explains exact conditional rules and follows nested visibility without changing the scenario',()=>{
+ const before=structuredClone(fields);render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ fireEvent.click(screen.getByText('View conditional question rules'));
+ const notes=screen.getByRole('listitem',{name:'Rule for Notes'}),more=screen.getByRole('listitem',{name:'Rule for More'});
+ expect(notes).toHaveTextContent('Show Notes when Access is visible and exactly equals "Yes". Currently hidden.');
+ expect(more).toHaveTextContent('Show More when Notes is visible and exactly equals "More". Currently hidden.');
+ expect(screen.getByRole('textbox',{name:'Preview value: Access'})).toHaveValue('');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'yes'}});expect(notes).toHaveTextContent('Currently hidden.');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Yes'}});expect(notes).toHaveTextContent('Currently shown.');expect(more).toHaveTextContent('Currently hidden.');
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Notes'}),{target:{value:'More'}});expect(more).toHaveTextContent('Currently shown.');
+ fireEvent.click(screen.getByRole('button',{name:'Reset preview scenario'}));expect(notes).toHaveTextContent('Currently hidden.');expect(more).toHaveTextContent('Currently hidden.');expect(fields).toEqual(before);
+});
+it('renders configured rule text safely without showing fictional answer values and resets on context changes',()=>{
+ const special=[{...fields[0]!,maxLength:100},{...fields[1]!,label:'<img src=x>',when:{fieldId:'custom_access',equals:'<b> Yes </b>'}}];
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={special} scopeKey="tenant" disabled={false}/>);fireEvent.click(screen.getByText('View conditional question rules'));
+ const rules=screen.getByRole('list',{name:'Conditional preview rules'});expect(rules.textContent).toContain('"<b> Yes </b>"');expect(rules.querySelector('img,b')).toBeNull();
+ fireEvent.change(screen.getByRole('textbox',{name:'Preview value: Access'}),{target:{value:'Fictional private answer'}});expect(rules.textContent).not.toContain('Fictional private answer');
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled/>);fireEvent.click(screen.getByText('View conditional question rules'));
+ expect(screen.getByRole('list',{name:'Conditional preview rules'}).textContent).not.toContain('<b>');expect(screen.getByRole('textbox',{name:'Preview value: Access'})).toHaveValue('');
+ expect(within(screen.getByRole('list',{name:'Conditional preview rules'})).getAllByText('Currently hidden.')).toHaveLength(2);
+});
+it('omits the rule guide when there are no conditional questions or the definition is invalid',()=>{
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={[fields[0]!]} scopeKey="tenant" disabled={false}/>);expect(screen.queryByText('View conditional question rules')).toBeNull();
+ view.rerender(<ConnectedConditionalCustomerDraftPreview fields={[{...fields[1]!,when:{fieldId:'custom_missing',equals:'private-rule'}}]} scopeKey="tenant" disabled={false}/>);
+ expect(screen.getByRole('alert')).toBeVisible();expect(screen.queryByText('View conditional question rules')).toBeNull();expect(document.body.textContent).not.toContain('private-rule');
 });
