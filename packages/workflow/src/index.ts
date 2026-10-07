@@ -34,3 +34,4 @@ export * from './paidConditionalCustomerFieldPublication';
 export * from "./detailingPublication";
 export * from './paidJourney';
 export * from './paidJourneyPublication';
+export * from './paidJourneyCustomerFieldPublication';
