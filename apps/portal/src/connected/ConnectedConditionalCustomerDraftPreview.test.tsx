@@ -67,3 +67,29 @@ it.each([{definition:[]},{definition:[{...fields[0]!,required:false}]}])('accept
  render(<ConnectedConditionalCustomerDraftPreview fields={definition} scopeKey="tenant" disabled={false}/>);fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));
  expect(screen.getByRole('status')).toHaveTextContent('Visible preview answers pass');expect(sessionStorage.length).toBe(beforeSession);expect(localStorage.length).toBe(beforeLocal);expect(JSON.stringify(definition)).toBe(before);
 });
+
+it('identifies only missing visible required fields with linked accessible feedback after an explicit check',()=>{
+ render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ const access=screen.getByRole('textbox',{name:'Preview value: Access'});
+ expect(access).not.toHaveAttribute('aria-invalid');expect(screen.queryByText('Enter a fictional value for this required preview field.')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));expect(access).toHaveAttribute('aria-invalid','true');
+ expect(access).toHaveAccessibleDescription('Required when visible - maximum 30 characters Enter a fictional value for this required preview field.');
+ expect(screen.queryByRole('textbox',{name:'Preview value: Notes'})).toBeNull();
+ fireEvent.change(access,{target:{value:'Yes'}});expect(access).not.toHaveAttribute('aria-invalid');
+ const notes=screen.getByRole('textbox',{name:'Preview value: Notes'});expect(notes).not.toHaveAttribute('aria-invalid');
+ fireEvent.change(notes,{target:{value:'   '}});fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));
+ expect(access).not.toHaveAttribute('aria-invalid');expect(notes).toHaveAttribute('aria-invalid','true');expect(notes).toHaveAccessibleDescription(/Enter a fictional value/);
+ fireEvent.change(notes,{target:{value:'More'}});fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));
+ expect(notes).not.toHaveAttribute('aria-invalid');expect(screen.getByRole('textbox',{name:'Preview value: More'})).not.toHaveAttribute('aria-invalid');
+ expect(screen.queryByText('Enter a fictional value for this required preview field.')).toBeNull();
+});
+it('clears required-field feedback on reset, definition and tenant changes without changing fictional input on check',()=>{
+ const view=render(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="tenant" disabled={false}/>);
+ const access=screen.getByRole('textbox',{name:'Preview value: Access'});fireEvent.change(access,{target:{value:'   '}});fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));
+ expect(access).toHaveValue('   ');expect(access).toHaveAttribute('aria-invalid','true');
+ fireEvent.click(screen.getByRole('button',{name:'Reset preview scenario'}));expect(access).not.toHaveAttribute('aria-invalid');expect(access).toHaveValue('');
+ fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));view.rerender(<ConnectedConditionalCustomerDraftPreview fields={[{...fields[0]!,label:'Changed access'},...fields.slice(1)]} scopeKey="tenant" disabled={false}/>);
+ expect(screen.getByRole('textbox',{name:'Preview value: Changed access'})).not.toHaveAttribute('aria-invalid');
+ fireEvent.click(screen.getByRole('button',{name:'Check preview answers'}));view.rerender(<ConnectedConditionalCustomerDraftPreview fields={fields} scopeKey="other" disabled={false}/>);
+ expect(screen.getByRole('textbox',{name:'Preview value: Access'})).not.toHaveAttribute('aria-invalid');expect(screen.queryByText('Enter a fictional value for this required preview field.')).toBeNull();
+});
