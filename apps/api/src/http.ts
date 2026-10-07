@@ -1,4 +1,5 @@
 import {SavePaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldDraftReceipt,PaidJourneyCustomerFieldDraft,type PaidJourneyCustomerFieldDraftReader,type PaidJourneyCustomerFieldDraftWriter} from './paid-journey-customer-field-draft';
+import {PublishPaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldPublicationReceipt,PaidJourneyCustomerFieldOwnerPublication,type createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
 import type {PaidJourneyHoldReader} from './paid-journey-hold-read';
@@ -104,6 +105,7 @@ export interface FlowHttpOptions{
  paidJourneyDrafts?:boolean;
  paidJourneyCustomerFieldDraftRead?:PaidJourneyCustomerFieldDraftReader;
  paidJourneyCustomerFieldDraftSave?:PaidJourneyCustomerFieldDraftWriter;
+ paidJourneyCustomerFieldPublication?:ReturnType<typeof createPaidJourneyCustomerFieldPublicationOperations>;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
@@ -328,6 +330,24 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   const journeyFieldPublication=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/(publish|publication)$/);
+   if(journeyFieldPublication){
+    if(!options.paidJourneyDrafts||!options.paidJourneyCustomerFieldPublication)throw new FlowError('UNSUPPORTED_CONFIG');
+    const flow=Uuid.parse(journeyFieldPublication[1]).toLowerCase(),targetTenant=tenant.toLowerCase(),operations=options.paidJourneyCustomerFieldPublication;
+    if(journeyFieldPublication[2]==='publication'){
+     if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+     if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const data=PaidJourneyCustomerFieldOwnerPublication.safeParse(await operations.read(actor,targetTenant,flow));
+     if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow||data.data.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:data.data});return;
+    }
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const input=PublishPaidJourneyCustomerFieldDraft.parse(await jsonBody(req));
+    if(input.allowedOrigins.some(o=>!customerOrigins.includes(o)))throw new FlowError('FORBIDDEN');
+    const version=randomUUID(),installation=randomUUID(),data=PaidJourneyCustomerFieldPublicationReceipt.safeParse(await operations.publish(actor,targetTenant,flow,input,version,installation));
+    if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow||data.data.draftRevision!==input.expectedDraftRevision||!data.data.replayed&&(data.data.versionId!==version||data.data.installationId!==installation))throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:data.data});return;
+   }
    const journeyFieldDraft=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/draft$/);
    if(journeyFieldDraft){
     if(!options.paidJourneyDrafts||!options.paidJourneyCustomerFieldDraftRead||!options.paidJourneyCustomerFieldDraftSave)throw new FlowError('UNSUPPORTED_CONFIG');
