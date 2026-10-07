@@ -200,3 +200,26 @@ it('keeps step moves disabled for invalid definitions and pending or uncertain s
  fireEvent.change(screen.getByLabelText('Field 1 maximum length'),{target:{value:'100'}});expect(earlier).toBeEnabled();fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));expect(earlier).toBeDisabled();fireEvent.click(earlier);expect(screen.getByLabelText('Field 1 step')).toHaveValue('informational_1');
  finish({});await screen.findByText(/Save outcome is unverified. Do not repeat/);expect(earlier).toBeDisabled();
 });
+
+it('duplicates an optional step with fresh identities and remaps only its internal conditions',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('button',{name:'Add customer text field'}));
+ fireEvent.change(screen.getByLabelText('Field 2 show when'),{target:{value:'custom_field_1'}});fireEvent.change(screen.getByLabelText('Field 3 show when'),{target:{value:'custom_field_2'}});
+ fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.change(screen.getByLabelText('Field 4 show when'),{target:{value:'custom_field_3'}});
+ expect(screen.queryByRole('button',{name:'Duplicate information question step'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Duplicate informational_1 question step'}));
+ expect(screen.getByLabelText('Field 4 step')).toHaveValue('informational_3');expect(screen.getByLabelText('Field 4 show when')).toHaveValue('custom_field_1');expect(screen.getByLabelText('Field 5 show when')).toHaveValue('custom_field_5');expect(screen.getByLabelText('Field 6 show when')).toHaveValue('custom_field_3');
+ fireEvent.change(screen.getByLabelText('Field 5 condition value'),{target:{value:'copied'}});expect(screen.getByLabelText('Field 3 condition value')).toHaveValue('yes');expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 1/);const form=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2].form;
+ expect(form.journey.stages.filter(stage=>stage.kind==='informational').map(stage=>stage.id)).toEqual(['informational_1','informational_3','informational_2']);expect(form.customerFields.map(field=>field.id)).toEqual(['custom_field_1','custom_field_2','custom_field_3','custom_field_5','custom_field_6','custom_field_4']);
+ expect(form.fieldBindings.map(binding=>binding.stageId)).toEqual(['information','informational_1','informational_1','informational_3','informational_3','informational_2']);
+});
+it('bounds whole-step duplication by the total field count rather than the existing count alone',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();edit();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));for(let n=1;n<6;n++)fireEvent.click(screen.getByRole('button',{name:'Duplicate field 1'}));
+ const duplicate=screen.getByRole('button',{name:'Duplicate informational_1 question step'});expect(duplicate).toBeDisabled();fireEvent.click(duplicate);expect(screen.queryByLabelText('informational_2 question step label')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Remove field 6'}));expect(duplicate).toBeEnabled();fireEvent.click(duplicate);expect(screen.getAllByRole('button',{name:/^Duplicate field/})).toHaveLength(10);expect(duplicate).toBeDisabled();
+});
+it('blocks step duplication at the stage limit and while an otherwise valid save is pending',async()=>{
+ const {client}=fixture();client.loadPaidJourneyCustomerFieldDraft=vi.fn(async()=>({...draft,form:{...form,journey:{...form.journey,stages:[...form.journey.stages.slice(0,4),...Array.from({length:10},(_,n)=>({id:'informational_'+(n+1),kind:'informational' as const,label:'Extra '+(n+1),enabled:false})),...form.journey.stages.slice(4)]}}}));
+ let finish!:(value:unknown)=>void;vi.mocked(client.savePaidJourneyCustomerFieldDraft).mockImplementation(()=>new Promise(resolve=>{finish=resolve as (value:unknown)=>void;}));render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ const duplicate=screen.getByRole('button',{name:'Duplicate informational_1 question step'});expect(duplicate).toBeDisabled();fireEvent.click(screen.getByRole('button',{name:'Remove informational_10 question step'}));expect(duplicate).toBeEnabled();fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));expect(duplicate).toBeDisabled();fireEvent.click(duplicate);expect(screen.queryByLabelText('informational_10 question step label')).toBeNull();
+ finish({});await screen.findByText(/Save outcome is unverified. Do not repeat/);expect(duplicate).toBeDisabled();
+});
