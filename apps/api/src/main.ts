@@ -1,4 +1,5 @@
 import {createPaidJourneyMockPaymentWriter} from './paid-journey-payment';
+import {createPaidJourneyHistoryRollback} from './paid-journey-history-rollback';
 import {createPaidJourneyAvailabilityReader} from './paid-journey-availability';
 import {createPaidJourneyHoldWriter} from './paid-journey-hold';
 import {createPaidJourneyHoldReader} from './paid-journey-hold-read';
@@ -148,7 +149,7 @@ function main(): void {
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'?{paidJourneyDrafts:true}:{}),
-    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true}:{}),
+    ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true,...(()=>{const operations=createPaidJourneyHistoryRollback(pool,customerOrigins);return{paidJourneyHistory:operations.history,paidJourneyRollback:operations.rollback};})()}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool),paidJourneyHold:createPaidJourneyHoldWriter(pool),paidJourneyHoldRead:createPaidJourneyHoldReader(pool),...(mockPaymentsEnabled(process.env)?{paidJourneyMockPayment:createPaidJourneyMockPaymentWriter(pool,process.env)}:{})}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool),confirmationReceiptHistory:createConfirmationReceiptHistoryReader(pool)}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'?{bookingFormAnswers:createBookingFormAnswersReader(pool)}:{}),

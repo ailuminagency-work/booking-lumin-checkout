@@ -1,3 +1,4 @@
+import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
 import type {PaidJourneyHoldReader} from './paid-journey-hold-read';
 import {PaidJourneyHoldInput,PaidJourneyHoldReceipt,type PaidJourneyHoldWriter} from './paid-journey-hold';
@@ -97,6 +98,8 @@ export interface FlowHttpOptions{
  /** Explicit staging test-publication gate; owner identity remains required. */
  paidSimplePublication?:boolean;
  /** Versioned journey authoring only; off until a coherent release enables it. */
+ paidJourneyHistory?:PaidJourneyHistoryReader;
+ paidJourneyRollback?:PaidJourneyRollback;
  paidJourneyDrafts?:boolean;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
@@ -322,6 +325,25 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   const journeyHistory=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/versions$/);
+   if(journeyHistory){
+    if(!options.paidJourneyPublication||!options.paidJourneyHistory)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET')throw new FlowError('NOT_AVAILABLE');
+    if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    const flow=Uuid.parse(journeyHistory[1]).toLowerCase(),targetTenant=tenant.toLowerCase();
+    const data=PaidJourneyHistory.safeParse(await options.paidJourneyHistory(actor,targetTenant,flow));
+    if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:data.data});return;
+   }
+   const journeyRollback=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/rollback$/);
+   if(journeyRollback){
+    if(!options.paidJourneyPublication||!options.paidJourneyRollback)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const flow=Uuid.parse(journeyRollback[1]).toLowerCase(),targetTenant=tenant.toLowerCase(),body=PaidJourneyRollbackInput.parse(await jsonBody(req));
+    const data=PaidJourneyRollbackReceipt.safeParse(await options.paidJourneyRollback(actor,targetTenant,flow,body));
+    if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow||data.data.versionId!==body.targetVersionId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:data.data});return;
+   }
    const journeyOwnerPublication=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/publication$/);
    if(journeyOwnerPublication){
     if(!options.paidJourneyPublication)throw new FlowError('UNSUPPORTED_CONFIG');
