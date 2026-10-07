@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {type Server} from 'node:http';
+import {request,type Server} from 'node:http';
 import {createFlowHttpServer,tokenHash} from './http';
 import {FlowError} from './repository';
 const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',origin='https://checkout.example.test',token=Buffer.alloc(32,19).toString('base64url');
@@ -13,7 +13,7 @@ const post=(url:string,body:unknown=input,headers:Record<string,string>={})=>fet
 function untouched(f:Awaited<ReturnType<typeof fixture>>){expect(f.write).not.toHaveBeenCalled();expect(f.call).not.toHaveBeenCalled();expect(f.auth).not.toHaveBeenCalled();expect(f.legacyHold).not.toHaveBeenCalled();expect(f.legacyPay).not.toHaveBeenCalled();}
 describe('private conditional customer-field hold HTTP boundary',()=>{
  it.each([false,true])('hashes canonical bearer and projects only draft hold with replay=%s',async replayed=>{const f=await fixture({...receipt,replayed});const response=await post(f.url);expect(response.status).toBe(200);expect(await response.json()).toEqual({ok:true,data:{...receipt,replayed}});expect(f.write).toHaveBeenCalledExactlyOnceWith(tokenHash(token),origin,input);expect(response.headers.get('cache-control')).toBe('no-store');expect(response.headers.get('access-control-allow-origin')).toBe(origin);expect(f.call).not.toHaveBeenCalled();expect(f.auth).not.toHaveBeenCalled();expect(f.legacyHold).not.toHaveBeenCalled();expect(f.legacyPay).not.toHaveBeenCalled();});
- it.each(['?','?tenantId='+id,'?serviceId='+id,'?price=1','?from='+start])('rejects all query authority before writer %s',async query=>{const f=await fixture();expect((await post(f.url+query)).status).toBe(400);untouched(f);});
+ it.each(['?','?tenantId='+id,'?serviceId='+id,'?price=1','?from='+start])('rejects all query authority before writer %s',async query=>{const f=await fixture();const status=query==='?'?await new Promise<number|undefined>((resolve,reject)=>{const req=request(f.url,{method:'POST',path:new URL(f.url).pathname+'?',headers:{origin,authorization:'Bearer '+token,'content-type':'application/json'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end(JSON.stringify(input));}):(await post(f.url+query)).status;expect(status).toBe(400);untouched(f);});
  it.each(['','Bearer forged','Bearer '+token+'=','Bearer '+('A'.repeat(42)+'B'),'Basic '+token])('rejects missing or noncanonical bearer %s',async authorization=>{const f=await fixture();expect((await post(f.url,input,{authorization})).status).toBe(401);untouched(f);});
  it.each(['','null','*',origin+'/','https://foreign.example.test','https://portal.example.test'])('rejects unapproved browser origin %s',async candidate=>{const f=await fixture();expect((await post(f.url,input,{origin:candidate})).status).toBe(403);untouched(f);});
  it.each(['GET','PUT','DELETE','PATCH'])('rejects non-POST without fallback %s',async method=>{const f=await fixture();const response=await fetch(f.url,{method,headers:{origin,authorization:'Bearer '+token}});expect(response.status).toBe(404);untouched(f);});
