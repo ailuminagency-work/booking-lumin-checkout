@@ -21,6 +21,11 @@ export interface PaidJourneyDraftReceipt {readonly schemaVersion:1;readonly tena
 export interface PaidJourneyOwnerDraft extends PaidJourneyDraftReceipt {readonly serviceId:string;readonly name:string;readonly presentation:PaidSimplePresentation;readonly journey:PaidJourneySnapshot}
 export type PaidJourneyDraftState={phase:'ready'}|{phase:'saving'|'loading'|'unverified'|'conflict';flowId:string}|{phase:'saved';flowId:string;revision:number}|{phase:'loaded';flowId:string;revision:number;draft:PaidJourneyOwnerDraft};
 export class PaidJourneyDraftError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'conflict'|'unknown',message:string){super(message);}}
+export interface PaidJourneyVersionInstallation {readonly versionId:string;readonly installationId:string;readonly renderSchemaVersion:8;readonly hostedPath:string}
+export interface PaidJourneyVersionHistory {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly versions:readonly Readonly<{versionId:string;draftRevision:number;name:string;journey:PaidJourneySnapshot;presentation:PaidSimplePresentation;current:boolean;publication:PaidJourneyVersionInstallation|null}>[]}
+export interface PaidJourneyRollbackInput {readonly expectedCurrentVersionId:string;readonly targetVersionId:string}
+export interface PaidJourneyRollbackReceipt extends PaidJourneyVersionInstallation {readonly schemaVersion:1;readonly tenantId:string;readonly flowId:string;readonly draftRevision:number}
+export type PaidJourneyRollbackState=Readonly<{phase:'ready'}>|Readonly<{phase:'rolling_back'|'unknown';flowId:string;expectedCurrentVersionId:string;targetVersionId:string}>|Readonly<{phase:'verified';receipt:PaidJourneyRollbackReceipt}>;
 import {OwnerBookingFormAnswers} from '@lumin/contracts';
 export type {OwnerBookingFormAnswers} from '@lumin/contracts';
 export class BookingFormAnswersError extends Error {constructor(readonly code:'INVALID_REQUEST'|'UNAUTHENTICATED'|'FORBIDDEN'|'NOT_AVAILABLE'|'UNSUPPORTED_CONFIG'|'STALE_CONTEXT'|'ABORTED'|'UNVERIFIED',message:string){super(message);}}
@@ -168,7 +173,12 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const journeyPublications=new Map<string,{actor:string;state:Exclude<PaidJourneyPublicationState,{phase:'ready'}>}>();
  const journeyAttempts=new Map<string,{actor:string;flowId:string;expectedRevision:number}>();
  const journeyDrafts=new Map<string,{actor:string;state:Exclude<PaidJourneyDraftState,{phase:'ready'}>}>();
- const offerLocked=()=>journeyPublicationAttempts.size>0||offerOperationsLocked()||profileInitializationLocked()||journeyAttempts.size>0;
+ // No credential or financial state is retained in owner rollback identity.
+ const journeyRollbacks=new Map<string,{actor:string;flowId:string;generation:number;phase:'rolling_back'|'unknown'|'verified';expectedCurrentVersionId:string;targetVersionId:string;receipt?:PaidJourneyRollbackReceipt}>();
+ const journeyHistories=new Map<string,{actor:string;generation:number;history:PaidJourneyVersionHistory}>();
+ const journeyHistoryReads=new Set<string>();
+ const journeyRollbackLocked=()=>[...journeyRollbacks.values()].some(v=>v.phase!=='verified');
+ const offerLocked=()=>journeyRollbackLocked()||offerOperationsLocked()||profileInitializationLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0;
  const businessAttempts=new Map<string,{actor:string;body:string}>();
  const businessCreationLocked=()=>businessCreation.phase==='checking'||businessCreation.phase==='creating'||businessCreation.phase==='unknown';
  const publications=new Map<string,Exclude<PaidSimplePublicationState,{phase:'ready'}>>();
@@ -209,7 +219,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  const uncertainFieldDrafts=new Map<string,{flowId:string;input:PaidSimpleFieldDraftInput|PaidSimpleConditionalDraftInput}>();
  const ownerDrafts=new Map<string,Exclude<PaidSimpleDraftState,{phase:'ready'}>>();
  async function request(path:string, method='GET', body?:unknown, authenticated=false):Promise<unknown> {
-  if(method!=='GET'&&path!=='/auth/v1/token?grant_type=password'&&(journeyPublicationAttempts.size>0||journeyAttempts.size>0))return fail('Journey save status is pending or unverified. Do not replace this attempt with another writer.');
+  if(method!=='GET'&&path!=='/auth/v1/token?grant_type=password'&&(journeyRollbackLocked()||journeyPublicationAttempts.size>0||journeyAttempts.size>0))return fail('Journey save or rollback status is pending or unverified. Do not replace this attempt with another writer.');
   if(authenticated&&!token)return fail('Please sign in again.');
   const current=generation;
   let response:Response;
@@ -453,6 +463,60 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(currentCount!==1)throw new PublicationError('not_sent','Version history could not be validated.');
   // History is evidence only; an unknown writer remains locked.
   const result=Object.freeze({flowId,versions:Object.freeze(versions)});histories.set(tenantId+'|'+flowId,result);return result;
+ }
+ function journeyHistoryContext(tenantId:string,flowId:string,options:{signal?:AbortSignal}){
+  if(!token||!userId||!bookingApiOrigin||!uuid(tenantId)||!uuid(flowId)||!(exact(options,[])||exact(options,['signal']))||(options.signal!==undefined&&!(options.signal instanceof AbortSignal))||options.signal?.aborted)throw new PublicationError('not_sent','Sign in and choose a valid business and journey, with an optional cancellation signal.');
+  return {tenant:tenantId.toLowerCase(),flow:flowId.toLowerCase(),actor:userId.toLowerCase(),credential:token,current:generation,signal:options.signal};
+ }
+ function journeyInstallation(value:unknown,versionId:string):PaidJourneyVersionInstallation|undefined{
+  if(!exact(value,['versionId','installationId','renderSchemaVersion','hostedPath'])||value.versionId!==versionId||!uuid(value.installationId)||value.installationId!==value.installationId.toLowerCase()||value.renderSchemaVersion!==8||value.hostedPath!==`/checkout/flow/${value.installationId}`)return;
+  return Object.freeze({...value}) as unknown as PaidJourneyVersionInstallation;
+ }
+ function parseJourneyHistory(value:unknown,tenant:string,flow:string):PaidJourneyVersionHistory|undefined{
+  if(!exact(value,['schemaVersion','tenantId','flowId','versions'])||value.schemaVersion!==1||value.tenantId!==tenant||value.flowId!==flow||!Array.isArray(value.versions)||value.versions.length<1||value.versions.length>50)return;
+  const versions:PaidJourneyVersionHistory['versions'][number][]=[],seen=new Set<string>();let previous=Number.MAX_SAFE_INTEGER+1;
+  for(const v of value.versions){
+   if(!exact(v,['versionId','draftRevision','name','journey','presentation','current','publication'])||!uuid(v.versionId)||v.versionId!==v.versionId.toLowerCase()||seen.has(v.versionId)||!draftRevision(v.draftRevision)||v.draftRevision>=previous||typeof v.name!=='string'||v.name.length<1||v.name.length>200||!presentation(v.presentation)||typeof v.current!=='boolean')return;
+   const parsed=PaidJourney.safeParse(v.journey),installation=v.publication===null?null:journeyInstallation(v.publication,v.versionId);if(!parsed.success||installation===undefined)return;
+   versions.push({versionId:v.versionId,draftRevision:v.draftRevision as number,name:v.name,journey:parsed.data,presentation:{...v.presentation},current:v.current,publication:installation});seen.add(v.versionId);previous=v.draftRevision as number;
+  }
+  if(versions.filter(v=>v.current).length!==1)return;
+  return immutableDetailing({schemaVersion:1,tenantId:tenant,flowId:flow,versions});
+ }
+ /** Evidence only. A current pointer cannot establish settlement of an uncertain writer. */
+ async function paidJourneyVersionHistory(tenantId:string,flowId:string,options:{signal?:AbortSignal}={}):Promise<PaidJourneyVersionHistory>{
+  const {tenant,flow,actor,credential,current,signal}=journeyHistoryContext(tenantId,flowId,options),key=tenant+'|'+flow;
+  if(journeyHistoryReads.has(key))throw new PublicationError('not_sent','This journey history read is already pending.');journeyHistories.delete(key);journeyHistoryReads.add(key);
+  try{
+   let response:Response,value:unknown;try{response=await transport(bookingApiOrigin!+'/api/paid-journey-flows/'+flow+'/versions?tenantId='+encodeURIComponent(tenant),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`},...(signal?{signal}:{})});value=await response.json();}catch{throw new PublicationError('not_sent','Journey history could not be read. No rollback was retried or reconciled.');}
+   if(current!==generation||signal?.aborted||response.redirected)throw new PublicationError('not_sent','Journey history cannot be accepted after the context changed.');
+   const history=response.status===200&&exact(value,['ok','data'])&&value.ok===true?parseJourneyHistory(value.data,tenant,flow):undefined;if(!history)throw new PublicationError('not_sent','Journey history could not be verified. No rollback was reconciled.');
+   journeyHistories.set(key,{actor,generation:current,history});return history;
+  }finally{journeyHistoryReads.delete(key);}
+ }
+ function paidJourneyRollbackState(tenantId:string):PaidJourneyRollbackState{
+  if(!uuid(tenantId))return fail('Invalid business selection.');const attempt=journeyRollbacks.get(tenantId.toLowerCase());
+  if(!token||!userId||attempt?.actor!==userId.toLowerCase())return {phase:'ready'};
+  if(attempt.phase==='verified')return attempt.generation===generation&&attempt.receipt?immutableDetailing({phase:'verified',receipt:structuredClone(attempt.receipt)}):{phase:'ready'};
+  return Object.freeze({phase:attempt.generation===generation?attempt.phase:'unknown',flowId:attempt.flowId,expectedCurrentVersionId:attempt.expectedCurrentVersionId,targetVersionId:attempt.targetVersionId});
+ }
+ async function rollbackPaidJourney(tenantId:string,flowId:string,input:PaidJourneyRollbackInput,options:{signal?:AbortSignal}={}):Promise<PaidJourneyRollbackReceipt>{
+  const {tenant,flow,actor,credential,current,signal}=journeyHistoryContext(tenantId,flowId,options);
+  journeyAuthority(tenant,flow);
+  if(!exact(input,['expectedCurrentVersionId','targetVersionId'])||!uuid(input.expectedCurrentVersionId)||!uuid(input.targetVersionId)||input.expectedCurrentVersionId===input.targetVersionId)throw new PublicationError('not_sent','Choose a different known version and the current version for an explicit rollback.');
+  const expected=input.expectedCurrentVersionId.toLowerCase(),target=input.targetVersionId.toLowerCase(),cached=journeyHistories.get(tenant+'|'+flow),history=cached?.actor===actor&&cached.generation===current?cached.history:undefined;
+  const selected=history?.versions.find(v=>v.versionId===target),active=history?.versions.find(v=>v.current);
+  if(active?.versionId!==expected||!selected||selected.current||!selected.publication||journeyHistoryReads.has(tenant+'|'+flow))throw new PublicationError('not_sent','Read this journey history in the current session and choose an available prior installation.');
+  const attempt={actor,flowId:flow,generation:current,phase:'rolling_back' as 'rolling_back'|'unknown'|'verified',expectedCurrentVersionId:expected,targetVersionId:target,receipt:undefined as PaidJourneyRollbackReceipt|undefined};journeyRollbacks.set(tenant,attempt);journeyHistories.delete(tenant+'|'+flow);
+  try{
+   let response:Response,value:unknown;try{response=await transport(bookingApiOrigin!+'/api/paid-journey-flows/'+flow+'/rollback?tenantId='+encodeURIComponent(tenant),{method:'POST',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Authorization:`Bearer ${credential}`,'Content-Type':'application/json'},body:JSON.stringify({expectedCurrentVersionId:expected,targetVersionId:target}),...(signal?{signal}:{})});value=await response.json();}catch{throw new PublicationError('unknown','Rollback may have committed. Do not retry or replace this write.');}
+   if(current!==generation||signal?.aborted||response.redirected||journeyRollbacks.get(tenant)!==attempt)throw new PublicationError('unknown','Rollback cannot be verified after the context changed. Do not repeat it.');
+   const codes:Record<string,number>={INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,RATE_LIMITED:429};
+   if(exact(value,['ok','code'])&&value.ok===false&&typeof value.code==='string'&&Object.hasOwn(codes,value.code)&&response.status===codes[value.code]){journeyRollbacks.delete(tenant);if(value.code==='UNAUTHENTICATED')signOut();throw new PublicationError('rejected','Rollback was rejected. Read current history before another explicit action.');}
+   const data=response.status===200&&exact(value,['ok','data'])&&value.ok===true?value.data:undefined;
+   if(!exact(data,['schemaVersion','tenantId','flowId','draftRevision','versionId','installationId','renderSchemaVersion','hostedPath'])||data.schemaVersion!==1||data.tenantId!==tenant||data.flowId!==flow||data.draftRevision!==selected.draftRevision||data.versionId!==target||!journeyInstallation({versionId:data.versionId,installationId:data.installationId,renderSchemaVersion:data.renderSchemaVersion,hostedPath:data.hostedPath},target)||data.installationId!==selected.publication.installationId)throw new PublicationError('unknown','Rollback receipt could not be verified. Do not repeat or replace this write.');
+   const receipt=immutableDetailing({...data}) as unknown as PaidJourneyRollbackReceipt;attempt.phase='verified';attempt.receipt=receipt;journeyPublications.delete(tenant);return receipt;
+  }catch(error){if(journeyRollbacks.get(tenant)===attempt)attempt.phase='unknown';throw error;}
  }
  function journeyAuthority(tenantId:string,flowId:string){
   if(!token||!userId||!bookingApiOrigin)throw new PaidJourneyDraftError('not_sent','Sign in with the configured journey draft service.');
@@ -1410,7 +1474,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
+  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   savePaidJourneyDraft,loadPaidJourneyDraft,
