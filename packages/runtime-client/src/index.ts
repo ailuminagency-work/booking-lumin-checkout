@@ -1,3 +1,5 @@
+export interface PaidJourneyCustomerFieldAvailability {readonly schemaVersion:2;readonly installationId:string;readonly versionId:string;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
+export class PaidJourneyCustomerFieldAvailabilityError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyCustomerFieldSessionProjection {readonly schemaVersion:2;readonly installationId:string;readonly expiresAt:string;readonly render:PaidJourneyCustomerFieldRender}
 export class PaidJourneyCustomerFieldSessionReadError extends Error {constructor(readonly code:'INVALID_REQUEST'|'EXPIRED'|'ABORTED'|'STALE_CONTEXT'|'REJECTED'|'UNVERIFIED',message:string){super(message);}}
 export interface PaidJourneyAvailability {readonly schemaVersion:1;readonly serviceId:string;readonly durationMinutes:number;readonly slots:readonly Readonly<{start:string;end:string;remainingCapacity:number}>[]}
@@ -797,6 +799,39 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   if(!exact(data,['schemaVersion','installationId','expiresAt','render'])||data.schemaVersion!==2||data.installationId!==installationId||data.expiresAt!==expiresAt)throw fail('UNVERIFIED');
   const read=PaidJourneyCustomerFieldRender.safeParse(data.render);if(!read.success||JSON.stringify(read.data)!==pinned)throw fail('UNVERIFIED');
   return Object.freeze({schemaVersion:2 as const,installationId,expiresAt,render:immutableDetailing(read.data) as PaidJourneyCustomerFieldRender});
+ }
+ let journeyFieldAvailabilitySequence=0;
+ /** A private V9 availability read never reconciles issuance or authorizes a reservation. */
+ async function readPaidJourneyCustomerFieldAvailability(session:PaidJourneyCustomerFieldSession,window:PaidJourneyAvailabilityWindow,options:{origin:string;signal?:AbortSignal}):Promise<PaidJourneyCustomerFieldAvailability>{
+  const fail=(code:PaidJourneyCustomerFieldAvailabilityError['code'])=>new PaidJourneyCustomerFieldAvailabilityError(code,'V9 availability could not be verified. No writer was retried or reconciled.');
+  const ownData=(value:unknown,required:string[],optional:string[]=[]):value is Record<string,unknown>=>{
+   if(!value||typeof value!=='object'||Array.isArray(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+   const descriptors=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(value);
+   return required.every(key=>Object.hasOwn(descriptors,key))&&keys.every(key=>typeof key==='string'&&[...required,...optional].includes(key))&&Object.values(descriptors).every(d=>d.enumerable&&Object.hasOwn(d,'value'));
+  };
+  const utc=(value:unknown):number=>{if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value))return NaN;const time=Date.parse(value),date=new Date(time),parts=value.slice(0,19).split(/[-T:]/).map(Number);return Number.isFinite(time)&&date.getUTCFullYear()===parts[0]&&date.getUTCMonth()+1===parts[1]&&date.getUTCDate()===parts[2]&&date.getUTCHours()===parts[3]&&date.getUTCMinutes()===parts[4]&&date.getUTCSeconds()===parts[5]?time:NaN;};
+  if(!bookingApiOrigin||!ownData(session,['schemaVersion','installationId','sessionToken','expiresAt','render'])||!ownData(window,['from','to'])||!ownData(options,['origin'],['signal']))throw fail('INVALID_REQUEST');
+  const {schemaVersion,installationId,sessionToken,expiresAt,render:inputRender}=session,{origin,signal}=options,from=utc(window.from),to=utc(window.to);
+  if(schemaVersion!==2||!uuid(installationId)||installationId!==installationId.toLowerCase()||typeof sessionToken!=='string'||!/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(sessionToken)||typeof origin!=='string'||origin.length>2048||!httpsOrigin(origin)||signal!==undefined&&!(signal instanceof AbortSignal)||!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>7*86400000)throw fail('INVALID_REQUEST');
+  if(signal?.aborted)throw fail('ABORTED');
+  if(typeof expiresAt!=='string'||expiresAt.length>40||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(expiresAt))throw fail('INVALID_REQUEST');
+  const expiry=Date.parse(expiresAt),parts=expiresAt.slice(0,19).split(/[-T:]/).map(Number),date=new Date(Date.UTC(parts[0]!,parts[1]!-1,parts[2]!)),render=PaidJourneyCustomerFieldRender.safeParse(inputRender);
+  if(!Number.isFinite(expiry)||expiry>Date.now()+901000||date.getUTCFullYear()!==parts[0]||date.getUTCMonth()+1!==parts[1]||date.getUTCDate()!==parts[2]||parts[3]!>23||parts[4]!>59||parts[5]!>59||!render.success)throw fail('INVALID_REQUEST');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  const service=render.data.service,versionId=render.data.versionId,current=generation,sequence=++journeyFieldAvailabilitySequence;let response:Response,value:unknown;
+  try{response=await transport(bookingApiOrigin+'/api/public/paid-journey-customer-field-flow-sessions/availability?from='+encodeURIComponent(new Date(from).toISOString())+'&to='+encodeURIComponent(new Date(to).toISOString()),{method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{Origin:origin,Authorization:`Bearer ${sessionToken}`},...(signal?{signal}:{})});value=await response.json();}catch{throw fail(signal?.aborted?'ABORTED':'UNVERIFIED');}
+  if(signal?.aborted)throw fail('ABORTED');
+  if(current!==generation||sequence!==journeyFieldAvailabilitySequence)throw fail('STALE_CONTEXT');
+  if(expiry<=Date.now())throw fail('EXPIRED');
+  if(response.redirected)throw fail('UNVERIFIED');
+  if(response.status!==200)throw fail('REJECTED');
+  const data=ownData(value,['ok','data'])&&value.ok===true?value.data:undefined;
+  if(!ownData(data,['schemaVersion','installationId','versionId','serviceId','durationMinutes','slots'])||data.schemaVersion!==2||data.installationId!==installationId||data.versionId!==versionId||data.serviceId!==service.id||data.durationMinutes!==service.durationMinutes||!Array.isArray(data.slots)||Object.getPrototypeOf(data.slots)!==Array.prototype||data.slots.length>2016)throw fail('UNVERIFIED');
+  const rawSlots=data.slots,descriptors=Object.getOwnPropertyDescriptors(rawSlots),keys=Reflect.ownKeys(rawSlots);
+  if(keys.length!==rawSlots.length+1||keys.some(key=>key!=='length'&&(typeof key!=='string'||!/^(0|[1-9]\d*)$/.test(key)||Number(key)>=rawSlots.length||!descriptors[key]!.enumerable||!Object.hasOwn(descriptors[key]!,'value'))))throw fail('UNVERIFIED');
+  const slots:Array<Readonly<{start:string;end:string;remainingCapacity:number}>>=[];let previous=-Infinity;
+  for(const slot of rawSlots){if(!ownData(slot,['start','end','remainingCapacity']))throw fail('UNVERIFIED');const start=utc(slot.start),end=utc(slot.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<from||end>to||start<=previous||end-start!==service.durationMinutes*60000||typeof slot.remainingCapacity!=='number'||!Number.isSafeInteger(slot.remainingCapacity)||slot.remainingCapacity<1)throw fail('UNVERIFIED');previous=start;slots.push(Object.freeze({start:new Date(start).toISOString(),end:new Date(end).toISOString(),remainingCapacity:slot.remainingCapacity}));}
+  return Object.freeze({schemaVersion:2 as const,installationId,versionId,serviceId:service.id,durationMinutes:service.durationMinutes,slots:Object.freeze(slots)});
  }
  function paidJourneyCustomerFieldSessionState():PaidJourneyCustomerFieldSessionState{
   if(journeyFieldSessionAttempt)return Object.freeze(journeyFieldSessionAttempt.generation===generation&&journeyFieldSessionAttempt.phase==='issuing'?{phase:'issuing',installationId:journeyFieldSessionAttempt.installationId}:{phase:'unknown'});
@@ -1682,7 +1717,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
  }
 
  return {
-  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,issuePaidJourneyCustomerFieldSession,readPaidJourneyCustomerFieldSession,paidJourneyCustomerFieldSessionState,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
+  paidJourneyVersionHistory,rollbackPaidJourney,paidJourneyRollbackState,publishPaidJourneyDraft,readPaidJourneyRender,loadPaidJourneyCustomerFieldRender,issuePaidJourneyCustomerFieldSession,readPaidJourneyCustomerFieldSession,readPaidJourneyCustomerFieldAvailability,paidJourneyCustomerFieldSessionState,readPaidJourneyOwnerPublication,issuePaidJourneySession,readPaidJourneyAvailability,holdPaidJourneySlot,recoverPaidJourneyHold,paidJourneyHoldState,mockPayPaidJourney,paidJourneyPaymentState,paidJourneyPublicationState,
   /** Opaque local auth epoch for dropping read snapshots; grants no identity or writer authority. */
   authContextRevision():number{return generation;},
   publishPaidJourneyCustomerFieldDraft,readPaidJourneyCustomerFieldOwnerPublication,paidJourneyCustomerFieldPublicationState,savePaidJourneyCustomerFieldDraft,loadPaidJourneyCustomerFieldDraft,paidJourneyCustomerFieldDraftState,savePaidJourneyDraft,loadPaidJourneyDraft,
