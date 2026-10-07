@@ -15,6 +15,7 @@ import { SlotPicker } from "./steps/SlotPicker";
 import { Summary } from "./steps/Summary";
 
 const HostedDetailingFlow = lazy(() => import("./flows/HostedDetailingFlow").then(module => ({ default: module.HostedDetailingFlow })));
+const HostedJourneyCustomerFieldFlow = lazy(() => import("./flows/HostedJourneyCustomerFieldFlow").then(module => ({ default: module.HostedJourneyCustomerFieldFlow })));
 const HostedJourneyFlow = lazy(() => import("./flows/HostedJourneyFlow").then(module => ({ default: module.HostedJourneyFlow })));
 const ConnectedCheckout = lazy(() => import("./connected/ConnectedCheckout").then(module => ({ default: module.ConnectedCheckout })));
 
@@ -107,9 +108,12 @@ export function HostedInstallationFlow(props:{installationId:string;apiUrl:strin
 
 export default function App() {
   const runtime = readPublicRuntimeConfig(import.meta.env);
-  const relativePath = location.pathname.startsWith("/checkout/flow/") || location.pathname.startsWith("/checkout/journey/flow/") ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
+  const relativePath = location.pathname.startsWith("/checkout/flow/") || location.pathname.startsWith("/checkout/journey/flow/") || location.pathname.startsWith("/checkout/journey-fields/flow/") ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
   const hostedMatch = /^flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
   const journeyMatch = /^journey\/flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
+  const customerFieldsMatch = /^journey-fields\/flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
+  if (customerFieldsMatch) return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedJourneyCustomerFieldFlow key={customerFieldsMatch[1]!+runtime.flowApiOrigin} installationId={customerFieldsMatch[1]!} config={runtime} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
+  if (relativePath.replace(/^\//, "").startsWith("journey-fields/")) return <main className="checkout-card" role="alert"><h1>Published form preview unavailable</h1><p>This staging presentation URL is invalid. Booking and payment status have not been checked.</p></main>;
   if (journeyMatch) return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedJourneyFlow key={journeyMatch[1]!+runtime.flowApiOrigin} installationId={journeyMatch[1]!} config={runtime} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
   if (hostedMatch) return <ErrorBoundary><HostedInstallationFlow key={hostedMatch[1]!+runtime.flowApiOrigin} installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
   if (runtime.mode === "supabase") {
