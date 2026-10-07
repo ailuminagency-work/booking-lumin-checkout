@@ -1,3 +1,4 @@
+import {SavePaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldDraftReceipt,PaidJourneyCustomerFieldDraft,type PaidJourneyCustomerFieldDraftReader,type PaidJourneyCustomerFieldDraftWriter} from './paid-journey-customer-field-draft';
 import {PaidJourneyHistory,PaidJourneyRollbackInput,PaidJourneyRollbackReceipt,type PaidJourneyHistoryReader,type PaidJourneyRollback} from './paid-journey-history-rollback';
 import {PaidJourneyMockPaymentReceipt,type PaidJourneyMockPaymentWriter} from './paid-journey-payment';
 import type {PaidJourneyHoldReader} from './paid-journey-hold-read';
@@ -101,6 +102,8 @@ export interface FlowHttpOptions{
  paidJourneyHistory?:PaidJourneyHistoryReader;
  paidJourneyRollback?:PaidJourneyRollback;
  paidJourneyDrafts?:boolean;
+ paidJourneyCustomerFieldDraftRead?:PaidJourneyCustomerFieldDraftReader;
+ paidJourneyCustomerFieldDraftSave?:PaidJourneyCustomerFieldDraftWriter;
  /** Separate V8 publication/read capability. No customer session issuance. */
  paidJourneyPublication?:boolean;
  /** Dedicated V8 sessions only; no booking or financial capabilities. */
@@ -325,6 +328,21 @@ export function createFlowHttpServer(options:FlowHttpOptions){
    const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
+   const journeyFieldDraft=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/draft$/);
+   if(journeyFieldDraft){
+    if(!options.paidJourneyDrafts||!options.paidJourneyCustomerFieldDraftRead||!options.paidJourneyCustomerFieldDraftSave)throw new FlowError('UNSUPPORTED_CONFIG');
+    const flow=Uuid.parse(journeyFieldDraft[1]).toLowerCase(),targetTenant=tenant.toLowerCase();
+    if(req.method==='GET'){
+     if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+     const data=PaidJourneyCustomerFieldDraft.safeParse(await options.paidJourneyCustomerFieldDraftRead(actor,targetTenant,flow));
+     if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow)throw new FlowError('INTERNAL_ERROR');
+     send(res,200,{ok:true,data:data.data});return;
+    }
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const body=SavePaidJourneyCustomerFieldDraft.parse(await jsonBody(req)),data=PaidJourneyCustomerFieldDraftReceipt.safeParse(await options.paidJourneyCustomerFieldDraftSave(actor,targetTenant,flow,body));
+    if(!data.success||data.data.tenantId!==targetTenant||data.data.flowId!==flow||data.data.revision!==body.expectedRevision+1)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:data.data});return;
+   }
    const journeyHistory=url.pathname.match(/^\/api\/paid-journey-flows\/([^/]+)\/versions$/);
    if(journeyHistory){
     if(!options.paidJourneyPublication||!options.paidJourneyHistory)throw new FlowError('UNSUPPORTED_CONFIG');
