@@ -52,7 +52,7 @@ function HistoryPanel({client,tenantId,blocked,onStateChange,onVerifiedHistory,o
   if(!review||blocked||locked||inFlight.current)return;const at=generation.current,reviewed=review;inFlight.current=true;setReview(null);setSelected('');setSnapshot({...view,history:undefined,error:''});
   onHistoryInvalidated?.('write');const pending=client.rollbackCustomerFieldPublication(tenantId,reviewed.flowId,{expectedCurrentVersionId:reviewed.currentVersionId,targetVersionId:reviewed.targetVersionId});notify();
   try{await pending;if(active(at)){setSnapshot({...view,history:undefined,error:''});notify(true);}}
-  catch(error){if(active(at)){setSnapshot({...view,history:undefined,error:error instanceof PublicationError&&(error.delivery==='not_sent'||error.delivery==='rejected')?'Rollback was not accepted. Refresh publication history and review eligibility before another explicit action.':'Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.'});notify();}}
+  catch(error){if(active(at)){setSnapshot({...view,history:undefined,error:error instanceof PublicationError&&(error.delivery==='not_sent'||error.delivery==='rejected')?(error.delivery==='rejected'?'Rollback was rejected. Refresh publication history and review eligibility before another explicit action.':'Rollback was not sent. Refresh publication history and review eligibility before another explicit action.'):'Rollback outcome is unverified. Check its frozen target receipt without repeating rollback.'});notify();}}
   finally{if(active(at))inFlight.current=false;}
  }
  async function reconcile(){

@@ -68,7 +68,7 @@ it('sanitizes a rejected rollback while requiring fresh history before another r
  vi.spyOn(client,'rollbackCustomerFieldPublication').mockImplementation(async(...args)=>{try{return await rollback(...args);}catch(error){throw new PublicationError((error as PublicationError).delivery,'private rejection detail');}});
  render(<ConnectedCustomerFieldHistory client={client} {...props}/>);await load();await review();
  fireEvent.click(screen.getByRole('button',{name:'Confirm publication rollback'}));
- expect(await screen.findByRole('alert')).toHaveTextContent('Rollback was not accepted. Refresh publication history and review eligibility before another explicit action.');
+ expect(await screen.findByRole('alert')).toHaveTextContent('Rollback was rejected. Refresh publication history and review eligibility before another explicit action.');
  expect(document.body.textContent).not.toContain('private rejection detail');expect(screen.queryByRole('button',{name:'Review rollback'})).toBeNull();
  expect(calls.mock.calls.filter(([url])=>String(url).includes('/rollback?'))).toHaveLength(1);
  fireEvent.click(screen.getByRole('button',{name:'Refresh publication history'}));await screen.findByRole('heading',{name:'Current cleaning'});
