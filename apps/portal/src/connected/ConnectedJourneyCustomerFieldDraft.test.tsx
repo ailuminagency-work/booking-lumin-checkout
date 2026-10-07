@@ -274,3 +274,26 @@ it('hides locator copying for pending and unknown saves and clears it on busines
  await screen.findByText('Save outcome is unverified. Do not repeat or replace this write.');expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();
  view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByLabelText('Saved customer questions draft ID')).toBeNull();
 });
+
+
+it('explains an empty shown optional step and clears guidance after deliberately hiding it',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();
+ fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));const toggle=screen.getByRole('checkbox',{name:'Show Additional information 1 step'});
+ expect(toggle).not.toHaveAttribute('aria-invalid');fireEvent.change(screen.getByLabelText('Field 2 step'),{target:{value:'information'}});
+ const advice=screen.getByText('Add or move a field to this step, or hide it, before saving.');expect(toggle).toHaveAttribute('aria-invalid','true');expect(toggle).toHaveAttribute('aria-describedby',advice.id);
+ expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeDisabled();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+ fireEvent.click(toggle);expect(screen.queryByText('Add or move a field to this step, or hide it, before saving.')).toBeNull();expect(toggle).not.toHaveAttribute('aria-invalid');expect(toggle).not.toHaveAttribute('aria-describedby');
+ expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeEnabled();fireEvent.click(screen.getByRole('button',{name:'Save customer questions draft'}));await screen.findByText(/Saved conditional journey revision 3/);
+ const input=vi.mocked(client.savePaidJourneyCustomerFieldDraft).mock.calls[0]![2];expect(input.form.journey.stages.find(stage=>stage.id==='informational_1')?.enabled).toBe(false);expect(input.form.fieldBindings.every(binding=>binding.stageId==='information')).toBe(true);
+});
+it('explains hidden bound fields without dropping them and clears guidance when the step is shown',async()=>{
+ const {client}=fixture();render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));
+ const toggle=screen.getByRole('checkbox',{name:'Show Additional information 1 step'});fireEvent.click(toggle);
+ const advice=screen.getByText('Move or remove this step\'s fields, or show it, before saving.');expect(toggle).toHaveAttribute('aria-describedby',advice.id);expect(toggle).toHaveAttribute('aria-invalid','true');expect(screen.getByLabelText('Field 2 label')).toHaveValue('Additional information 1');
+ expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeDisabled();fireEvent.click(toggle);expect(screen.queryByText('Move or remove this step\'s fields, or show it, before saving.')).toBeNull();expect(screen.getByRole('button',{name:'Save customer questions draft'})).toBeEnabled();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
+it('clears step guidance after discard and business change without an automatic write',async()=>{
+ const {client}=fixture();const view=render(<ConnectedJourneyCustomerFieldDraft {...props} client={client}/>);await open();await load();fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('checkbox',{name:'Show Additional information 1 step'}));
+ expect(screen.getByText('Move or remove this step\'s fields, or show it, before saving.')).toBeVisible();fireEvent.click(screen.getByRole('button',{name:'Discard customer questions edits'}));fireEvent.click(screen.getByRole('button',{name:'Discard edits and restore saved questions'}));expect(screen.queryByText('Move or remove this step\'s fields, or show it, before saving.')).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Add customer information step'}));fireEvent.click(screen.getByRole('checkbox',{name:'Show Additional information 1 step'}));view.rerender(<ConnectedJourneyCustomerFieldDraft {...props} tenantId={other} client={client}/>);expect(screen.queryByText('Move or remove this step\'s fields, or show it, before saving.')).toBeNull();expect(client.savePaidJourneyCustomerFieldDraft).not.toHaveBeenCalled();
+});
