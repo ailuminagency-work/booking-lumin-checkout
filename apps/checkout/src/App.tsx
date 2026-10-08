@@ -1,10 +1,11 @@
 import { HostedFlow } from "./flows/HostedFlow";
-import type { CSSProperties } from "react";
-import { ConnectedCheckout } from "./connected/ConnectedCheckout";
+import { useStagingInstallEscape } from "./staging-install-escape";
+import { Component, Suspense, lazy, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { STEP_LABELS, visibleStepsFor, WizardControls } from "./components/WizardControls";
 import { branding, getService } from "./config/demoTenant";
 import { CheckoutProvider, useCheckout } from "./state/checkout";
+import { readPublicRuntimeConfig } from "@lumin/runtime-client";
 import { Configurator } from "./steps/Configurator";
 import { Confirmation } from "./steps/Confirmation";
 import { CustomerForm } from "./steps/CustomerForm";
@@ -12,6 +13,28 @@ import { Payment } from "./steps/Payment";
 import { ServicePicker } from "./steps/ServicePicker";
 import { SlotPicker } from "./steps/SlotPicker";
 import { Summary } from "./steps/Summary";
+
+const HostedDetailingFlow = lazy(() => import("./flows/HostedDetailingFlow").then(module => ({ default: module.HostedDetailingFlow })));
+const HostedJourneyCustomerFieldFlow = lazy(() => import("./flows/HostedJourneyCustomerFieldFlow").then(module => ({ default: module.HostedJourneyCustomerFieldFlow })));
+const HostedJourneyFlow = lazy(() => import("./flows/HostedJourneyFlow").then(module => ({ default: module.HostedJourneyFlow })));
+const ConnectedCheckout = lazy(() => import("./connected/ConnectedCheckout").then(module => ({ default: module.ConnectedCheckout })));
+
+// A missing route chunk says nothing about an earlier booking or payment attempt.
+class RouteLoadingBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  override render(): ReactNode {
+    if (this.state.failed) return <main className="checkout-card" role="alert">
+      <h1>Checkout could not be loaded</h1>
+      <p>Booking and payment status have not been checked. If you already submitted a request, contact the business with your booking reference before starting another booking.</p>
+    </main>;
+    return this.props.children;
+  }
+}
+
+function RouteLoading() {
+  return <main className="checkout-card" aria-busy="true"><p role="status">Loading checkout…</p></main>;
+}
 
 function StepBody() {
   const { state } = useCheckout();
@@ -76,16 +99,29 @@ function Shell() {
   );
 }
 
+export function HostedInstallationFlow(props:{installationId:string;apiUrl:string;localHarness?:boolean}) {
+  useStagingInstallEscape();
+  const [detailing,setDetailing]=useState(false);
+  const unsupported=useCallback(()=>setDetailing(true),[]);
+  return detailing ? <RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedDetailingFlow {...props}/></Suspense></RouteLoadingBoundary> : <HostedFlow {...props} onUnsupportedConfig={unsupported}/>;
+}
+
 export default function App() {
-  const relativePath = location.pathname.startsWith("/checkout/flow/") ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
+  const runtime = readPublicRuntimeConfig(import.meta.env);
+  const relativePath = location.pathname.startsWith("/checkout/flow/") || location.pathname.startsWith("/checkout/journey/flow/") || location.pathname.startsWith("/checkout/journey-fields/") || location.pathname === "/checkout/journey-fields" ? location.pathname.slice("/checkout/".length) : location.pathname.startsWith(import.meta.env.BASE_URL) ? location.pathname.slice(import.meta.env.BASE_URL.length) : location.pathname.replace(/^\/checkout\//, "");
   const hostedMatch = /^flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
-  if (hostedMatch) return <ErrorBoundary><HostedFlow installationId={hostedMatch[1]!} apiUrl={import.meta.env.VITE_FLOW_API_URL ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
-  if (import.meta.env.VITE_RUNTIME_MODE === "supabase") {
-    return <ErrorBoundary><ConnectedCheckout config={{
-      url: import.meta.env.VITE_SUPABASE_URL ?? "",
-      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
-      tenantId: import.meta.env.VITE_TENANT_ID ?? "",
-    }} /></ErrorBoundary>;
+  const journeyMatch = /^journey\/flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
+  const customerFieldsMatch = /^journey-fields\/flow\/([^/]+)\/?$/.exec(relativePath.replace(/^\//, ""));
+  if (customerFieldsMatch) return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedJourneyCustomerFieldFlow key={customerFieldsMatch[1]!+runtime.flowApiOrigin} installationId={customerFieldsMatch[1]!} config={runtime} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
+  if (relativePath.replace(/^\//, "") === "journey-fields" || relativePath.replace(/^\//, "").startsWith("journey-fields/")) return <main className="checkout-card" role="alert"><h1>Published form preview unavailable</h1><p>This staging presentation URL is invalid. Booking and payment status have not been checked.</p></main>;
+  if (journeyMatch) return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><HostedJourneyFlow key={journeyMatch[1]!+runtime.flowApiOrigin} installationId={journeyMatch[1]!} config={runtime} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
+  if (hostedMatch) return <ErrorBoundary><HostedInstallationFlow key={hostedMatch[1]!+runtime.flowApiOrigin} installationId={hostedMatch[1]!} apiUrl={runtime.flowApiOrigin ?? ""} localHarness={import.meta.env.VITE_FLOW_LOCAL_HARNESS === "true"} /></ErrorBoundary>;
+  if (runtime.mode === "supabase") {
+    return <ErrorBoundary><RouteLoadingBoundary><Suspense fallback={<RouteLoading />}><ConnectedCheckout config={{
+      url: runtime.supabaseUrl,
+      publishableKey: runtime.supabasePublishableKey,
+      tenantId: runtime.tenantId,
+    }} /></Suspense></RouteLoadingBoundary></ErrorBoundary>;
   }
   // White-label: branding flows in via CSS custom properties, so swapping
   // the tenant config restyles the whole checkout.

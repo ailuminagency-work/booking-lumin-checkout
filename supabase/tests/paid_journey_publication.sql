@@ -1,0 +1,84 @@
+\set ON_ERROR_STOP on
+begin;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+insert into auth.users(id,email) values('70000000-0000-4000-8000-000000000001','journey-publish-owner@example.test'),('70000000-0000-4000-8000-000000000099','journey-publish-other@example.test');
+select public.create_staging_business('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002','Journey','journey-publication','UTC','USD','HOUSEKEEPING','journey_publication_owner');
+select public.create_staging_business('70000000-0000-4000-8000-000000000099','70000000-0000-4000-8000-000000000098','Foreign','journey-publication-other','UTC','USD','HOUSEKEEPING','journey_publication_other');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('70000000-0000-4000-8000-000000000003','70000000-0000-4000-8000-000000000002','Cleaning','simple','USD',12500,60);
+create function pg_temp.journey(reordered boolean default false) returns jsonb language sql as $$select jsonb_build_object('schemaVersion',1,'stages',jsonb_agg(jsonb_build_object('id',kind,'kind',kind,'label',kind,'enabled',kind<>'options') order by n)) from unnest(case when reordered then array['service','options','information','schedule','review_payment','confirmation'] else array['service','options','schedule','information','review_payment','confirmation'] end) with ordinality s(kind,n)$$;
+create function pg_temp.save(r bigint default 0,reordered boolean default false,f uuid default '70000000-0000-4000-8000-000000000004') returns jsonb language sql as $$select public.save_paid_journey_draft('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002',f,'70000000-0000-4000-8000-000000000003',r,'Journey','{"accentColor":"#4f46e5","layout":"stacked"}',pg_temp.journey(reordered))$$;
+create function pg_temp.publish(r bigint default 1,v uuid default '70000000-0000-4000-8000-000000000005',i uuid default '70000000-0000-4000-8000-000000000006',o jsonb default '["https://checkout.example.test"]',approved jsonb default '["https://checkout.example.test"]',a uuid default '70000000-0000-4000-8000-000000000001',t uuid default '70000000-0000-4000-8000-000000000002',f uuid default '70000000-0000-4000-8000-000000000004') returns jsonb language sql as $$select public.publish_paid_journey_draft(a,t,f,r,v,i,o,approved)$$;
+select pg_temp.save();
+select pg_temp.assert((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.paid_journey_publications'::regclass),'private registry RLS forced');
+do $$declare r text;begin foreach r in array array['anon','authenticated','service_role'] loop
+ perform pg_temp.assert(not has_table_privilege(r,'public.paid_journey_publications','SELECT') and not has_table_privilege(r,'public.paid_journey_publications','INSERT') and not has_table_privilege(r,'public.paid_journey_publications','UPDATE') and not has_table_privilege(r,'public.paid_journey_publications','DELETE'),'no direct registry authority '||r);
+ if r<>'service_role' then perform pg_temp.assert(not has_function_privilege(r,'public.publish_paid_journey_draft(uuid,uuid,uuid,bigint,uuid,uuid,jsonb,jsonb)','EXECUTE'),'no browser publish RPC '||r);end if;
+end loop;end$$;
+set local role anon;select pg_temp.reject($q$select pg_temp.publish()$q$,'42501');reset role;
+select pg_temp.reject($q$select pg_temp.publish(a=>'70000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.publish(a=>'70000000-0000-4000-8000-000000000099',t=>'70000000-0000-4000-8000-000000000098')$q$,'P0002');
+select pg_temp.reject($q$select pg_temp.publish(r=>2)$q$,'40001');
+select pg_temp.reject($q$select pg_temp.publish(r=>0)$q$,'22023');
+select pg_temp.reject($q$select pg_temp.publish(o=>'["*"]')$q$,'22023');
+select pg_temp.reject($q$select pg_temp.publish(o=>'["https://checkout.example.test","https://checkout.example.test"]')$q$,'22023');
+select pg_temp.reject($q$select pg_temp.publish(o=>'["https://foreign.example.test"]')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.publish(approved=>'[]')$q$,'22023');
+set local role service_role;
+select pg_temp.assert(pg_temp.publish()=jsonb_build_object('schemaVersion',1,'tenantId','70000000-0000-4000-8000-000000000002','flowId','70000000-0000-4000-8000-000000000004','draftRevision',1,'versionId','70000000-0000-4000-8000-000000000005','installationId','70000000-0000-4000-8000-000000000006','renderSchemaVersion',8,'replayed',false),'explicit first publication exact receipt');
+select pg_temp.assert(pg_temp.publish(v=>'70000000-0000-4000-8000-000000000015',i=>'70000000-0000-4000-8000-000000000016')->'replayed'='true','same frozen revision replay ignores new proposed aliases');
+reset role;
+create temporary table frozen_snapshot as select journey_snapshot from public.flow_versions where id='70000000-0000-4000-8000-000000000005';
+select pg_temp.assert((select journey_snapshot->'service'->'price'='{"amount":12500,"currency":"USD"}'::jsonb and journey_snapshot#>'{form,journey}'=pg_temp.journey() and not(journey_snapshot ?| array['actorId','tenantId','flowId','draftRevision']) and not((journey_snapshot->'form') ?| array['draftRevision','revision','actorId']) from public.flow_versions where id='70000000-0000-4000-8000-000000000005'),'server price/order and stripped owner draft metadata');
+do $$declare p jsonb;k text;bad_name text;bad jsonb;path text[];begin
+ select journey_snapshot into p from frozen_snapshot;
+ foreach k in array array['actorId','tenantId','draftRevision','provider','total'] loop perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(p||jsonb_build_object(k,1)),'unknown snapshot authority key');end loop;
+ perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{renderSchemaVersion}','7')),'V7 cannot become journey');
+ perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,presentation,layout}','null')),'null layout rejected');
+ perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{service,price,amount}','-1')),'negative price rejected');
+ foreach path slice 1 in array array[array['service','name'],array['form','name']] loop
+  foreach bad_name in array array[' ',U&'\00a0\feff',E'bad\nname',U&'bad\0085name'] loop
+   bad:=jsonb_set(p,path,to_jsonb(bad_name));
+   perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(bad),'blank/control publication name rejected');
+   perform pg_temp.reject(format('insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select %L,tenant_id,flow_id,10,submission_mode,config,8,%L::jsonb from public.flow_versions where id=%L','70000000-0000-4000-8000-000000000077',bad,'70000000-0000-4000-8000-000000000005'),'23514');
+  end loop;
+ end loop;
+ perform pg_temp.assert(not lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,name}','" x "')),'untrimmed form name rejected');
+ perform pg_temp.assert(lumin.paid_journey_snapshot_valid(jsonb_set(p,'{form,name}',to_jsonb(U&'Journey \+01f600'::text))),'valid emoji JSONB name accepted');
+ bad:=jsonb_set(p,'{form,journey,stages}',(p#>'{form,journey,stages}')-5-4-3-2 || jsonb_build_array(jsonb_build_object('id','informational_note','kind','informational','label','Note','enabled',true)) || jsonb_build_array(p#>'{form,journey,stages,2}',p#>'{form,journey,stages,3}',p#>'{form,journey,stages,4}',p#>'{form,journey,stages,5}'));
+ perform pg_temp.assert(lumin.paid_journey_valid(bad#>'{form,journey}') and not lumin.paid_journey_snapshot_valid(bad),'unbound information authoring contract cannot become V8 snapshot');
+ perform pg_temp.reject(format('insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select %L,tenant_id,flow_id,10,submission_mode,config,8,%L::jsonb from public.flow_versions where id=%L','70000000-0000-4000-8000-000000000077',bad,'70000000-0000-4000-8000-000000000005'),'23514');
+end$$;
+update public.services set name=E'bad\nname' where id='70000000-0000-4000-8000-000000000003';
+select pg_temp.reject($q$select pg_temp.publish()$q$,'0A000');
+update public.services set name='Cleaning' where id='70000000-0000-4000-8000-000000000003';
+select pg_temp.reject($q$update public.flow_versions set journey_snapshot='{}' where id='70000000-0000-4000-8000-000000000005'$q$,'55000');
+select pg_temp.reject($q$update public.paid_journey_publications set installation_id='70000000-0000-4000-8000-000000000016' where version_id='70000000-0000-4000-8000-000000000005'$q$,'55000');
+select pg_temp.reject($q$delete from public.flow_installations where id='70000000-0000-4000-8000-000000000006'$q$,'55000');
+select pg_temp.reject($q$update public.flow_installations set allowed_origins='["https://foreign.example.test"]' where id='70000000-0000-4000-8000-000000000006'$q$,'55000');
+select pg_temp.reject($q$insert into public.flow_installations values('70000000-0000-4000-8000-000000000016','70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000004','70000000-0000-4000-8000-000000000005','["https://checkout.example.test"]')$q$,'55000');
+-- Existing issuance must reject V8, not reinterpret it as paid V3 or V7 quote.
+set local role service_role;
+select pg_temp.reject($q$select public.issue_flow_session('70000000-0000-4000-8000-000000000006',repeat('a',64),'https://checkout.example.test')$q$,'0A000');
+reset role;
+update public.services set base_price=13000 where id='70000000-0000-4000-8000-000000000003';select pg_temp.reject($q$select pg_temp.publish()$q$,'40001');update public.services set base_price=12500 where id='70000000-0000-4000-8000-000000000003';
+select pg_temp.save(1,true);
+select pg_temp.assert((select journey_snapshot=(select journey_snapshot from frozen_snapshot) from public.flow_versions where id='70000000-0000-4000-8000-000000000005'),'later draft edits do not mutate publication');
+select pg_temp.reject($q$select pg_temp.publish()$q$,'40001');
+select pg_temp.assert(pg_temp.publish(r=>2,v=>'70000000-0000-4000-8000-000000000025',i=>'70000000-0000-4000-8000-000000000026')->'replayed'='false','new draft revision creates new immutable version');
+select pg_temp.assert((select journey_snapshot#>'{form,journey}'=pg_temp.journey(true) from public.flow_versions where id='70000000-0000-4000-8000-000000000025'),'new version pins reordered journey');
+select pg_temp.assert((select count(*)=2 from public.paid_journey_publications),'exactly one registry per accepted version');
+select pg_temp.save(f=>'70000000-0000-4000-8000-000000000030');
+select pg_temp.reject($q$select pg_temp.publish(f=>'70000000-0000-4000-8000-000000000030',v=>'70000000-0000-4000-8000-000000000005',i=>'70000000-0000-4000-8000-000000000036')$q$,'23505');
+select pg_temp.reject($q$select pg_temp.publish(f=>'70000000-0000-4000-8000-000000000030',v=>'70000000-0000-4000-8000-000000000035',i=>'70000000-0000-4000-8000-000000000006')$q$,'23505');
+select pg_temp.assert(not exists(select 1 from public.flows where id='70000000-0000-4000-8000-000000000030'),'colliding identities cannot leave partial flow');
+select pg_temp.save(f=>'70000000-0000-4000-8000-000000000040');
+select public.save_paid_simple_draft('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000040','70000000-0000-4000-8000-000000000003',0,'Legacy','#4f46e5','stacked');
+select public.publish_paid_simple_draft('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000040',1,'70000000-0000-4000-8000-000000000041','70000000-0000-4000-8000-000000000042','["https://checkout.example.test"]');
+select pg_temp.reject($q$select pg_temp.publish(f=>'70000000-0000-4000-8000-000000000040')$q$,'40001');
+select pg_temp.assert((select render_schema_version=3 and journey_snapshot is null from public.flow_versions where id='70000000-0000-4000-8000-000000000041'),'old family unchanged and cannot be taken over');
+update public.tenant_members set role='BUSINESS_STAFF' where tenant_id='70000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.publish(r=>2)$q$,'42501');
+update public.tenant_members set role='BUSINESS_OWNER' where tenant_id='70000000-0000-4000-8000-000000000002';delete from public.tenant_members where tenant_id='70000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.publish(r=>2)$q$,'42501');
+select pg_temp.assert(not exists(select 1 from public.bookings) and not exists(select 1 from public.payments) and not exists(select 1 from public.flow_sessions) and not exists(select 1 from public.capacity_holds),'publication stores no customer/booking/hold/payment state');
+rollback;
+\echo PASS immutable V8 journey publication revision/alias/origin/owner/financial-boundary attacks

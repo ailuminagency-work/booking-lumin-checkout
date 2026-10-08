@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import {isIP} from 'node:net';
+import {Pool} from 'pg';
+import {createPaidJourneyCustomerFieldDraftOperations,SavePaidJourneyCustomerFieldDraft} from './paid-journey-customer-field-draft';
+assert.equal(process.env.PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_LOCAL_TEST,'1');
+assert.equal(process.env.PGHOST,'127.0.0.1');assert.equal(process.env.PGUSER,'postgres');
+const ci=process.env.CI==='true';let trustedDatabaseHost='127.0.0.1';
+if(ci){assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.PGPORT,'5432');assert.equal(process.env.PGDATABASE,'lumin_journey_fields_ci');trustedDatabaseHost=process.env.PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_CI_DATABASE_HOST??'';assert.equal(isIP(trustedDatabaseHost),4);assert.match(trustedDatabaseHost,/^(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)/);}else{assert.notEqual(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.PGPORT,'59069');assert.match(process.env.PGDATABASE??'',/^lumin_journey_fields_local_[a-z0-9_]+$/);}
+for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])assert.ok(!process.env[key]);
+const pool=new Pool({max:8}),operations=createPaidJourneyCustomerFieldDraftOperations(pool),id=(n:number)=>`79100000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const actor=id(1),tenant=id(2),service=id(3),flow=id(4),foreign=id(5),otherTenant=id(6);
+const journey={schemaVersion:1,stages:['service','options','schedule','information','review_payment','confirmation'].map(kind=>({id:kind,kind,label:kind,enabled:kind!=='options'}))};
+const form={name:'Field journey',presentation:{accentColor:'#0e7490',layout:'compact'},journey,customerFields:[{id:'custom_gate',kind:'text',label:'Gate',required:false,maxLength:100},{id:'custom_code',kind:'text',label:'Code',required:false,maxLength:100,when:{fieldId:'custom_gate',equals:'yes'}}],fieldBindings:[{fieldId:'custom_gate',stageId:'information'},{fieldId:'custom_code',stageId:'information'}]};
+const input=SavePaidJourneyCustomerFieldDraft.parse({schemaVersion:2,serviceId:service,expectedRevision:0,form});
+const deny=async(action:()=>Promise<unknown>,code:string)=>assert.rejects(action,{code});
+async function financialCounts(){const value:Record<string,string>={};for(const table of ['bookings','payments','capacity_holds','flow_versions','flow_installations','flow_sessions','paid_journey_sessions','paid_journey_holds','durable_outbox','flow_requests','paid_journey_hold_bindings']){const exists=(await pool.query('select to_regclass($1) name',['public.'+table])).rows[0].name;if(exists)value[table]=(await pool.query(`select count(*)::text n from public.${table}`)).rows[0].n;}return value;}
+async function legacySave(client:{query:Pool['query']},target:string){return client.query('select public.save_paid_journey_draft($1,$2,$3,$4,0,$5,$6,$7)',[actor,tenant,target,service,'Legacy',{accentColor:'#0e7490',layout:'compact'},journey]);}
+try{
+ const actual=(await pool.query('select current_database() db,current_user actor,host(inet_server_addr()) host,inet_server_port() port')).rows[0];assert.deepEqual(actual,{db:process.env.PGDATABASE,actor:'postgres',host:trustedDatabaseHost,port:Number(process.env.PGPORT)});
+ const before=await financialCounts();assert.ok(Object.values(before).every(n=>n==='0'));
+ await pool.query("insert into auth.users(id,email) values($1,'fields-api-owner@example.test'),($2,'fields-api-foreign@example.test')",[actor,foreign]);
+ await pool.query("insert into public.tenants(id,name,slug,timezone,currency) values($1,'Fields','fields-api-owner','UTC','USD'),($2,'Other','fields-api-other','UTC','USD')",[tenant,otherTenant]);
+ await pool.query("insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER'),($3,$4,'BUSINESS_OWNER')",[tenant,actor,otherTenant,foreign]);
+ await pool.query('select public.initialize_staging_business_profile($1,$2,$3,$4)',[actor,tenant,'HOUSEKEEPING','fields_api_owner_fixture']);
+ await pool.query('select public.initialize_staging_business_profile($1,$2,$3,$4)',[foreign,otherTenant,'HOUSEKEEPING','fields_api_other_fixture']);
+ await pool.query("insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values($1,$2,'Fields','simple','USD',12500,60)",[service,tenant]);
+ await deny(()=>operations.read(actor,tenant,flow),'NOT_AVAILABLE');
+ assert.deepEqual(await operations.save(actor,tenant,flow,input),{schemaVersion:2,tenantId:tenant,flowId:flow,revision:1});
+ assert.deepEqual(await operations.read(actor,tenant,flow),{schemaVersion:2,tenantId:tenant,flowId:flow,revision:1,serviceId:service,form});
+ const update={...input,expectedRevision:1};const races=await Promise.allSettled([operations.save(actor,tenant,flow,{...update,form:{...input.form,name:'A'}}),operations.save(actor,tenant,flow,{...update,form:{...input.form,name:'B'}})]);assert.equal(races.filter(r=>r.status==='fulfilled').length,1);assert.deepEqual(races.filter(r=>r.status==='rejected').map(r=>r.reason.code),['CONFLICT']);assert.equal((await operations.read(actor,tenant,flow)).revision,2);
+ for(const action of [()=>operations.read(foreign,tenant,flow),()=>operations.save(foreign,tenant,flow,{...input,expectedRevision:2}),()=>operations.read(actor,otherTenant,flow),()=>operations.save(actor,otherTenant,flow,input)])await deny(action,'FORBIDDEN');
+ for(const status of ['suspended','inactive']){await pool.query('update public.tenants set status=$2 where id=$1',[tenant,status]);await deny(()=>operations.read(actor,tenant,flow),'FORBIDDEN');await deny(()=>operations.save(actor,tenant,flow,{...input,expectedRevision:2}),'FORBIDDEN');}await pool.query("update public.tenants set status='active' where id=$1",[tenant]);
+ await pool.query("update public.tenant_members set role='BUSINESS_STAFF' where user_id=$1 and tenant_id=$2",[actor,tenant]);await deny(()=>operations.read(actor,tenant,flow),'FORBIDDEN');await deny(()=>operations.save(actor,tenant,flow,{...input,expectedRevision:2}),'FORBIDDEN');await pool.query("update public.tenant_members set role='BUSINESS_OWNER' where user_id=$1 and tenant_id=$2",[actor,tenant]);
+ for(const mutation of ['tax_rate_bp=100','base_price=0','active=false']){await pool.query(`update public.services set ${mutation} where id=$1`,[service]);const expected=mutation==='active=false'?'FORBIDDEN':'UNSUPPORTED_CONFIG';await deny(()=>operations.read(actor,tenant,flow),expected);await deny(()=>operations.save(actor,tenant,flow,{...input,expectedRevision:2}),expected);await pool.query('update public.services set tax_rate_bp=0,base_price=12500,active=true where id=$1',[service]);}
+ await deny(()=>legacySave(pool,flow),'0A000');
+ await deny(()=>pool.query("insert into public.flows(id,tenant_id,name,status) values($1,$2,'Forbidden V9 flow','active')",[flow,tenant]),'0A000');
+ // Additive guards deny every legacy identity insert and identity-changing update.
+ for(const table of ['paid_simple_drafts','detailing_drafts','paid_journey_drafts']){
+  const columns=table==='detailing_drafts'?'flow_id,tenant_id,actor_id,service_id,revision,name,accent_color,layout':table==='paid_journey_drafts'?'flow_id,tenant_id,service_id,revision,name,accent_color,layout,journey':'flow_id,tenant_id,service_id,revision,name,accent_color,layout';
+  const values=table==='detailing_drafts'?[flow,tenant,actor,service,1,'Legacy','#0e7490','compact']:table==='paid_journey_drafts'?[flow,tenant,service,1,'Legacy','#0e7490','compact',journey]:[flow,tenant,service,1,'Legacy','#0e7490','compact'];
+  await deny(()=>pool.query(`insert into public.${table}(${columns}) values(${values.map((_,i)=>'$'+(i+1)).join(',')})`,values),'0A000');
+ }
+ const simple=id(20);await pool.query('select public.save_paid_simple_draft($1,$2,$3,$4,0,$5,$6,$7)',[actor,tenant,simple,service,'Simple','#0e7490','compact']);await deny(()=>pool.query('update public.paid_simple_drafts set flow_id=$1 where flow_id=$2',[flow,simple]),'0A000');await deny(()=>operations.save(actor,tenant,simple,input),'UNSUPPORTED_CONFIG');
+ await pool.query("select public.create_staging_business($1,$2,'Detailing','fields-api-detailing','UTC','USD','AUTO_DETAILING','fields_api_detailing_fixture')",[actor,id(30)]);await pool.query("insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values($1,$2,'Detailing','simple','USD',100,60)",[id(31),id(30)]);await deny(()=>operations.save(actor,id(30),id(32),{...input,serviceId:id(31)}),'UNSUPPORTED_CONFIG');
+ for(const role of ['anon','authenticated','service_role']){const c=await pool.connect();try{await c.query('begin');await c.query('set local role '+role);await deny(()=>c.query('select * from public.paid_journey_customer_field_drafts'),'42501');await c.query('rollback');}finally{c.release();}}
+ // A committed ordinary legacy draft can still publish its ordinary flow identity.
+ const legacy=id(10);await legacySave(pool,legacy);await pool.query("insert into public.flows(id,tenant_id,name,status) values($1,$2,'Ordinary legacy flow','active')",[legacy,tenant]);await deny(()=>operations.save(actor,tenant,legacy,input),'UNSUPPORTED_CONFIG');await deny(()=>pool.query('update public.flows set id=$1 where id=$2',[flow,legacy]),'0A000');await deny(()=>pool.query('update public.paid_journey_drafts set flow_id=$1 where flow_id=$2',[flow,legacy]),'0A000');
+ // Real simultaneous new/legacy allocation: one winner, permanent bidirectional denial.
+ const same=id(11);const collision=await Promise.allSettled([operations.save(actor,tenant,same,input),legacySave(pool,same)]);assert.equal(collision.filter(r=>r.status==='fulfilled').length,1);assert.equal(collision.filter(r=>r.status==='rejected').length,1);assert.ok(collision.filter(r=>r.status==='rejected').every(r=>['0A000','UNSUPPORTED_CONFIG'].includes(r.reason.code)));const counts=(await pool.query('select (select count(*) from public.paid_journey_customer_field_drafts where flow_id=$1)+(select count(*) from public.paid_journey_drafts where flow_id=$1) n',[same])).rows[0].n;assert.equal(counts,'1');
+ // Deterministic waiter: the new candidate sees a legacy commit made after it started.
+ const pending=id(12),holder=await pool.connect();try{await holder.query('begin');await legacySave(holder,pending);const waiter=operations.save(actor,tenant,pending,input);await new Promise(r=>setTimeout(r,50));await holder.query('commit');await deny(()=>waiter,'UNSUPPORTED_CONFIG');}finally{holder.release();}
+ assert.deepEqual(await financialCounts(),before);assert.equal((await operations.read(actor,tenant,flow)).revision,2);
+ console.log('PASS actual factory: strict nested persisted form, CAS race, tenant/staff/suspension/catalog attacks, permanent legacy/V9 identity collision and concurrent allocation, ordinary legacy publication identity, unchanged financial/version/session counts');
+}finally{await pool.end();}

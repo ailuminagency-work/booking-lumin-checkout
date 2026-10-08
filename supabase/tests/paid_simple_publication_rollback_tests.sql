@@ -1,0 +1,49 @@
+\set ON_ERROR_STOP on
+begin;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+insert into auth.users(id,email) values('44000000-0000-4000-8000-000000000001','rollback-sql@example.test');
+insert into public.tenants(id,name,slug,timezone,currency) values('44000000-0000-4000-8000-000000000002','Rollback SQL','rollback-sql','UTC','USD');
+insert into public.tenant_members(tenant_id,user_id,role) values('44000000-0000-4000-8000-000000000002','44000000-0000-4000-8000-000000000001','BUSINESS_OWNER');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('44000000-0000-4000-8000-000000000003','44000000-0000-4000-8000-000000000002','Housekeeping','simple','USD',12500,60);
+do $$declare n integer;begin for n in 1..3 loop
+ perform public.save_paid_simple_draft('44000000-0000-4000-8000-000000000001','44000000-0000-4000-8000-000000000002','44000000-0000-4000-8000-000000000004','44000000-0000-4000-8000-000000000003',n-1,'Saved '||n,'#4f46e5','stacked');
+ perform public.publish_paid_simple_draft('44000000-0000-4000-8000-000000000001','44000000-0000-4000-8000-000000000002','44000000-0000-4000-8000-000000000004',n,('44000000-0000-4000-8000-'||lpad((100+n)::text,12,'0'))::uuid,('44000000-0000-4000-8000-'||lpad((200+n)::text,12,'0'))::uuid,'["https://checkout.example.test"]');
+end loop;end$$;
+create function pg_temp.rollback_pub(a uuid default '44000000-0000-4000-8000-000000000001',t uuid default '44000000-0000-4000-8000-000000000002',f uuid default '44000000-0000-4000-8000-000000000004',e uuid default '44000000-0000-4000-8000-000000000103',v uuid default '44000000-0000-4000-8000-000000000101') returns jsonb language sql as $$select public.rollback_paid_simple_publication(a,t,f,e,v,'["https://checkout.example.test"]')$$;
+select pg_temp.assert((select prosecdef and proconfig=array['search_path=pg_catalog'] from pg_proc where oid='public.rollback_paid_simple_publication(uuid,uuid,uuid,uuid,uuid,jsonb)'::regprocedure),'fixed definer search path');
+select pg_temp.assert(not has_table_privilege('service_role','public.bound_flow_versions','SELECT') and not has_table_privilege('service_role','public.flows','UPDATE'),'direct grants stay closed');
+select pg_temp.assert(not has_function_privilege('anon','public.rollback_paid_simple_publication(uuid,uuid,uuid,uuid,uuid,jsonb)','EXECUTE') and not has_function_privilege('authenticated','public.rollback_paid_simple_publication(uuid,uuid,uuid,uuid,uuid,jsonb)','EXECUTE'),'browser denied direct rollback');
+set local role anon;select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');reset role;
+set local role authenticated;select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');reset role;
+select pg_temp.reject($q$select pg_temp.rollback_pub(a=>'44000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.rollback_pub(t=>'44000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.rollback_pub(v=>'44000000-0000-4000-8000-000000000103')$q$,'40001');
+select pg_temp.reject($q$select pg_temp.rollback_pub(e=>'44000000-0000-4000-8000-000000000102')$q$,'40001');
+select pg_temp.reject($q$select pg_temp.rollback_pub(v=>'44000000-0000-4000-8000-000000000099')$q$,'P0002');
+update public.services set base_price=13000 where id='44000000-0000-4000-8000-000000000003';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'0A000');update public.services set base_price=12500 where id='44000000-0000-4000-8000-000000000003';
+update public.flow_installations set allowed_origins='["https://foreign.example.test"]' where id='44000000-0000-4000-8000-000000000201';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');
+update public.flow_installations set allowed_origins='["https://checkout.example.test","https://checkout.example.test"]' where id='44000000-0000-4000-8000-000000000201';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');update public.flow_installations set allowed_origins='["https://checkout.example.test"]' where id='44000000-0000-4000-8000-000000000201';
+insert into public.flow_installations values('44000000-0000-4000-8000-000000000500','44000000-0000-4000-8000-000000000002','44000000-0000-4000-8000-000000000004','44000000-0000-4000-8000-000000000101','["https://checkout.example.test"]');select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'P0002');delete from public.flow_installations where id='44000000-0000-4000-8000-000000000500';
+-- Privileged adversarial fixture: immutable target missing saved-publication metadata.
+insert into public.flows(id,tenant_id,name,status) values('44000000-0000-4000-8000-000000000020','44000000-0000-4000-8000-000000000002','Malformed target','active');
+insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,paid_snapshot) select '44000000-0000-4000-8000-000000000021',tenant_id,'44000000-0000-4000-8000-000000000020',1,submission_mode,config,3,paid_snapshot-'publication' from public.flow_versions where id='44000000-0000-4000-8000-000000000101';
+insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,paid_snapshot) select '44000000-0000-4000-8000-000000000023',tenant_id,'44000000-0000-4000-8000-000000000020',3,submission_mode,config,3,paid_snapshot from public.flow_versions where id='44000000-0000-4000-8000-000000000103';
+insert into public.bound_flow_versions select tenant_id,'44000000-0000-4000-8000-000000000020',case version_id when '44000000-0000-4000-8000-000000000101' then '44000000-0000-4000-8000-000000000021'::uuid else '44000000-0000-4000-8000-000000000023'::uuid end,service_id,service_snapshot from public.bound_flow_versions where version_id in('44000000-0000-4000-8000-000000000101','44000000-0000-4000-8000-000000000103');
+update public.flows set published_version_id='44000000-0000-4000-8000-000000000023' where id='44000000-0000-4000-8000-000000000020';
+select pg_temp.reject($q$select pg_temp.rollback_pub(f=>'44000000-0000-4000-8000-000000000020',e=>'44000000-0000-4000-8000-000000000023',v=>'44000000-0000-4000-8000-000000000021')$q$,'P0002');
+-- Privileged V4 target remains outside the V3 rollback authority.
+insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,paid_snapshot) select '44000000-0000-4000-8000-000000000025',tenant_id,'44000000-0000-4000-8000-000000000020',2,submission_mode,config,4,jsonb_set(jsonb_set(paid_snapshot,'{renderSchemaVersion}','4'),'{submissionMode}','"paid_option_request"') from public.flow_versions where id='44000000-0000-4000-8000-000000000102';
+insert into public.bound_flow_versions select tenant_id,'44000000-0000-4000-8000-000000000020','44000000-0000-4000-8000-000000000025',service_id,service_snapshot from public.bound_flow_versions where version_id='44000000-0000-4000-8000-000000000102';
+select pg_temp.reject($q$select pg_temp.rollback_pub(f=>'44000000-0000-4000-8000-000000000020',e=>'44000000-0000-4000-8000-000000000023',v=>'44000000-0000-4000-8000-000000000025')$q$,'P0002');
+set local role service_role;
+select pg_temp.assert(pg_temp.rollback_pub()->>'versionId'='44000000-0000-4000-8000-000000000101','owner explicit rollback');
+select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'40001');
+select pg_temp.reject($q$select pg_temp.rollback_pub(e=>'44000000-0000-4000-8000-000000000101',v=>'44000000-0000-4000-8000-000000000102')$q$,'40001');
+reset role;
+select pg_temp.assert((select name='Saved 1' and published_version_id='44000000-0000-4000-8000-000000000101' from public.flows where id='44000000-0000-4000-8000-000000000004'),'only pointer and pinned name moved');
+select pg_temp.assert((select revision=3 from public.paid_simple_drafts where flow_id='44000000-0000-4000-8000-000000000004') and (select count(*)=3 from public.flow_versions where flow_id='44000000-0000-4000-8000-000000000004') and (select count(*)=3 from public.flow_installations where flow_id='44000000-0000-4000-8000-000000000004'),'draft immutable versions and installations preserved');
+update public.tenant_members set role='BUSINESS_STAFF' where tenant_id='44000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');update public.tenant_members set role='BUSINESS_OWNER' where tenant_id='44000000-0000-4000-8000-000000000002';update public.tenants set status='inactive' where id='44000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');update public.tenants set status='active' where id='44000000-0000-4000-8000-000000000002';delete from public.tenant_members where tenant_id='44000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.rollback_pub()$q$,'42501');
+select pg_temp.assert((select count(*)=0 from public.bookings where tenant_id='44000000-0000-4000-8000-000000000002') and (select count(*)=0 from public.payments where tenant_id='44000000-0000-4000-8000-000000000002'),'no customer financial writes');
+rollback;
+\echo PASS explicit prior V3 rollback owner/CAS/origin/private binding/metadata/immutable state attacks

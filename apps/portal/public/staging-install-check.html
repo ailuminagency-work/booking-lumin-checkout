@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internal staging cross-origin installation check</title>
+<style>body{font:16px system-ui;margin:16px;max-width:960px;overflow-wrap:anywhere}main,section{min-width:0;max-width:100%}h1{font-size:24px}button,a{min-height:44px;max-width:100%}iframe{max-width:100%}</style>
+<script src="/staging-install-check.js" defer></script>
+</head>
+<body><main>
+<h1>Internal staging cross-origin installation check</h1>
+<p>This controlled internal fixture embeds the restored synthetic owner publication from the fixed Checkout staging origin. Payments are simulated; no real money is charged. This fixture does not publish a form and is not merchant-domain certification or production acceptance.</p>
+<p id="fixture-status" role="status">Installation fixture has not started. Only the canonical Portal staging origin and the exact approved PR 97 Portal preview origin are permitted, without query or fragment overrides.</p>
+<section aria-labelledby="inline-heading"><h2 id="inline-heading">Inline customer form</h2><p>The inline form loads from the separate Checkout staging origin. Loading alone does not reserve or pay for a booking.</p><div id="inline-install"></div></section>
+<section aria-labelledby="launcher-heading"><h2 id="launcher-heading">Launcher and modal customer form</h2><p>Use the launcher button to open the form. Close with the Close booking form button or Escape; focus should return to the launcher. Reopening should retain the same form. A direct-link fallback is provided by the controller.</p><div id="launcher-install"></div></section>
+<p>Test narrow and wide layouts and keyboard navigation explicitly. A script-load result does not prove iframe loading or a completed embedded booking. Do not submit bookings or payments as part of a layout-only check.</p>
+</main></body>
+</html>

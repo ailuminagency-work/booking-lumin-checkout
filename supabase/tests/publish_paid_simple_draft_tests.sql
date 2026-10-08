@@ -1,0 +1,35 @@
+\set ON_ERROR_STOP on
+begin;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+create function pg_temp.id(n integer) returns uuid language sql immutable as $$select ('41000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid$$;
+insert into auth.users(id,email) values(pg_temp.id(1),'publish-draft-sql@example.test');
+insert into public.tenants(id,name,slug,timezone,currency) values(pg_temp.id(2),'Publish draft SQL','publish-draft-sql','UTC','USD');
+insert into public.tenant_members(tenant_id,user_id,role) values(pg_temp.id(2),pg_temp.id(1),'BUSINESS_OWNER');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values(pg_temp.id(3),pg_temp.id(2),'Catalog housekeeping','simple','USD',12500,60);
+create function pg_temp.publish(r bigint default 1,v integer default 5,i integer default 6,o jsonb default '["https://checkout.example.test"]') returns jsonb language sql as $$select public.publish_paid_simple_draft(pg_temp.id(1),pg_temp.id(2),pg_temp.id(4),r,pg_temp.id(v),pg_temp.id(i),o)$$;
+select pg_temp.assert(not has_function_privilege('anon','public.publish_paid_simple_draft(uuid,uuid,uuid,bigint,uuid,uuid,jsonb)','EXECUTE') and not has_function_privilege('authenticated','public.publish_paid_simple_draft(uuid,uuid,uuid,bigint,uuid,uuid,jsonb)','EXECUTE'),'no browser publication RPC authority');
+select pg_temp.assert(not has_function_privilege('service_role','lumin.paid_simple_metadata_valid(jsonb,bigint)','EXECUTE'),'metadata helper is private');
+set local role anon;select pg_temp.reject($q$select pg_temp.publish()$q$,'42501');reset role;
+select pg_temp.reject($q$select pg_temp.publish()$q$,'P0002');
+select public.save_paid_simple_draft(pg_temp.id(1),pg_temp.id(2),pg_temp.id(4),pg_temp.id(3),0,'Published name','#0e7490','compact');
+select pg_temp.reject($q$select pg_temp.publish(0)$q$,'22023');select pg_temp.reject($q$select pg_temp.publish(2)$q$,'40001');
+set local role service_role;
+select pg_temp.assert(pg_temp.publish()->'replayed'='false'::jsonb,'first exact revision publishes');
+select pg_temp.assert(pg_temp.publish(v=>7,i=>8)=jsonb_build_object('flowId',pg_temp.id(4),'draftRevision',1,'versionId',pg_temp.id(5),'installationId',pg_temp.id(6),'renderSchemaVersion',3,'replayed',true),'lost receipt replay preserves exact identifiers');
+select pg_temp.reject($q$select pg_temp.publish(o=>'["https://different.example.test"]')$q$,'40001');
+reset role;
+select pg_temp.assert((select paid_snapshot->'publication'='{"name":"Published name","draftRevision":1,"presentation":{"accentColor":"#0e7490","layout":"compact"}}'::jsonb and paid_snapshot#>>'{service,price,amount}'='12500' and source_revision=1 from public.flow_versions where id=pg_temp.id(5)),'name design revision immutable and price authoritative');
+select pg_temp.reject($q$update public.flow_versions set paid_snapshot='{}' where id=pg_temp.id(5)$q$,'55000');
+select pg_temp.reject($q$insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,paid_snapshot) select pg_temp.id(90),tenant_id,flow_id,99,submission_mode,config,3,paid_snapshot from public.flow_versions where id=pg_temp.id(5)$q$,'23514');
+insert into public.flow_installations(id,tenant_id,flow_id,version_id,allowed_origins) values(pg_temp.id(10),pg_temp.id(2),pg_temp.id(4),pg_temp.id(5),'["https://checkout.example.test"]');select pg_temp.reject($q$select pg_temp.publish()$q$,'40001');delete from public.flow_installations where id=pg_temp.id(10);
+select public.save_paid_simple_draft(pg_temp.id(1),pg_temp.id(2),pg_temp.id(4),pg_temp.id(3),1,'Updated name','#be123c','stacked');select pg_temp.reject($q$select pg_temp.publish()$q$,'40001');
+select pg_temp.publish(2,7,8);
+select pg_temp.assert((select paid_snapshot->'publication'->>'name'='Published name' from public.flow_versions where id=pg_temp.id(5)) and (select paid_snapshot->'publication'->>'name'='Updated name' and source_revision=2 from public.flow_versions where id=pg_temp.id(7)),'draft edits and later publication preserve old snapshot');
+select pg_temp.assert((select count(*)=2 from public.flow_versions where flow_id=pg_temp.id(4)) and (select count(*)=2 from public.flow_installations where flow_id=pg_temp.id(4)),'replays did not duplicate versions or installations');
+select pg_temp.reject($q$select public.publish_paid_simple_draft(pg_temp.id(99),pg_temp.id(2),pg_temp.id(4),2,pg_temp.id(11),pg_temp.id(12),'["https://checkout.example.test"]')$q$,'42501');
+update public.tenant_members set role='BUSINESS_STAFF' where tenant_id=pg_temp.id(2);select pg_temp.reject($q$select pg_temp.publish(2)$q$,'42501');update public.tenant_members set role='BUSINESS_OWNER' where tenant_id=pg_temp.id(2);
+update public.services set tax_rate_bp=100 where id=pg_temp.id(3);select pg_temp.reject($q$select pg_temp.publish(2)$q$,'0A000');update public.services set tax_rate_bp=0 where id=pg_temp.id(3);
+select pg_temp.assert((select count(*)=0 from public.bookings where tenant_id=pg_temp.id(2)) and (select count(*)=0 from public.payments where tenant_id=pg_temp.id(2)) and (select count(*)=0 from public.capacity_holds where tenant_id=pg_temp.id(2)),'publishing only writes publication state');
+rollback;
+\echo PASS saved paid draft immutable publication/replay/revision/metadata/authority attacks
