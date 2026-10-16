@@ -52,6 +52,8 @@ import {createDraftWriter} from './draft';
 import {readinessFailure} from './readiness-error';
 import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
+import { createPoolConfirmationOutboxDriver, type ConfirmationOutboxDriver } from './confirmation-outbox-driver';
+import { createStagingConfirmationDeliveryProvider } from './confirmation-delivery-provider';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
@@ -233,6 +235,22 @@ function main(): void {
     console.log("@lumin/api listening on 0.0.0.0:" + listenPort + " (" + environment + "; real Supabase-JWT auth)");
   });
 
+  // ---- Staging-only confirmation delivery driver --------------------------
+  // Drains `booking.confirmed` outbox envelopes to the durable receipt ledger
+  // via the existing confirmation outbox worker. Gated to STAGING + explicit
+  // opt-in. The staging delivery provider acknowledges sends WITHOUT contacting
+  // any real email/SMS provider, so it must never run in production; the env
+  // gate enforces that. Only tenants with a connected provider connection AND a
+  // ready planner config are drained (see confirmation-outbox-driver.ts).
+  let confirmationDriver: ConfirmationOutboxDriver | undefined;
+  if (process.env.BOOKING_LUMIN_ENV === "staging" && process.env.BOOKING_LUMIN_CONFIRMATION_DELIVERY === "1") {
+    const rawInterval = Number(process.env.BOOKING_LUMIN_CONFIRMATION_DELIVERY_INTERVAL_MS ?? "15000");
+    const intervalMs = Number.isInteger(rawInterval) && rawInterval >= 1000 && rawInterval <= 300000 ? rawInterval : 15000;
+    confirmationDriver = createPoolConfirmationOutboxDriver(pool, createStagingConfirmationDeliveryProvider(), { intervalMs });
+    confirmationDriver.start();
+    console.log("@lumin/api confirmation delivery driver started (STAGING; mock delivery; interval " + intervalMs + "ms)");
+  }
+
   // ---- Graceful shutdown ---------------------------------------------------
   let stopping = false;
   const stop = (signal: string): void => {
@@ -240,7 +258,9 @@ function main(): void {
     stopping = true;
     console.log(`@lumin/api received ${signal}; shutting down`);
     server.close(() => {
-      void pool.end().finally(() => process.exit(0));
+      void Promise.resolve(confirmationDriver?.stop())
+        .catch(() => {})
+        .finally(() => pool.end().finally(() => process.exit(0)));
     });
     // Hard deadline so a hung connection cannot block the platform.
     setTimeout(() => process.exit(0), 10000).unref();
