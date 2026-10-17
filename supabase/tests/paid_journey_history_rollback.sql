@@ -1,0 +1,72 @@
+\set ON_ERROR_STOP on
+begin;
+do $$begin
+ if current_user<>'postgres' or not(
+  (host(inet_server_addr())='127.0.0.1' and inet_server_port()=59069 and current_database() ~ '^lumin_journey_history_[a-z0-9_]+$')
+  or (inet_server_port()=5432 and current_database()='lumin_journey_history_ci' and
+   (inet_server_addr()<<inet '10.0.0.0/8' or inet_server_addr()<<inet '172.16.0.0/12' or inet_server_addr()<<inet '192.168.0.0/16'))
+ ) then raise exception 'DISPOSABLE_JOURNEY_HISTORY_TARGET_REQUIRED';end if;
+end$$;
+create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
+create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
+insert into auth.users(id,email) values('70000000-0000-4000-8000-000000000001','journey-publish-owner@example.test'),('70000000-0000-4000-8000-000000000099','journey-publish-other@example.test');
+select public.create_staging_business('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002','Journey','journey-publication','UTC','USD','HOUSEKEEPING','journey_publication_owner');
+select public.create_staging_business('70000000-0000-4000-8000-000000000099','70000000-0000-4000-8000-000000000098','Foreign','journey-publication-other','UTC','USD','HOUSEKEEPING','journey_publication_other');
+insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('70000000-0000-4000-8000-000000000003','70000000-0000-4000-8000-000000000002','Cleaning','simple','USD',12500,60);
+create function pg_temp.journey(reordered boolean default false) returns jsonb language sql as $$select jsonb_build_object('schemaVersion',1,'stages',jsonb_agg(jsonb_build_object('id',kind,'kind',kind,'label',kind,'enabled',kind<>'options') order by n)) from unnest(case when reordered then array['service','options','information','schedule','review_payment','confirmation'] else array['service','options','schedule','information','review_payment','confirmation'] end) with ordinality s(kind,n)$$;
+create function pg_temp.save(r bigint default 0,reordered boolean default false,f uuid default '70000000-0000-4000-8000-000000000004') returns jsonb language sql as $$select public.save_paid_journey_draft('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000002',f,'70000000-0000-4000-8000-000000000003',r,'Journey','{"accentColor":"#4f46e5","layout":"stacked"}',pg_temp.journey(reordered))$$;
+create function pg_temp.publish(r bigint default 1,v uuid default '70000000-0000-4000-8000-000000000005',i uuid default '70000000-0000-4000-8000-000000000006',o jsonb default '["https://checkout.example.test"]',approved jsonb default '["https://checkout.example.test"]',a uuid default '70000000-0000-4000-8000-000000000001',t uuid default '70000000-0000-4000-8000-000000000002',f uuid default '70000000-0000-4000-8000-000000000004') returns jsonb language sql as $$select public.publish_paid_journey_draft(a,t,f,r,v,i,o,approved)$$;
+select pg_temp.save();
+select pg_temp.publish();
+create function pg_temp.issue(h text default repeat('a',64),i uuid default '70000000-0000-4000-8000-000000000006',o text default 'https://checkout.example.test') returns jsonb language sql as $$select public.issue_paid_journey_session(i,h,o)$$;
+select pg_temp.issue();
+create function pg_temp.submit(h text default repeat('a',64),o text default 'https://checkout.example.test',k text default 'journey-request-test-0001',c jsonb default '{"name":"Staging customer","email":"customer@example.test"}',a jsonb default '{}',start_at timestamptz default date_trunc('day',clock_timestamp())+interval '1 day 9 hours') returns jsonb language sql as $$select public.submit_paid_journey_hold_request(h,o,k,c,a,start_at)$$;
+create temp table accepted as select pg_temp.submit() receipt;
+select * from public.reserve_capacity('70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000003',date_trunc('day',clock_timestamp())+interval '1 day 9 hours',date_trunc('day',clock_timestamp())+interval '1 day 10 hours',(select (receipt->>'bookingId')::uuid from accepted),1,interval '5 minutes');
+select pg_temp.assert(has_function_privilege('service_role','public.pay_paid_journey_mock(text,text)','execute') and not has_function_privilege('anon','public.pay_paid_journey_mock(text,text)','execute') and not has_function_privilege('authenticated','public.pay_paid_journey_mock(text,text)','execute'),'narrow service-only mock writer');
+set local role anon;select pg_temp.reject($q$select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test')$q$,'42501');reset role;
+select pg_temp.reject($q$select public.pay_paid_journey_mock(repeat('b',64),'https://checkout.example.test')$q$,'42501');
+select pg_temp.reject($q$select public.pay_paid_journey_mock(repeat('a',64),'https://portal.example.test')$q$,'42501');
+update public.services set base_price=13000;select pg_temp.reject($q$select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test')$q$,'40001');update public.services set base_price=12500;
+select pg_temp.assert((select count(*)=0 from public.payments),'drift rejection has no evidence');
+select pg_temp.reject($q$select public.assert_legacy_mock_payment_booking('70000000-0000-4000-8000-000000000002',(select (receipt->>'bookingId')::uuid from accepted))$q$,'0A000');
+create temp table paid as select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test') receipt;
+select pg_temp.assert((select receipt->>'state'='confirmed' and receipt->>'provider'='staging_mock' and receipt->>'simulated'='true' and receipt->>'amount'='12500' and receipt->>'currency'='USD' and receipt->>'replayed'='false' and not(receipt ?| array['tenantId','actorId','customer','token_hash','canonical_payload']) from paid),'strict immutable-money simulated receipt');
+set local role service_role;select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test');reset role;
+select pg_temp.assert((select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test')->>'replayed'='true'),'same session replay');
+select pg_temp.assert((select count(*)=1 from public.payments) and (select count(*)=1 from public.bookings where state='confirmed') and (select count(*)=1 from public.capacity_holds where status='consumed') and (select count(*)=1 from public.durable_outbox where event_type='booking.confirmed'),'one evidence/confirmation/consumed hold/outbox');
+create temp table immutable_rows as select jsonb_build_object('bookings',(select jsonb_agg(to_jsonb(b) order by id) from public.bookings b),'payments',(select jsonb_agg(to_jsonb(p) order by id) from public.payments p),'holds',(select jsonb_agg(to_jsonb(h) order by id) from public.capacity_holds h),'outbox',(select jsonb_agg(to_jsonb(o) order by id) from public.durable_outbox o)) evidence;
+create temp table immutable_before as select (select count(*) from public.bookings) bookings,(select count(*) from public.payments) payments,(select count(*) from public.capacity_holds) holds,(select count(*) from public.durable_outbox) outbox;
+select pg_temp.save(1,true);select pg_temp.publish(2,'70000000-0000-4000-8000-000000000007','70000000-0000-4000-8000-000000000008');
+select pg_temp.issue(repeat('b',64),'70000000-0000-4000-8000-000000000008');
+create function pg_temp.history(a uuid default '70000000-0000-4000-8000-000000000001',o jsonb default '["https://checkout.example.test"]') returns jsonb language sql as $$select public.owner_paid_journey_version_history(a,'70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000004',o)$$;
+create function pg_temp.restore(a uuid default '70000000-0000-4000-8000-000000000001',o jsonb default '["https://checkout.example.test"]') returns jsonb language sql as $$select public.rollback_paid_journey_publication(a,'70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000004','70000000-0000-4000-8000-000000000007','70000000-0000-4000-8000-000000000005',o)$$;
+select pg_temp.assert(jsonb_array_length(pg_temp.history()->'versions')=2 and pg_temp.history()#>>'{versions,0,current}'='true','bounded ordered current history');
+select pg_temp.assert(pg_temp.history('70000000-0000-4000-8000-000000000001','["https://other.example.test"]')#>'{versions,0,publication}'='null'::jsonb,'incompatible origin has no install receipt');
+select pg_temp.reject($q$select pg_temp.history('70000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.restore('70000000-0000-4000-8000-000000000099')$q$,'42501');
+select pg_temp.reject($q$select pg_temp.restore('70000000-0000-4000-8000-000000000001','["https://other.example.test"]')$q$,'42501');
+update public.services set base_price=13000;select pg_temp.reject($q$select pg_temp.restore()$q$,'0A000');update public.services set base_price=12500;
+update public.tenants set status='suspended' where id='70000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.restore()$q$,'42501');update public.tenants set status='active' where id='70000000-0000-4000-8000-000000000002';
+create temp table restored as select pg_temp.restore() receipt;
+select pg_temp.assert((select receipt->>'installationId'='70000000-0000-4000-8000-000000000006' and receipt->>'versionId'='70000000-0000-4000-8000-000000000005' and receipt->>'draftRevision'='1' from restored),'restores exact original immutable install');
+select pg_temp.assert((select revision=2 from public.paid_journey_drafts),'draft revision untouched');
+select pg_temp.reject($q$select pg_temp.restore()$q$,'40001');
+select pg_temp.reject($q$select public.resolve_paid_journey_session(repeat('a',64),'https://checkout.example.test')$q$,'42501');
+select pg_temp.reject($q$select public.pay_paid_journey_mock(repeat('a',64),'https://checkout.example.test')$q$,'42501');
+select pg_temp.reject($q$select public.resolve_paid_journey_session(repeat('b',64),'https://checkout.example.test')$q$,'P0002');
+select pg_temp.issue(repeat('c',64));
+select pg_temp.assert(public.resolve_paid_journey_session(repeat('c',64),'https://checkout.example.test')#>>'{render,versionId}'='70000000-0000-4000-8000-000000000005','fresh restored session works');
+select pg_temp.assert((select bookings=(select count(*) from public.bookings) and payments=(select count(*) from public.payments) and holds=(select count(*) from public.capacity_holds) and outbox=(select count(*) from public.durable_outbox) from immutable_before),'confirmed financial history unchanged');
+select pg_temp.assert((select evidence=jsonb_build_object('bookings',(select jsonb_agg(to_jsonb(b) order by id) from public.bookings b),'payments',(select jsonb_agg(to_jsonb(p) order by id) from public.payments p),'holds',(select jsonb_agg(to_jsonb(h) order by id) from public.capacity_holds h),'outbox',(select jsonb_agg(to_jsonb(o) order by id) from public.durable_outbox o)) from immutable_rows),'historical immutable financial row equality');
+create temp table fresh_booking as select pg_temp.submit(repeat('c',64),'https://checkout.example.test','history-fresh-restored-0001','{"name":"Staging customer","email":"customer@example.test"}','{}',date_trunc('day',clock_timestamp())+interval '1 day 10 hours') receipt;
+select * from public.reserve_capacity('70000000-0000-4000-8000-000000000002','70000000-0000-4000-8000-000000000003',date_trunc('day',clock_timestamp())+interval '1 day 10 hours',date_trunc('day',clock_timestamp())+interval '1 day 11 hours',(select (receipt->>'bookingId')::uuid from fresh_booking),1,interval '5 minutes');
+select pg_temp.assert(public.pay_paid_journey_mock(repeat('c',64),'https://checkout.example.test')->>'state'='confirmed','fresh restored token completes payment');
+select pg_temp.assert((select count(*)=2 from public.payments) and (select count(*)=2 from public.bookings where state='confirmed'),'exactly one new confirmed restored booking');
+select pg_temp.assert((select count(*)=2 from public.flow_versions),'no cloned version');
+select pg_temp.assert((select generation=4 from public.paid_journey_publication_generations),'every pointer advance generation');
+select pg_temp.reject($q$update public.paid_journey_session_generations set generation=4$q$,'55000');
+select pg_temp.assert(not has_table_privilege('service_role','public.paid_journey_session_generations','SELECT') and not has_table_privilege('authenticated','public.paid_journey_publication_generations','UPDATE'),'private raw provenance grants');
+select pg_temp.assert((select bool_and(relrowsecurity and relforcerowsecurity) from pg_class where oid in('public.paid_journey_session_generations'::regclass,'public.paid_journey_publication_generations'::regclass)),'forced provenance RLS');
+set local role authenticated;select pg_temp.reject($q$select public.rollback_paid_journey_publication(null,null,null,null,null,'[]')$q$,'42501');reset role;
+rollback;

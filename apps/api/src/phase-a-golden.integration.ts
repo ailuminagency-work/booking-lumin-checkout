@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {Pool} from 'pg';
+import {createTenantProfileReader,createAvailabilityReader} from './repository';
+import {createDraftWriter} from './draft';
+import {createReservationWriter} from './reservation';
+import {createMockPaymentWriter} from './mock-payment';
+import {createBookingConfirmation} from './confirmation';
+
+if(process.env.FLOW_TEST_DISPOSABLE!=='1'||!/^lumin_[a-z0-9_]+$/.test(process.env.PGDATABASE??'')||process.env.PGHOST!=='127.0.0.1'||!/^\d{4,5}$/.test(process.env.PGPORT??''))throw Error('explicit disposable loopback PostgreSQL database required');
+const pool=new Pool({host:'127.0.0.1',port:Number(process.env.PGPORT),database:process.env.PGDATABASE,max:6,connectionTimeoutMillis:5000,statement_timeout:10000});
+const actor=randomUUID(),tenant=randomUUID(),foreign=randomUUID(),service=randomUUID(),run=randomUUID();
+try{
+ await pool.query(`insert into auth.users(id,email) values($1,$2)`,[actor,`golden-${run}@example.test`]);
+ await pool.query(`insert into public.tenants(id,name,slug,timezone,currency) values($1,'Housekeeping Golden',$3,'UTC','USD'),($2,'Foreign Golden',$4,'UTC','USD')`,[tenant,foreign,`golden-${run}`,`foreign-${run}`]);
+ await pool.query(`insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER')`,[tenant,actor]);
+ await pool.query(`insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values($1,$2,'Housekeeping visit','simple','USD',12500,60)`,[service,tenant]);
+ await pool.query(`insert into public.scheduling_policies(tenant_id,service_id,lead_time_minutes,horizon_days,slot_interval_minutes) values($1,$2,0,30,30)`,[tenant,service]);
+ await pool.query(`insert into public.availability_rules(tenant_id,service_id,weekday,start_minute,end_minute,capacity) select $1,$2,n,540,1020,1 from generate_series(0,6)n`,[tenant,service]);
+ const profile=createTenantProfileReader(pool),availability=createAvailabilityReader(pool),draft=createDraftWriter(pool),hold=createReservationWriter(pool),pay=createMockPaymentWriter(pool,{BOOKING_LUMIN_ENV:'staging',BOOKING_LUMIN_FAKE_PAYMENTS:'1'}),confirm=createBookingConfirmation(pool);
+ assert.deepEqual(await profile(actor,tenant),{id:tenant,name:'Housekeeping Golden',slug:`golden-${run}`,timezone:'UTC',currency:'USD',status:'active'});
+ assert.equal(await profile(actor,foreign),null);
+ const next=new Date();next.setUTCHours(0,0,0,0);next.setUTCDate(next.getUTCDate()+1);const from=next.toISOString(),to=new Date(next.getTime()+86400000-1).toISOString();
+ assert.equal(await availability(actor,foreign,service,from,to),null);
+ const available=await availability(actor,tenant,service,from,to);assert.ok(available);assert.equal(available.serviceId,service);assert.equal(available.durationMinutes,60);assert.ok(available.slots.length>0);
+ const slot=available.slots[0]!;assert.equal(slot.remainingCapacity,1);
+ const input={idempotencyKey:`golden-${run}`,serviceId:service,slotStart:slot.start,slotEnd:slot.end,customer:{name:'Synthetic Housekeeping Customer',email:`customer-${run}@example.test`},notes:'Disposable local golden-flow fixture'};
+ await assert.rejects(draft(actor,foreign,input),{code:'FORBIDDEN'});
+ const created=await draft(actor,tenant,input);assert.equal(created.state,'draft');assert.deepEqual(await draft(actor,tenant,input),created);
+ const before=(await pool.query('select state,pricing,payment_id from public.bookings where id=$1',[created.bookingId])).rows[0];assert.deepEqual(before,{state:'draft',pricing:{},payment_id:null});
+ await assert.rejects(hold(actor,foreign,created.bookingId),{code:'FORBIDDEN'});
+ const held=await hold(actor,tenant,created.bookingId);assert.equal(held.status,'active');assert.equal(held.bookingId,created.bookingId);assert.deepEqual(await hold(actor,tenant,created.bookingId),held);
+ const duringHold=await availability(actor,tenant,service,from,to);assert.ok(duringHold);assert.ok(!duringHold.slots.some(s=>s.start===slot.start),'held final-capacity slot unavailable');
+ await assert.rejects(pay(actor,foreign,created.bookingId),{code:'FORBIDDEN'});
+ const paid=await pay(actor,tenant,created.bookingId);assert.equal(paid.state,'confirmed');assert.equal(paid.provider,'staging_mock');assert.equal(paid.simulated,true);assert.equal(paid.replayed,false);
+ assert.deepEqual(await pay(actor,tenant,created.bookingId),{...paid,replayed:true});
+ await assert.rejects(confirm(actor,foreign,created.bookingId),{code:'FORBIDDEN'});
+ assert.deepEqual(await confirm(actor,tenant,created.bookingId),{bookingId:created.bookingId,paymentId:paid.paymentId,state:'confirmed',replayed:true});
+ const persisted=(await pool.query(`select b.state,b.payment_id,b.pricing,p.provider,p.state payment_state,p.amount::int amount,p.currency,h.status hold_status from public.bookings b join public.payments p on p.id=b.payment_id and p.booking_id=b.id and p.tenant_id=b.tenant_id join public.capacity_holds h on h.booking_id=b.id and h.tenant_id=b.tenant_id where b.id=$1`,[created.bookingId])).rows[0];
+ assert.equal(persisted.state,'confirmed');assert.equal(persisted.payment_id,paid.paymentId);assert.equal(persisted.provider,'staging_mock');assert.equal(persisted.payment_state,'succeeded');assert.equal(persisted.amount,12500);assert.equal(persisted.currency,'USD');assert.equal(persisted.hold_status,'consumed');assert.deepEqual(persisted.pricing.total,{amount:12500,currency:'USD'});
+ const history=(await pool.query('select to_state from public.booking_state_history where booking_id=$1',[created.bookingId])).rows.map(r=>r.to_state).sort();assert.deepEqual(history,['confirmed','draft','pending_payment']);
+ assert.equal((await pool.query('select count(*)::int n from public.payments where booking_id=$1',[created.bookingId])).rows[0].n,1);
+ assert.equal((await pool.query('select count(*)::int n from public.bookings where tenant_id=$1 and idempotency_key=$2',[tenant,input.idempotencyKey])).rows[0].n,1);
+ assert.equal((await pool.query('select count(*)::int n from public.refunds where booking_id=$1',[created.bookingId])).rows[0].n,0);
+ const after=await availability(actor,tenant,service,from,to);assert.ok(after);assert.ok(!after.slots.some(s=>s.start===slot.start),'confirmed booking consumes final capacity after hold consumption');
+ console.log('PASS disposable housekeeping golden flow: profile -> availability -> draft -> hold -> simulated payment -> atomic confirmation; replay, tenant isolation, single payment/history transition and consumed capacity verified');
+}finally{await pool.end();}

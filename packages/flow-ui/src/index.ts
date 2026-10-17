@@ -5,3 +5,4 @@ export * from './configurable';
 export * from './ConfigurableQuestionForm';
 export * from './rosterClient';
 export * from './modeDocument';
+export * from './ConditionalCustomerFieldForm';

@@ -49,7 +49,7 @@ function fixture(mutation?: (path: string, body: any) => Promise<Response>) {
 }
 async function login(credential = token, business = tenant) { fireEvent.change(screen.getByLabelText('Local test credential'), { target: { value: credential } }); fireEvent.change(screen.getByLabelText('Business ID'), { target: { value: business } }); fireEvent.click(screen.getByRole('button', { name: 'Open business' })); await screen.findByRole('button', { name: 'New questionnaire' }); }
 function mount() { return render(<MemoryRouter initialEntries={['/embed']}><ModeOwnerPortal ownerApiUrl="http://127.0.0.1:8787" draftApiUrl="http://127.0.0.1:8788"/></MemoryRouter>); }
-async function select() { fireEvent.change(screen.getByLabelText('Saved questionnaire'), { target: { value: flow } }); await waitFor(() => expect(screen.getByLabelText('Questionnaire name')).toHaveValue('Cleaning form')); await screen.findByText('No installations found.'); }
+async function select() { fireEvent.change(screen.getByLabelText('Saved questionnaire'), { target: { value: flow } }); await waitFor(() => expect(screen.getByLabelText('Questionnaire name')).toHaveValue('Cleaning form')); await screen.findByText('No installations found.'); await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh installations' })).not.toBeDisabled()); }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 it('bootstraps one connected mode without legacy request calls or live links', async () => { const f = fixture(); mount(); await login(); await select(); expect(f.calls.some(c => c.url.includes('/api/requests'))).toBe(false); expect(f.calls.some(c => c.url.includes('/configurable-flows'))).toBe(true); expect(screen.queryByLabelText('Customer site origin (HTTPS)')).toBeNull(); expect(screen.queryByText('Open hosted request form')).toBeNull(); expect(screen.getAllByText(/Customer delivery not enabled/).length).toBeGreaterThan(0); });
 it('dirty draft disables publish but permits explicit installation of current published version', async () => { const bodies: any[] = []; fixture(async (path, body) => { bodies.push({ path, body }); return new Response('lost', { status: 500 }); }); mount(); await login(); await select(); fireEvent.change(screen.getByLabelText('Questionnaire name'), { target: { value: 'Unsaved later draft' } }); expect(screen.getByRole('button', { name: 'Publish saved version' })).toBeDisabled(); expect(screen.getByRole('button', { name: 'Create installation' })).not.toBeDisabled(); fireEvent.click(screen.getByRole('button', { name: 'Create installation' })); await screen.findByText(/Change outcome unknown/); expect(bodies[0].path).toBe('install'); expect(bodies[0].body.versionId).toBe(version); expect(screen.getByDisplayValue('Unsaved later draft')).toBeTruthy(); });
@@ -292,4 +292,24 @@ it('draft-only save cannot clear a failed authoritative installation refresh aft
     failInstallationRead = false;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create installation' })).not.toBeDisabled());
+});
+it('an empty initial installation list does not certify the pending read as ready', async () => {
+    fixture(); const original = globalThis.fetch;
+    let releaseRead!: () => void;
+    const pendingRead = new Promise<void>(resolve => { releaseRead = resolve; });
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, options?: RequestInit) => {
+        if (String(input).endsWith('/installations')) await pendingRead;
+        return original(input, options);
+    });
+    try {
+        mount(); await login();
+        fireEvent.change(screen.getByLabelText('Saved questionnaire'), { target: { value: flow } });
+        await screen.findByText('No installations found.');
+        await screen.findByText('Loading installation settings…');
+        expect(screen.getByRole('button', { name: 'Create installation' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Refresh installations' })).toBeDisabled();
+        await act(async () => { releaseRead(); await Promise.resolve(); });
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Create installation' })).not.toBeDisabled());
+        expect(screen.queryByText('Loading installation settings…')).toBeNull();
+    } finally { await act(async () => { releaseRead(); }); }
 });

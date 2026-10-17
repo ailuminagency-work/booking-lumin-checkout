@@ -3,13 +3,27 @@
 #
 # These are standalone tsx scripts (top-level `await` + node:assert), not vitest
 # tests. This runner provisions a throwaway, loopback-only PostgreSQL database,
-# applies the local harness + migrations 0001-0031, and runs the flow-BFF
+# applies the local harness + all checked-in migrations, and runs the flow-BFF
 # acceptance harnesses that exercise the RELOCATED production BFF
 # (createFlowHttpServer + createFlowRepository).
 #
-# Portable pair run here (both must pass):
+# Portable harnesses run here (all must pass):
 #   - pg-http.integration.ts     (owner/customer flow HTTP journey, CAS, idempotency)
 #   - roster-http.integration.ts (roster provision/edit/snapshot over HTTP)
+#   - phase-a-golden.integration.ts (first complete housekeeping adapter flow:
+#     profile, availability, draft, hold, fake payment and atomic confirmation)
+#   - phase-a-health.integration.ts (factory-bound local health contract and
+#     route-boundary checks; hosted readiness remains a separate gate)
+#   - phase-a-rental-concurrency.integration.ts (resource-capacity race,
+#     tenant isolation, replay, release, and no financial side effects)
+#   - phase-a-detailing-flow.integration.ts (configurable detailing selection,
+#     harness-local catalog binding, draft replay, and no financial side effects)
+#   - phase-a-detailing-http.integration.ts (HTTP owner/staff detailing flow,
+#     route isolation, replay, and separately scoped canonical persistence)
+#   - phase-a-rental-http.integration.ts (HTTP rental flow plus scoped resource
+#     race, replay, release, and no financial side effects)
+# The golden flow checks sequential replay and tenant isolation, not concurrent
+# contention, browser behavior, hosted identity or real payment providers.
 #
 # DEFERRED (run manually; each needs its own disposable DB name + crypto-layout
 # env + raw TCP sockets / backend-PID observation that CI cannot supply reliably):
@@ -23,7 +37,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."          # apps/api
 ROOT="$(cd ../.. && pwd)"        # repo root
 
-export PGHOST="${PGHOST:-localhost}"
+# The golden adapter harness requires canonical IPv4 loopback, not an alias.
+case "${PGHOST:-127.0.0.1}" in
+  127.0.0.1|localhost) export PGHOST=127.0.0.1 ;;
+  *) echo "PGHOST must be IPv4 loopback (127.0.0.1 or localhost)" >&2; exit 1 ;;
+esac
+# libpq must not override the checked host with a remote address.
+if [[ -n "${PGHOSTADDR:-}" && "${PGHOSTADDR}" != 127.0.0.1 ]]; then
+  echo "PGHOSTADDR must be 127.0.0.1 when supplied" >&2
+  exit 1
+fi
+# Keep database creation, migrations, and every harness on the explicit
+# disposable loopback contract. These variables can silently override the
+# checked host or inject credentials/options from a caller's environment.
+unset DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS
+export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-postgres}"
 DB="lumin_r2a_$$_$(date +%s)"
 
@@ -41,7 +69,7 @@ export PGDATABASE="${DB}" LOCAL_HARNESS=1 FLOW_TEST_DISPOSABLE=1
 TSX="${ROOT}/node_modules/.bin/tsx"
 
 status=0
-for harness in src/pg-http.integration.ts src/roster-http.integration.ts; do
+for harness in src/pg-http.integration.ts src/roster-http.integration.ts src/phase-a-golden.integration.ts src/phase-a-health.integration.ts src/phase-a-rental-concurrency.integration.ts src/phase-a-detailing-flow.integration.ts src/phase-a-detailing-http.integration.ts src/phase-a-rental-http.integration.ts src/rental-confirmation.integration.ts; do
   echo "== running ${harness} =="
   if ! "${TSX}" "${harness}"; then
     echo "FAIL: ${harness}"
