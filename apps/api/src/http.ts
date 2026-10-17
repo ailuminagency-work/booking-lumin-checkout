@@ -16,6 +16,7 @@ import {paidJourneySessionExpiryValid} from './paid-journey-session';
 import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
+import {OwnerBookingsList,type OwnerBookingsListReader} from './owner-bookings';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
 import {ConfirmationReceiptHistory,type ConfirmationReceiptHistoryReader} from './confirmation-receipt-history';
@@ -78,6 +79,7 @@ export interface FlowHttpOptions{
  notificationAuthoring?:boolean;
  notificationPlannerConfig?:NotificationPlannerConfigApi;
  bookingFormAnswers?:BookingFormAnswersReader;
+ ownerBookings?:OwnerBookingsListReader;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
  detailingOfferCreate?:DetailingOfferCreator;
@@ -408,7 +410,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!result.success||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
-   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
+   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==="/api/bookings"?["tenantId","limit","before"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
    const journeyFieldPublication=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/(publish|publication)$/);
@@ -479,6 +481,19 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const tenantId=tenant.toLowerCase(),bookingId=Uuid.parse(url.searchParams.get('bookingId')).toLowerCase();
     const result=OwnerBookingFormAnswers.safeParse(await options.bookingFormAnswers(actor,tenantId,bookingId));
     if(!result.success||result.data.tenantId!==tenantId||result.data.bookingId!==bookingId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/bookings'){
+    if(!options.ownerBookings)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    if(url.searchParams.getAll('limit').length>1||url.searchParams.getAll('before').length>1)throw new FlowError('INVALID_REQUEST');
+    const limitRaw=url.searchParams.get('limit'),limit=limitRaw===null?25:Number(limitRaw);
+    if(!Number.isInteger(limit)||limit<1||limit>100)throw new FlowError('INVALID_REQUEST');
+    const before=url.searchParams.get('before');
+    if(before!==null&&!Number.isFinite(Date.parse(before)))throw new FlowError('INVALID_REQUEST');
+    const tenantId=tenant.toLowerCase();
+    const result=OwnerBookingsList.safeParse(await options.ownerBookings(actor,tenantId,{limit,before}));
+    if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==='/api/confirmation-receipt-history'){
