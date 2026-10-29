@@ -8,14 +8,28 @@ on:
 jobs:
   verify:
     name: verify (typecheck, test, build, contamination)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Hosted customer concurrency harness safety regressions
+        run: node --test scripts/customer-paid-concurrency.test.mjs
+      - name: HOUSEKEEPING hosted release and availability safety regressions
+        run: node --test scripts/phase-a-hosted-option-smoke.test.mjs
+      - name: Controlled Detailing hosted harness opt-in safety
+        run: node --test scripts/detailing-hosted-customer.test.mjs
+      - name: Staging deployment configuration safety regressions
+        run: |
+          node scripts/validate-staging-frontend-config.test.mjs
+          node scripts/validate-staging-frontend-config.mjs --self-test
+      - name: Mock-only staging observability verifier regressions
+        run: |
+          node scripts/phase-a-staging-observability.mjs --selftest
+          node scripts/phase-a-staging-observability-logs.mjs --selftest
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
@@ -23,7 +37,7 @@ jobs:
 
   database:
     name: database (migrations + RLS attack suite)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -43,12 +57,12 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: lumin_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Create test database
         run: psql -h localhost -U postgres -d postgres -c 'create database lumin_test;'
       - name: Apply local harness
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/local_harness.sql
-      - name: Apply all active migrations 0001..0031 in order (excluding _deferred)
+      - name: Apply all active numbered migrations in order (excluding _deferred)
         run: |
           for f in supabase/migrations/0*.sql; do
             echo "applying $f"
@@ -77,8 +91,896 @@ jobs:
             configurable_flow_tests \
             flow_storage_tests \
             outbox_tests \
+            confirmation_outbox_tests \
+            confirmation_delivery_store_tests \
+            notification_planner_config_tests \
             mode_installations_tests \
-            mode_flow_session_tests; do
+            mode_flow_session_tests \
+            customer_session_availability_tests \
+            customer_session_hold_tests \
+            customer_session_payment_tests \
+            paid_simple_publication_tests \
+            paid_simple_draft_tests \
+            paid_journey_drafts \
+            paid_journey_publication \
+            paid_journey_public_reader \
+            paid_journey_sessions \
+            paid_journey_owner_publication_read \
+            paid_journey_availability \
+            publish_paid_simple_draft_tests \
+            paid_simple_draft_list_tests \
+            paid_option_publication_tests \
+            paid_simple_version_history_tests \
+            paid_simple_publication_rollback_tests \
+            staging_business_type_tests \
+            housekeeping_simple_offer_tests \
+            housekeeping_offer_scheduling_tests \
+            paid_install_health_tests \
+            customer_field_draft_tests \
+            paid_customer_field_publication_tests \
+            customer_field_version_history_tests \
+            customer_field_publication_rollback_tests \
+            customer_field_install_health_tests \
+            customer_field_rollback_recovery_tests \
+            existing_business_profile_initialization_tests \
+            conditional_customer_field_tests conditional_customer_field_install_health_tests conditional_customer_field_rollback_tests auto_detailing_catalog_tests auto_detailing_scheduling_tests auto_detailing_publication_tests detailing_customer_reservation_tests detailing_customer_payment_tests; do
             echo "running $s"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "supabase/tests/${s}.sql"
           done
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Customer capability concurrency and expiry
+        env:
+          CUSTOMER_SCOPE_LOCAL_TEST: '1'
+        run: npx tsx apps/api/src/customer-availability.integration.ts
+      - name: Customer reservation hold concurrency and expiry
+        env:
+          CUSTOMER_HOLD_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_hold_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_hold_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/customer-hold.integration.ts
+      - name: Customer confirmation authority and expiry
+        env:
+          CUSTOMER_PAYMENT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_payment_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_payment_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/customer-payment.integration.ts
+      - name: Paid simple publication HTTP journey and expiry rollback
+        env:
+          PAID_SIMPLE_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_paid_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_paid_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-simple-publication.integration.ts
+      - name: Read-only owner publication recovery and ambiguous delivery
+        env:
+          PAID_RECOVERY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_recovery_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_recovery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-publication-reader.integration.ts
+      - name: Owner draft persistence and concurrent revision conflicts
+        env:
+          PAID_DRAFT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_draft_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_draft_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-simple-draft.integration.ts
+      - name: Saved draft publication replay and immutable customer payment journey
+        env:
+          PUBLISH_DRAFT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_publish_draft_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_publish_draft_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/publish-paid-draft.integration.ts
+      - name: Private owner draft discovery isolation and bounded read-only results
+        env:
+          PAID_DRAFT_LIST_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_draft_list_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_draft_list_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-draft-list.integration.ts
+      - name: Catalog option provenance and authoritative mock-payment journey
+        env:
+          PAID_OPTION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_option_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_option_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-option-publication.integration.ts
+      - name: Immutable owner publication history and tenant isolation
+        env:
+          PAID_HISTORY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_history_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_history_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-version-history.integration.ts
+      - name: Explicit publication rollback CAS and immutable capability isolation
+        env:
+          PAID_ROLLBACK_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_rollback_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_rollback_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/paid-publication-rollback.integration.ts
+      - name: Immutable staging business type and atomic owner onboarding
+        env:
+          BUSINESS_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_business_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_business_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx tsx apps/api/src/business.integration.ts
+      - name: Owner-authored housekeeping offer atomicity and checkout compatibility
+        env:
+          CATALOG_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_catalog_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_catalog_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/owner-catalog.integration.ts
+      - name: Explicit housekeeping scheduling and reassignment concurrency
+        env:
+          SCHEDULING_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_scheduling_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_scheduling_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/owner-scheduling.integration.ts
+      - name: Private owner installation evidence and read immutability
+        env:
+          PAID_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_health_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_health_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/paid-install-health.integration.ts
+      - name: Versioned customer field drafts and publication denial
+        env:
+          CUSTOMER_FIELD_DRAFT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_customer_fields_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_customer_fields_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-draft.integration.ts
+      - name: Immutable customer fields and authoritative payment expiry rollback
+        env:
+          CUSTOMER_FIELD_PUBLICATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_v5_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_v5_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-publication.integration.ts
+      - name: V5 owner immutable history isolation and bounded mixed versions
+        env:
+          CUSTOMER_FIELD_HISTORY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_field_history_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_field_history_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-version-history.integration.ts
+      - name: V5 lineage rollback CAS and pinned capability isolation
+        env:
+          CUSTOMER_FIELD_ROLLBACK_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_field_rollback_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_field_rollback_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-rollback.integration.ts
+      - name: V5 installation evidence and immutable financial provenance
+        env:
+          CUSTOMER_FIELD_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_health_v5_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_health_v5_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-install-health.integration.ts
+      - name: Lost rollback response recovery without a writer retry
+        env:
+          CUSTOMER_FIELD_RECOVERY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_field_recovery_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_field_recovery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/customer-field-rollback-receipt.integration.ts
+      - name: Existing business first-type initialization authority and concurrency
+        env:
+          BUSINESS_PROFILE_INITIALIZATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_profile_init_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_profile_init_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/business-profile-initialization.integration.ts
+      - name: Conditional customer fields publication, replay and booking authority
+        env:
+          CONDITIONAL_CUSTOMER_FIELD_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_conditional_v6_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_conditional_v6_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/conditional-customer-field-publication.integration.ts
+      - name: Conditional V6 installation health and immutable financial provenance
+        env:
+          CONDITIONAL_CUSTOMER_FIELD_HEALTH_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_fields_health_v6_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_fields_health_v6_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/conditional-customer-field-install-health.integration.ts
+      - name: Conditional V6 mixed-version history, CAS rollback and financial immutability
+        env:
+          CONDITIONAL_CUSTOMER_FIELD_ROLLBACK_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_conditional_rollback_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_conditional_rollback_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/conditional-customer-field-rollback.integration.ts
+      - name: Owner detailing catalog atomicity, scoped replay locks and pricing compatibility
+        env:
+          DETAILING_CATALOG_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_catalog_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_catalog_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-catalog.integration.ts
+      - name: Owner detailing availability atomicity, scoped replay and reassignment concurrency
+        env:
+          DETAILING_SCHEDULING_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_scheduling_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_scheduling_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-scheduling.integration.ts
+      - name: Detailing publication immutable snapshots, quote authority and alias concurrency
+        env:
+          DETAILING_PUBLICATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_publication_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_publication_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-publication.integration.ts
+      - name: Detailing session availability authority, capacity and expiry
+        env:
+          DETAILING_AVAILABILITY_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_availability_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_availability_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-availability.integration.ts
+      - name: Detailing reservations price authority, atomic rollback and last-slot concurrency
+        env:
+          DETAILING_RESERVATION_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_reservation_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_reservation_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-reservation.integration.ts
+      - name: Private Detailing staging payments, sole confirmation and lock recovery
+        env:
+          DETAILING_PAYMENT_LOCAL_TEST: '1'
+          PGDATABASE: lumin_phase_a_detailing_payment_ci
+        run: |
+          psql -d postgres -c 'create database lumin_phase_a_detailing_payment_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/detailing-payment.integration.ts
+      - name: Transactional confirmation envelopes and unchanged service/rental authority
+        env:
+          CONFIRMATION_OUTBOX_LOCAL_TEST: '1'
+          FLOW_TEST_DISPOSABLE: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_confirmation_outbox_ci
+        run: |
+          export CONFIRMATION_OUTBOX_CI_SERVER_HOST="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' '${{ job.services.postgres.id }}')"
+          psql -d postgres -c 'create database lumin_confirmation_outbox_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/confirmation-outbox.integration.ts
+          node --import tsx apps/api/src/atomic-confirmation.integration.ts
+          node --import tsx apps/api/src/rental-confirmation.integration.ts
+          node --import tsx apps/api/src/confirmation-delivery-store.integration.ts
+      - name: Saved notification planner mock delivery composition and lease recovery
+        env:
+          CONFIRMATION_PLANNER_DELIVERY_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_phase_a_confirmation_planner_delivery_ci
+        run: |
+          export CONFIRMATION_PLANNER_DELIVERY_CI_SERVER_HOST="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' '${{ job.services.postgres.id }}')"
+          psql -d postgres -c 'create database lumin_phase_a_confirmation_planner_delivery_ci;'
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/confirmation-planner-delivery.integration.ts
+      - name: Service-only confirmation receipt history metadata and attack tests
+        env:
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_confirmation_receipt_history_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_confirmation_receipt_history_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_confirmation_receipt_history_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_confirmation_receipt_history_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -c "set lumin.disposable_test='confirmation_receipt_history'; set lumin.disposable_host='$expected_server_host'; set lumin.disposable_port='5432'; set lumin.disposable_database='lumin_confirmation_receipt_history_ci';" -f supabase/tests/confirmation_receipt_history_tests.sql
+      - name: Owner confirmation receipt history reader real database composition
+        env:
+          CONFIRMATION_RECEIPT_HISTORY_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_confirmation_receipt_history_reader_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMATION_RECEIPT_HISTORY_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_confirmation_receipt_history_reader_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_confirmation_receipt_history_reader_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_confirmation_receipt_history_reader_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export CONFIRMATION_RECEIPT_HISTORY_CI_SERVER_HOST="$expected_server_host"
+          node --import tsx apps/api/src/confirmation-receipt-history.integration.ts
+      - name: Pinned owner booking form answers and historical read isolation
+        env:
+          BOOKING_FORM_ANSWERS_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_booking_answers_ci
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_booking_answers_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_booking_answers_ci;'
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          node --import tsx apps/api/src/booking-form-answers.integration.ts
+      - name: Owner journey draft HTTP persistence, isolation and revision races
+        env:
+          PAID_JOURNEY_DRAFT_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_api_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_DRAFT_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_api_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_api_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_api_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export PAID_JOURNEY_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-draft.integration.ts
+      - name: Owner journey publication HTTP snapshots and isolation
+        env:
+          PAID_JOURNEY_PUBLICATION_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_publication_api_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_PUBLICATION_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_publication_api_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_publication_api_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_publication_api_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export PAID_JOURNEY_PUBLICATION_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-publication.integration.ts
+      - name: Customer journey session HTTP provenance, expiry and isolation
+        env:
+          PAID_JOURNEY_SESSION_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_session_api_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_SESSION_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_session_api_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_session_api_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_session_api_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export PAID_JOURNEY_SESSION_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-session.integration.ts
+      - name: Owner journey publication authenticated read and snapshot authority
+        env:
+          PAID_JOURNEY_OWNER_READ_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_owner_read_api_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_OWNER_READ_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_owner_read_api_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_owner_read_api_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_owner_read_api_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export PAID_JOURNEY_OWNER_READ_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-owner-publication.integration.ts
+      - name: Customer journey availability provenance, capacity and expiry
+        env:
+          PAID_JOURNEY_AVAILABILITY_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_availability_api_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_AVAILABILITY_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_availability_api_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_availability_api_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_availability_api_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          export PAID_JOURNEY_AVAILABILITY_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-availability.integration.ts
+      - name: Customer journey hold concurrency, provenance and legacy payment exclusion
+        env:
+          PAID_JOURNEY_HOLD_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_phase_a_journey_hold_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_HOLD_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_phase_a_journey_hold_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_phase_a_journey_hold_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_phase_a_journey_hold_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_holds.sql
+          export PAID_JOURNEY_HOLD_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-hold.integration.ts
+      - name: Customer journey hold recovery read isolation and unchanged lifecycle counts
+        env:
+          PAID_JOURNEY_HOLD_READ_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_hold_read_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_HOLD_READ_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_hold_read_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_hold_read_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_hold_read_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_hold_read.sql
+          export PAID_JOURNEY_HOLD_READ_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-hold-read.integration.ts
+      - name: Customer journey staging mock payment authority and mixed lock order
+        env:
+          PAID_JOURNEY_PAYMENT_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_payment_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_PAYMENT_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_payment_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_payment_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_payment_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_mock_payment.sql
+          export PAID_JOURNEY_PAYMENT_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-payment.integration.ts
+      - name: Owner journey history, rollback and publication generation isolation
+        env:
+          PAID_JOURNEY_HISTORY_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_history_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_HISTORY_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_history_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_history_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_history_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_history_rollback.sql
+          export PAID_JOURNEY_HISTORY_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-history-rollback.integration.ts
+      - name: Ordered conditional customer-field draft CAS and identity isolation
+        env:
+          PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_fields_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_fields_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_fields_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_fields_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_drafts.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_DRAFT_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-draft.integration.ts
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_fields_pub_ci;'
+          export PGDATABASE=lumin_journey_fields_pub_ci
+          actual_publication_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_publication_fixture" == "$expected_server_host|5432|lumin_journey_fields_pub_ci|postgres" ]] || { echo 'Disposable publication fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_publication.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_PUBLICATION_LOCAL_TEST=1
+          node --import tsx apps/api/src/paid-journey-customer-field-publication.integration.ts
+          createdb lumin_journey_fields_reader_ci
+          export PGDATABASE=lumin_journey_fields_reader_ci
+          actual_reader_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_reader_fixture" == "$expected_server_host|5432|lumin_journey_fields_reader_ci|postgres" ]] || { echo 'Disposable reader fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_public_reader.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_PUBLIC_READER_LOCAL_TEST=1
+          node --import tsx apps/api/src/paid-journey-customer-field-public-reader.integration.ts
+          createdb lumin_journey_fields_session_ci
+          export PGDATABASE=lumin_journey_fields_session_ci
+          actual_session_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_session_fixture" == "$expected_server_host|5432|lumin_journey_fields_session_ci|postgres" ]] || { echo 'Disposable session fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_sessions.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_LOCAL_TEST=1
+          export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-session.integration.ts
+          createdb lumin_journey_fields_session_read_ci
+          export PGDATABASE=lumin_journey_fields_session_read_ci
+          actual_session_read_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_session_read_fixture" == "$expected_server_host|5432|lumin_journey_fields_session_read_ci|postgres" ]] || { echo 'Disposable session reader fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_session_read.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_SESSION_READ_LOCAL_TEST=1
+          node --import tsx apps/api/src/paid-journey-customer-field-session-read.integration.ts
+          createdb lumin_journey_fields_availability_ci
+          export PGDATABASE=lumin_journey_fields_availability_ci
+          actual_fields_availability_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fields_availability_fixture" == "$expected_server_host|5432|lumin_journey_fields_availability_ci|postgres" ]] || { echo 'Disposable conditional availability fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_availability.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_AVAILABILITY_LOCAL_TEST=1
+          export PAID_JOURNEY_CUSTOMER_FIELD_AVAILABILITY_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-availability.integration.ts
+
+      - name: Conditional customer-field hold authority, replay, capacity and legacy payment exclusion
+        env:
+          PAID_JOURNEY_CUSTOMER_FIELD_HOLD_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_fields_hold_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_CUSTOMER_FIELD_HOLD_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_fields_hold_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_fields_hold_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_fields_hold_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_hold.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_HOLD_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-hold.integration.ts
+
+      - name: Conditional customer-field mock payment authority, replay and atomic expiry rollback
+        env:
+          PAID_JOURNEY_CUSTOMER_FIELD_PAYMENT_LOCAL_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_journey_fields_payment_ci
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PAID_JOURNEY_CUSTOMER_FIELD_PAYMENT_LOCAL_TEST" == '1' ]]
+          [[ "${GITHUB_ACTIONS:-}" == 'true' && "${CI:-}" == 'true' ]]
+          [[ "$PGHOST" == '127.0.0.1' && "$PGPORT" == '5432' && "$PGUSER" == 'postgres' ]]
+          [[ "$PGDATABASE" == 'lumin_journey_fields_payment_ci' ]]
+          for override in PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS DATABASE_URL; do
+            [[ -z "${!override:-}" ]] || { echo 'Unexpected database routing override'; exit 1; }
+          done
+          [[ "$POSTGRES_SERVICE_ID" =~ ^[a-f0-9]{12,64}$ ]]
+          expected_server_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")"
+          [[ "$expected_server_host" =~ ^(10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+)$ ]]
+          actual_admin="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_admin" == "$expected_server_host|5432|postgres|postgres" ]] || { echo 'Disposable admin target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_journey_fields_payment_ci;'
+          actual_fixture="$(psql -X -v ON_ERROR_STOP=1 -Atc "select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")"
+          [[ "$actual_fixture" == "$expected_server_host|5432|lumin_journey_fields_payment_ci|postgres" ]] || { echo 'Disposable fixture target mismatch'; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_payment.sql
+          export PAID_JOURNEY_CUSTOMER_FIELD_PAYMENT_CI_DATABASE_HOST="$expected_server_host"
+          node --import tsx apps/api/src/paid-journey-customer-field-payment.integration.ts

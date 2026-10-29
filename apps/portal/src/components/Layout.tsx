@@ -4,18 +4,11 @@ import { getTenant } from "../data/api";
 import { usePortal } from "./PortalProvider";
 
 export const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", glyph: "▦", end: true },
-  { to: "/bookings", label: "Bookings", glyph: "🗓" },
-  { to: "/calendar", label: "Calendar", glyph: "◷" },
-  { to: "/workers", label: "Workers", glyph: "♙" },
-  { to: "/customers", label: "Customers", glyph: "☺" },
-  { to: "/services", label: "Services", glyph: "✦" },
-  { to: "/pricing", label: "Pricing", glyph: "$" },
-  { to: "/invoices", label: "Invoices", glyph: "▤" },
-  { to: "/embed", label: "Embed Builder", glyph: "▣" },
-  { to: "/media", label: "Media", glyph: "▨" },
-  { to: "/integrations", label: "Integrations", glyph: "⇄" },
-  { to: "/settings", label: "Settings", glyph: "⚙" },
+  { to: "/", label: "Home", glyph: "H", end: true },
+  { to: "/bookings", label: "Bookings", glyph: "B" },
+  { to: "/embed", label: "Booking Form", glyph: "F" },
+  { to: "/services", label: "Services & Pricing", glyph: "$" },
+  { to: "/settings", label: "Settings", glyph: "S" },
 ] as const;
 
 /** Presentation only: connected mode never reads the demo tenant store. */
@@ -88,3 +81,5 @@ export function Layout({children}: {children: ReactNode}) {
   const tenant = getTenant(ctx, store);
   return <PortalShell tenantName={tenant.name} roleLabel={ctx.role === "BUSINESS_OWNER" ? "Owner" : "Staff"} mode="demo">{children}</PortalShell>;
 }
+
+

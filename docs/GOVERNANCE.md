@@ -8,15 +8,16 @@ Execution (build in isolated branches/worktrees), Verification (disprove).
 
 | Control | State | Compensation |
 |---|---|---|
-| Branch protection on `main` | **NOT settable** via the session's GitHub token ("Resource not accessible by integration"). Recorded limitation. | No direct pushes to `main`; all change via branch → PR. Enforced by process + Runtime Guardian. |
+| Branch protection on `main` | **Protected**, verified through the GitHub branch API on 2026-10-04 at `c5663c59e134e71beb511f509b3287ab0046bdff`. The earlier session limitation is historical. | No direct pushes to `main`; preserve protection and require review, CI and Release Governor. |
 | Required CI | Present (`.github/workflows/ci.yml`: verify + database jobs). | **CI must be green before any merge, docs included.** |
 | Required review | Process gate (independent reviewer who did not build the change). | Release Governor merges only after review + Runtime-Guardian check. |
 | Migration validation | CI `database` job applies `0001..000N` + runs RLS attack suite. | — |
 | Contamination scan | CI `verify` job runs `scripts/contamination-check.sh`. | — |
 
-**Ask for the repo owner:** enable GitHub branch protection on `main` (require PR, require
-the `verify` + `database` checks, require 1 review, disallow direct pushes). Until then the
-above process is the compensating control.
+GitHub currently reports `main` as protected. Recheck the effective rules before any
+production promotion; this flag alone does not prove every required check or bypass
+restriction. Staging execution does not authorize changing those rules or merging the
+accumulated draft integration PR.
 
 ## Isolation rule (Execution plane)
 

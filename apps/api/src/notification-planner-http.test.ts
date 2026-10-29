@@ -1,0 +1,36 @@
+import {afterEach,expect,it,vi} from 'vitest';
+import type {Server} from 'node:http';
+import {request} from 'node:http';
+import {createFlowHttpServer} from './http';
+import {FlowError} from './repository';
+const id=(n:number)=>`67000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const actor=id(1),tenant=id(2),origin='https://portal.example.test',token='verified-owner-token-123';
+const config={tenantId:tenant,locale:'en-US',timezone:'UTC',sender:{emailFrom:'notify@example.test'},events:[{event:'booking.confirmed',channels:['email']}],reminders:[],templates:[{trigger:'booking.confirmed',channel:'email',locale:'en-US',subject:'Booking {{bookingReference}}',body:'Hello {{customerName}}'}]};
+const receipt={schemaVersion:1,tenantId:tenant,revision:1,config},body={expectedRevision:0,config};
+let server:Server;
+afterEach(async()=>{server?.closeAllConnections();if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));});
+async function setup(value:unknown=receipt,enabled=true){
+ const result=async()=>{if(value instanceof Error)throw value;return value as never;};
+ const read=vi.fn(result),save=vi.fn(result),call=vi.fn();
+ server=createFlowHttpServer({repository:{call},ownerOrigins:[origin],customerOrigins:['https://checkout.example.test'],authenticateOwner:async credential=>credential===token?actor:null,notificationAuthoring:enabled,notificationPlannerConfig:{read,save}});
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const base=`http://127.0.0.1:${(server.address() as {port:number}).port}/api/notification-planner-config`;
+ const send=(method='GET',payload:unknown=body,query=`tenantId=${tenant}`,credential:string|null=token,browserOrigin=origin)=>fetch(`${base}?${query}`,{method,headers:{origin:browserOrigin,...(credential===null?{}:{authorization:`Bearer ${credential}`}),...(method==='POST'?{'content-type':'application/json'}:{})},...(method==='POST'?{body:JSON.stringify(payload)}:{})});
+ return {base,read,save,call,send};
+}
+it('reads only the verified owner and requested tenant with exact CORS and no-store',async()=>{const f=await setup(),response=await f.send();expect(response.status).toBe(200);expect(await response.json()).toEqual({ok:true,data:receipt});expect(response.headers.get('access-control-allow-origin')).toBe(origin);expect(response.headers.get('cache-control')).toBe('no-store');expect(f.read).toHaveBeenCalledExactlyOnceWith(actor,tenant);expect(f.save).not.toHaveBeenCalled();expect(f.call).not.toHaveBeenCalled();});
+it('missing saved settings returns null without invented defaults',async()=>{const f=await setup(null),r=await f.send();expect(r.status).toBe(200);expect(await r.json()).toEqual({ok:true,data:null});});
+it('saves explicit settings and CAS revision once, without a generic RPC or automatic retry',async()=>{const f=await setup(),r=await f.send('POST');expect(r.status).toBe(200);expect(await r.json()).toEqual({ok:true,data:receipt});expect(f.save).toHaveBeenCalledExactlyOnceWith(actor,tenant,body);expect(f.call).not.toHaveBeenCalled();});
+it.each([null,'forged-owner-token-123','short'])('unauthenticated caller %s cannot read or write even when authoring is disabled',async credential=>{const f=await setup(receipt,false);for(const method of ['GET','POST'])expect((await f.send(method,body,undefined,credential)).status).toBe(401);expect(f.read).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();});
+it.each(['https://checkout.example.test','https://evil.example.test','null'])('denies non-owner browser origin %s',async browserOrigin=>{const f=await setup();expect((await f.send('POST',body,undefined,token,browserOrigin)).status).toBe(403);expect(f.save).not.toHaveBeenCalled();});
+it.each([`tenantId=${tenant}&tenantId=${tenant}`,`tenantId=${tenant}&actor=${actor}`,`tenantId=${tenant}&role=OWNER`,'tenantId=wrong',''])('rejects ambiguous/widened tenant query %s',async query=>{const f=await setup();expect((await f.send('POST',body,query)).status).toBe(400);expect(f.save).not.toHaveBeenCalled();});
+it.each([{actor},{role:'OWNER'},{provider:'stripe'},{secret:'do-not-return'},{expectedRevision:-1},{expectedRevision:0.5},{expectedRevision:Number.MAX_SAFE_INTEGER},{config:{...config,tenantId:actor}},{config:{...config,apiKey:'secret'}}])('rejects authority or credential widening %j',async extra=>{const f=await setup();expect((await f.send('POST',{...body,...extra})).status).toBe(400);expect(f.save).not.toHaveBeenCalled();});
+it.each([null,{...receipt,tenantId:actor},{...receipt,revision:2},{...receipt,config:{...config,sender:{emailFrom:'other@example.test'}}},{...receipt,providerSecret:'private'}])('rejects inconsistent save receipt %j',async value=>{const f=await setup(value);expect((await f.send('POST')).status).toBe(500);expect(f.save).toHaveBeenCalledTimes(1);});
+it.each([{...receipt,tenantId:actor},{...receipt,revision:0},{...receipt,schemaVersion:2},{...receipt,privateKey:'secret'}])('does not expose malformed read receipts %j',async value=>{const f=await setup(value),r=await f.send();expect(r.status).toBe(500);expect(await r.json()).toEqual({ok:false,code:'INTERNAL_ERROR'});});
+it('propagates stale CAS as conflict without replaying the writer',async()=>{const f=await setup(new FlowError('CONFLICT')),r=await f.send('POST');expect(r.status).toBe(409);expect(await r.json()).toEqual({ok:false,code:'CONFLICT'});expect(f.save).toHaveBeenCalledTimes(1);});
+it('fresh SQL permission denial remains forbidden',async()=>{const f=await setup(new FlowError('FORBIDDEN'));expect((await f.send()).status).toBe(403);});
+it('untrusted upstream error is redacted',async()=>{const f=await setup(new Error('private credential')),r=await f.send();expect(r.status).toBe(500);expect(await r.json()).toEqual({ok:false,code:'INTERNAL_ERROR'});});
+it('disabled authoring fails closed for a verified owner',async()=>{const f=await setup(receipt,false);expect((await f.send()).status).toBe(422);expect(f.read).not.toHaveBeenCalled();});
+it('unsupported methods never call settings storage',async()=>{const f=await setup();expect((await f.send('DELETE')).status).toBe(400);expect(f.read).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();});
+it('GET payload is denied before storage',async()=>{const f=await setup();const status=await new Promise<number>(resolve=>{const req=request(`${f.base}?tenantId=${tenant}`,{method:'GET',headers:{origin,authorization:`Bearer ${token}`,'content-length':'2'}},res=>{res.resume();resolve(res.statusCode!);});req.end('{}');});expect(status).toBe(400);expect(f.read).not.toHaveBeenCalled();});
+it('malformed and oversized JSON do not reach the writer',async()=>{const f=await setup();for(const value of ['{',JSON.stringify({text:'x'.repeat(32769)})]){const r=await fetch(`${f.base}?tenantId=${tenant}`,{method:'POST',headers:{origin,authorization:`Bearer ${token}`,'content-type':'application/json'},body:value});expect(r.status).toBe(400);}expect(f.save).not.toHaveBeenCalled();});
