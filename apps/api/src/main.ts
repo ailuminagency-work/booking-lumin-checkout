@@ -54,7 +54,7 @@ import { createBookingConfirmation } from './confirmation';
 import { createReservationWriter } from './reservation';
 import { createPoolConfirmationOutboxDriver, type ConfirmationOutboxDriver } from './confirmation-outbox-driver';
 import { createStagingConfirmationDeliveryProvider } from './confirmation-delivery-provider';
-import { createOwnerBookingsListReader } from './owner-bookings';
+import { createOwnerBookingsListReader, createOwnerBookingDetailReader } from './owner-bookings';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
@@ -164,7 +164,7 @@ function main(): void {
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true,...(()=>{const operations=createPaidJourneyHistoryRollback(pool,customerOrigins);return{paidJourneyHistory:operations.history,paidJourneyRollback:operations.rollback};})()}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool),paidJourneyHold:createPaidJourneyHoldWriter(pool),paidJourneyHoldRead:createPaidJourneyHoldReader(pool),...(mockPaymentsEnabled(process.env)?{paidJourneyMockPayment:createPaidJourneyMockPaymentWriter(pool,process.env)}:{})}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool),confirmationReceiptHistory:createConfirmationReceiptHistoryReader(pool)}:{}),
-    ...(process.env.BOOKING_LUMIN_ENV==='staging'?{bookingFormAnswers:createBookingFormAnswersReader(pool),ownerBookings:createOwnerBookingsListReader(pool)}:{}),
+    ...(process.env.BOOKING_LUMIN_ENV==='staging'?{bookingFormAnswers:createBookingFormAnswersReader(pool),ownerBookings:createOwnerBookingsListReader(pool),ownerBookingDetail:createOwnerBookingDetailReader(pool)}:{}),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
