@@ -1,9 +1,10 @@
 import type {Pool} from 'pg';
+import {capabilityEnabled} from './capability-flags';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {BusinessProfile,CreateBusiness} from '@lumin/contracts';
 import {FlowError} from './repository';
-export function businessOnboardingEnabled(env:Record<string,string|undefined>):boolean{return env.BOOKING_LUMIN_ENV==='staging'&&env.BOOKING_LUMIN_BUSINESS_ONBOARDING==='1';}
+export function businessOnboardingEnabled(env:Record<string,string|undefined>):boolean{return capabilityEnabled(env,'BOOKING_LUMIN_BUSINESS_ONBOARDING');}
 const Uuid=z.string().uuid().transform(s=>s.toLowerCase());
 export type BusinessCreator=(actor:string,input:CreateBusiness)=>Promise<BusinessProfile>;
 export type BusinessProfileReader=(actor:string,tenant:string)=>Promise<BusinessProfile>;

@@ -56,6 +56,7 @@ import { createPoolConfirmationOutboxDriver, type ConfirmationOutboxDriver } fro
 import { createStagingConfirmationDeliveryProvider } from './confirmation-delivery-provider';
 import { createOwnerBookingsListReader, createOwnerBookingDetailReader } from './owner-bookings';
 import { createOwnerBookingCancelWriter } from './owner-booking-cancel';
+import { paidPublicationEnabled } from './capability-flags';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
@@ -170,7 +171,7 @@ function main(): void {
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
     ...(schedulingAuthoringEnabled(process.env)?{schedulingAuthoring:true,offerSchedulingCreate:createOfferSchedulingCreator(pool),detailingSchedulingCreate:createDetailingSchedulingCreator(pool)}:{}),
-    ...(detailingPublicationEnabled(process.env)?{detailingPublication:true,detailingPublicationApi:createDetailingPublicationApi(pool,customerOrigins),detailingAvailability:createDetailingAvailabilityReader(pool,customerOrigins),detailingReservationApi:createDetailingReservationApi(pool,customerOrigins),detailingPaymentApi:createDetailingPaymentApi(pool,customerOrigins,process.env)}:{}),
+    ...(detailingPublicationEnabled(process.env)?{detailingPublication:true,detailingPublicationApi:createDetailingPublicationApi(pool,customerOrigins),detailingAvailability:createDetailingAvailabilityReader(pool,customerOrigins),detailingReservationApi:createDetailingReservationApi(pool,customerOrigins)}:{}),
     availability: createAvailabilityReader(pool),
     customerConfirmation: createCustomerConfirmation(pool),
     customerHold: createCustomerHoldWriter(pool),
@@ -178,7 +179,14 @@ function main(): void {
     reservation: createReservationWriter(pool),
     confirmation: createBookingConfirmation(pool),
     draft: createDraftWriter(pool),
-    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),customerFieldInstallHealth:createCustomerFieldInstallHealthReader(pool,customerOrigins),conditionalCustomerFieldInstallHealth:createConditionalCustomerFieldInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidCustomerFieldPublication:createCustomerFieldPublicationReader(pool,customerOrigins),paidConditionalCustomerFieldPublication:createConditionalCustomerFieldPublicationReader(pool,customerOrigins),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidCustomerFieldVersionHistory:createCustomerFieldVersionHistoryReader(pool,customerOrigins),paidConditionalCustomerFieldVersionHistory:createConditionalCustomerFieldVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins),paidCustomerFieldRollback:createCustomerFieldRollback(pool,customerOrigins),paidConditionalCustomerFieldRollback:createConditionalCustomerFieldRollback(pool,customerOrigins),paidCustomerFieldRollbackReceipt:createCustomerFieldRollbackReceiptReader(pool,customerOrigins),paidConditionalCustomerFieldRollbackReceipt:createConditionalCustomerFieldRollbackReceiptReader(pool,customerOrigins)}:{}),
+    // Simulated money only. mockPaymentsEnabled throws outside staging, so these
+    // can never compose in production however the capability flags are set.
+    ...(mockPaymentsEnabled(process.env)?{mockPayment:createMockPaymentWriter(pool,process.env),customerMockPayment:createCustomerMockPayment(pool,process.env),detailingPaymentApi:createDetailingPaymentApi(pool,customerOrigins,process.env)}:{}),
+    // Publishing, reading publications, install health, version history and
+    // rollback. None of these take or simulate a payment; they were previously
+    // trapped behind the fake-payment gate, which is why an owner could not
+    // publish or even read a publication in a production-mode deploy (gap G1).
+    ...(paidPublicationEnabled(process.env)?{paidSimplePublication:true,paidInstallHealth:createPaidInstallHealthReader(pool,customerOrigins),customerFieldInstallHealth:createCustomerFieldInstallHealthReader(pool,customerOrigins),conditionalCustomerFieldInstallHealth:createConditionalCustomerFieldInstallHealthReader(pool,customerOrigins),paidPublication:createPaidPublicationReader(pool),paidCustomerFieldPublication:createCustomerFieldPublicationReader(pool,customerOrigins),paidConditionalCustomerFieldPublication:createConditionalCustomerFieldPublicationReader(pool,customerOrigins),paidPublications:createPaidPublicationListReader(pool),paidDrafts:createPaidDraftListReader(pool),paidVersionHistory:createPaidVersionHistoryReader(pool,customerOrigins),paidCustomerFieldVersionHistory:createCustomerFieldVersionHistoryReader(pool,customerOrigins),paidConditionalCustomerFieldVersionHistory:createConditionalCustomerFieldVersionHistoryReader(pool,customerOrigins),paidRollback:createPaidPublicationRollback(pool,customerOrigins),paidCustomerFieldRollback:createCustomerFieldRollback(pool,customerOrigins),paidConditionalCustomerFieldRollback:createConditionalCustomerFieldRollback(pool,customerOrigins),paidCustomerFieldRollbackReceipt:createCustomerFieldRollbackReceiptReader(pool,customerOrigins),paidConditionalCustomerFieldRollbackReceipt:createConditionalCustomerFieldRollbackReceiptReader(pool,customerOrigins)}:{}),
     ...(mockPaymentsEnabled(process.env)?{rentalMockPayment:createRentalMockPaymentWriter(pool,process.env)}:{}),
     authenticateOwner,
     ownerOrigins,
