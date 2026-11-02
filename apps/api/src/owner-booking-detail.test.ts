@@ -22,9 +22,9 @@ const core = {
 
 // Trigger-maintained trail: insert row has from_state null.
 const defaultHistory = [
-  {from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'},
-  {from_state: 'draft', to_state: 'pending_payment', reason: null, at: '2026-10-06T23:55:00.000Z'},
-  {from_state: 'pending_payment', to_state: 'confirmed', reason: null, at: '2026-10-06T23:55:10.000Z'},
+  {id: 1, from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'},
+  {id: 2, from_state: 'draft', to_state: 'pending_payment', reason: null, at: '2026-10-06T23:55:00.000Z'},
+  {id: 3, from_state: 'pending_payment', to_state: 'confirmed', reason: null, at: '2026-10-06T23:55:10.000Z'},
 ];
 
 function fakePool(opts: {core?: unknown[]; receipts?: unknown[]; refunds?: unknown[]; history?: unknown[]; forbid?: boolean} = {}): Pool {
@@ -67,7 +67,7 @@ it('returns booking core, customer, normalized payment, and a persisted-fact act
 it('omits the state entry for drafts and handles missing payment/customer', async () => {
   const draft = {booking: {...core.booking, state: 'draft', total: null}, customer: null, payment: null};
   const out = await createOwnerBookingDetailReader(fakePool({core: [{result: draft}],
-    history: [{from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'}]}))(ACTOR, TENANT, BOOKING);
+    history: [{id: 1, from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'}]}))(ACTOR, TENANT, BOOKING);
   expect(out.customer).toBeNull();
   expect(out.payment).toBeNull();
   expect(out.activity.map((a) => a.kind)).toEqual(['booking.created']);
@@ -96,8 +96,8 @@ it('rejects invalid identities before connecting', async () => {
 it('reports every real transition from the trail and falls back when the trail is empty', async () => {
   const read = createOwnerBookingDetailReader(fakePool({
     history: [
-      {from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-01T00:00:00.000Z'},
-      {from_state: 'confirmed', to_state: 'cancelled', reason: 'owner cancelled', at: '2026-10-22T00:00:00.000Z'},
+      {id: 1, from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-01T00:00:00.000Z'},
+      {id: 2, from_state: 'confirmed', to_state: 'cancelled', reason: 'owner cancelled', at: '2026-10-22T00:00:00.000Z'},
     ],
   }));
   const out = await read(ACTOR, TENANT, BOOKING);
@@ -107,4 +107,30 @@ it('reports every real transition from the trail and falls back when the trail i
   const bare = await createOwnerBookingDetailReader(fakePool({history: [], receipts: [], refunds: []}))(ACTOR, TENANT, BOOKING);
   expect(bare.activity.filter((a) => a.kind === 'booking.created')).toHaveLength(1);
   expect(bare.activity.some((a) => a.detail === 'as of last update')).toBe(false);
+});
+
+it('orders same-instant transitions causally by trail id, not by state name', async () => {
+  // Real staging data: draft->pending_payment and pending_payment->confirmed commit in
+  // one transaction and share an identical `at`. Alphabetical tie-breaks would invert
+  // a confirmed->cancelled pair, so the monotonic trail id is the only safe order.
+  const same = '2026-10-05T22:03:26.536Z';
+  const out = await createOwnerBookingDetailReader(fakePool({
+    // payment sits between creation and the tied pair, so the assertion isolates the tie-break
+    core: [{result: {...core, booking: {...core.booking, state: 'cancelled'}, payment: {...core.payment, createdAt: '2026-10-05T22:03:10.000Z'}}}],
+    receipts: [], refunds: [],
+    history: [
+      {id: 70, from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-05T22:03:07.120Z'},
+      {id: 71, from_state: 'confirmed', to_state: 'cancelled', reason: null, at: same},
+      {id: 72, from_state: 'cancelled', to_state: 'refunded', reason: null, at: same},
+    ],
+  }))(ACTOR, TENANT, BOOKING);
+  // Newest first: the later trail id wins the tie even though 'cancelled' < 'refunded'.
+  expect(out.activity.map((a) => a.kind)).toEqual([
+    'booking.refunded',
+    'booking.cancelled',
+    'payment.succeeded',
+    'booking.created',
+  ]);
+  // seq is an internal sort key and must never reach the contract.
+  for (const entry of out.activity) expect(Object.keys(entry).sort()).toEqual(['at', 'detail', 'kind']);
 });

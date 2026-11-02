@@ -210,12 +210,12 @@ const REFUNDS_SQL = `select amount, currency, reason, provider, to_char(created_
  order by created_at, id limit 50`;
 // Trigger-maintained transition trail (0005). service_role holds SELECT only, so the
 // trail cannot be rewritten by the application. Joined through bookings for tenant scope.
-const HISTORY_SQL = `select h.from_state, h.to_state, h.reason,
+const HISTORY_SQL = `select h.id, h.from_state, h.to_state, h.reason,
  to_char(h.at at time zone 'UTC',${ISO}) as at
  from public.booking_state_history h
  join public.bookings b on b.id = h.booking_id and b.tenant_id = $1::uuid
  where h.booking_id = $2::uuid
- order by h.at, h.to_state
+ order by h.at, h.id
  limit 50`;
 
 export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailReader {
@@ -265,8 +265,11 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
         createdAt: String(row.created_at),
       }));
       // Activity: every entry is backed by a persisted row/timestamp; nothing invented.
-      const activity: Array<{kind: string; at: string; detail: string | null}> = [];
-      // Real transitions from the trigger-maintained trail. A null from_state is the insert.
+      // Consecutive transitions commit in one transaction and therefore share an
+      // identical `at`, so the trail's monotonic id is the only causal tiebreak;
+      // ordering by state name would be arbitrary (and would invert e.g.
+      // confirmed -> cancelled). seq is used for sorting only, never returned.
+      const activity: Array<{kind: string; at: string; detail: string | null; seq: number}> = [];
       for (const row of history.rows) {
         const to = String(row.to_state);
         const reason = row.reason === null || row.reason === undefined ? null : String(row.reason);
@@ -274,14 +277,15 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
           kind: row.from_state === null || row.from_state === undefined ? 'booking.created' : `booking.${to}`,
           at: String(row.at),
           detail: reason,
+          seq: Number(row.id),
         });
       }
       // Defensive: a booking predating the trail still reports its creation.
-      if (!activity.some((entry) => entry.kind === 'booking.created')) activity.push({kind: 'booking.created', at: String(b.createdAt), detail: null});
-      if (payment) activity.push({kind: `payment.${payment.state}`, at: payment.createdAt, detail: `${payment.provider}`});
-      for (const row of receipts.rows) activity.push({kind: `confirmation.delivered.${String(row.channel)}`, at: String(row.delivered_at), detail: null});
-      for (const refund of refundRows) activity.push({kind: 'refund.recorded', at: refund.createdAt, detail: refund.reason});
-      activity.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+      if (!activity.some((entry) => entry.kind === 'booking.created')) activity.push({kind: 'booking.created', at: String(b.createdAt), detail: null, seq: -1});
+      if (payment) activity.push({kind: `payment.${payment.state}`, at: payment.createdAt, detail: `${payment.provider}`, seq: 0});
+      for (const row of receipts.rows) activity.push({kind: `confirmation.delivered.${String(row.channel)}`, at: String(row.delivered_at), detail: null, seq: 0});
+      for (const refund of refundRows) activity.push({kind: 'refund.recorded', at: refund.createdAt, detail: refund.reason, seq: 0});
+      activity.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : y.seq - x.seq));
       const parsed = OwnerBookingDetail.safeParse({
         tenantId: tenant,
         bookingId: booking,
@@ -291,7 +295,8 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
           notes: b.notes === null || b.notes === undefined ? null : String(b.notes),
           createdAt: String(b.createdAt), updatedAt: String(b.updatedAt),
         },
-        customer, payment, refunds: refundRows, activity: activity.slice(0, 100),
+        customer, payment, refunds: refundRows,
+        activity: activity.slice(0, 100).map(({kind, at, detail}) => ({kind, at, detail})),
       });
       if (!parsed.success || parsed.data.tenantId !== tenant || parsed.data.bookingId !== booking || parsed.data.booking.id !== booking) throw new FlowError('INTERNAL_ERROR');
       return parsed.data;
