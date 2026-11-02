@@ -7,6 +7,9 @@ import {PaidJourneyDraft,PaidJourneyDraftReceipt} from './paid-journey-draft';
 import { isDeepStrictEqual } from "node:util";
 import { PaidConditionalCustomerFieldRender,PaidCustomerFieldRender,CustomerFieldAnswers,PaidOptionRender,PaidSimplePresentation, PaidSimpleRender, ConfigurableAuthoringV2, ConfigurableCatalog, normalizeConfigurablePublication } from "@lumin/workflow";
 export const Uuid=z.string().uuid();
+/** Owner cancel input. Only an identity and the state the owner believed it was
+ * in; no price, state target, tenant or payment field is accepted. */
+export const OwnerBookingCancelInput=z.object({bookingId:Uuid,expectedState:z.enum(['draft','pending_payment','confirmed','completed','cancelled','refunded','failed'])}).strict();
 const Key=z.string().min(1).max(100).refine(s=>!["__proto__","prototype","constructor"].includes(s),"Reserved field identifier");
 const Version=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1);
 export const BoundConfig=z.object({key:z.string().min(1).max(200),steps:z.array(z.object({key:Key,questionKey:Key,kind:z.literal("question").default("question"),required:z.boolean().default(false)}).strict()).min(1).max(50)}).strict().superRefine((c,ctx)=>{
