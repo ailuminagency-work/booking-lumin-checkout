@@ -17,6 +17,7 @@ import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
 import {OwnerBookingsList,OwnerBookingDetail,type OwnerBookingsListReader,type OwnerBookingDetailReader} from './owner-bookings';
+import {OwnerBookingCancelReceipt,type OwnerBookingCancelWriter} from './owner-booking-cancel';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
 import {ConfirmationReceiptHistory,type ConfirmationReceiptHistoryReader} from './confirmation-receipt-history';
@@ -72,7 +73,7 @@ import { createServer,type IncomingMessage,type ServerResponse } from "node:http
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
-import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDraft,CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,type FlowRpc } from "./contracts";
+import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDraft,CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,OwnerBookingCancelInput,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
 const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
 export interface FlowHttpOptions{
@@ -81,6 +82,7 @@ export interface FlowHttpOptions{
  bookingFormAnswers?:BookingFormAnswersReader;
  ownerBookings?:OwnerBookingsListReader;
  ownerBookingDetail?:OwnerBookingDetailReader;
+ ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
  detailingOfferCreate?:DetailingOfferCreator;
@@ -496,6 +498,15 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=OwnerBookingsList.safeParse(await options.ownerBookings(actor,tenantId,{limit,before}));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/bookings/cancel'){
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const body=OwnerBookingCancelInput.parse(await jsonBody(req));
+    if(!options.ownerBookingCancel)throw new FlowError('UNSUPPORTED_CONFIG');
+    const tenantId=tenant.toLowerCase(),bookingId=body.bookingId.toLowerCase();
+    const receipt=OwnerBookingCancelReceipt.safeParse(await options.ownerBookingCancel(actor,tenantId,bookingId,body.expectedState));
+    if(!receipt.success||receipt.data.tenantId!==tenantId||receipt.data.bookingId!==bookingId||receipt.data.refundIssued!==false)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:{schemaVersion:1,...receipt.data}});return;
    }
    if(url.pathname==='/api/bookings/detail'){
     if(!options.ownerBookingDetail)throw new FlowError('UNSUPPORTED_CONFIG');
