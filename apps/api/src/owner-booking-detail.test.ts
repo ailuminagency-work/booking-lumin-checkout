@@ -17,10 +17,17 @@ const core = {
   },
   customer: {id: CUSTOMER, name: 'Jane Doe', email: 'jane@example.test', phone: null},
   // bigint comes back from pg as a string; currency as padded char — the reader must normalize both.
-  payment: {provider: 'staging_mock', state: 'succeeded', amount: '12500', currency: 'USD ', createdAt: '2026-10-06T23:55:00.000Z'},
+  payment: {provider: 'staging_mock', state: 'succeeded', amount: '12500', currency: 'USD ', createdAt: '2026-10-06T23:55:05.000Z'},
 };
 
-function fakePool(opts: {core?: unknown[]; receipts?: unknown[]; refunds?: unknown[]; forbid?: boolean} = {}): Pool {
+// Trigger-maintained trail: insert row has from_state null.
+const defaultHistory = [
+  {from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'},
+  {from_state: 'draft', to_state: 'pending_payment', reason: null, at: '2026-10-06T23:55:00.000Z'},
+  {from_state: 'pending_payment', to_state: 'confirmed', reason: null, at: '2026-10-06T23:55:10.000Z'},
+];
+
+function fakePool(opts: {core?: unknown[]; receipts?: unknown[]; refunds?: unknown[]; history?: unknown[]; forbid?: boolean} = {}): Pool {
   const client = {
     async query(sql: string) {
       if (sql.includes('flow_actor')) {
@@ -30,6 +37,7 @@ function fakePool(opts: {core?: unknown[]; receipts?: unknown[]; refunds?: unkno
       if (sql.startsWith('select jsonb_build_object')) return {rows: opts.core ?? [{result: core}]};
       if (sql.startsWith('select channel')) return {rows: opts.receipts ?? []};
       if (sql.startsWith('select amount')) return {rows: opts.refunds ?? []};
+      if (sql.includes('booking_state_history')) return {rows: opts.history ?? defaultHistory};
       return {rows: []};
     },
     release() {},
@@ -46,17 +54,20 @@ it('returns booking core, customer, normalized payment, and a persisted-fact act
   expect(out.customer).toMatchObject({name: 'Jane Doe', phone: null});
   expect(out.payment).toMatchObject({provider: 'staging_mock', state: 'succeeded', amount: 12500, currency: 'USD'});
   expect(out.refunds).toEqual([]);
+  // Real transitions from booking_state_history, newest first.
   expect(out.activity.map((a) => a.kind)).toEqual([
     'confirmation.delivered.email',
-    'booking.state.confirmed',
+    'booking.confirmed',
     'payment.succeeded',
+    'booking.pending_payment',
     'booking.created',
   ]);
 });
 
 it('omits the state entry for drafts and handles missing payment/customer', async () => {
   const draft = {booking: {...core.booking, state: 'draft', total: null}, customer: null, payment: null};
-  const out = await createOwnerBookingDetailReader(fakePool({core: [{result: draft}]}))(ACTOR, TENANT, BOOKING);
+  const out = await createOwnerBookingDetailReader(fakePool({core: [{result: draft}],
+    history: [{from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-06T23:54:55.932Z'}]}))(ACTOR, TENANT, BOOKING);
   expect(out.customer).toBeNull();
   expect(out.payment).toBeNull();
   expect(out.activity.map((a) => a.kind)).toEqual(['booking.created']);
@@ -80,4 +91,20 @@ it('rejects invalid identities before connecting', async () => {
   const read = createOwnerBookingDetailReader({async connect() {throw new Error('must not connect');}} as unknown as Pool);
   await expect(read('nope', TENANT, BOOKING)).rejects.toBeInstanceOf(FlowError);
   await expect(read(ACTOR, TENANT, 'nope')).rejects.toMatchObject({code: 'INVALID_REQUEST'});
+});
+
+it('reports every real transition from the trail and falls back when the trail is empty', async () => {
+  const read = createOwnerBookingDetailReader(fakePool({
+    history: [
+      {from_state: null, to_state: 'draft', reason: 'created', at: '2026-10-01T00:00:00.000Z'},
+      {from_state: 'confirmed', to_state: 'cancelled', reason: 'owner cancelled', at: '2026-10-22T00:00:00.000Z'},
+    ],
+  }));
+  const out = await read(ACTOR, TENANT, BOOKING);
+  expect(out.activity[0]).toMatchObject({kind: 'booking.cancelled', detail: 'owner cancelled'});
+  expect(out.activity.at(-1)).toMatchObject({kind: 'booking.created'});
+  // Empty trail (pre-trigger rows) still reports creation, never an approximated state entry.
+  const bare = await createOwnerBookingDetailReader(fakePool({history: [], receipts: [], refunds: []}))(ACTOR, TENANT, BOOKING);
+  expect(bare.activity.filter((a) => a.kind === 'booking.created')).toHaveLength(1);
+  expect(bare.activity.some((a) => a.detail === 'as of last update')).toBe(false);
 });

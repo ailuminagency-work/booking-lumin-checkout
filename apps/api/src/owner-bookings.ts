@@ -208,6 +208,15 @@ const RECEIPTS_SQL = `select channel, to_char(delivered_at at time zone 'UTC',${
 const REFUNDS_SQL = `select amount, currency, reason, provider, to_char(created_at at time zone 'UTC',${ISO}) as created_at
  from public.refunds where tenant_id = $1::uuid and booking_id = $2::uuid
  order by created_at, id limit 50`;
+// Trigger-maintained transition trail (0005). service_role holds SELECT only, so the
+// trail cannot be rewritten by the application. Joined through bookings for tenant scope.
+const HISTORY_SQL = `select h.from_state, h.to_state, h.reason,
+ to_char(h.at at time zone 'UTC',${ISO}) as at
+ from public.booking_state_history h
+ join public.bookings b on b.id = h.booking_id and b.tenant_id = $1::uuid
+ where h.booking_id = $2::uuid
+ order by h.at, h.to_state
+ limit 50`;
 
 export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailReader {
   return async (actor, tenant, booking) => {
@@ -228,6 +237,7 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
       if (core.rows.length !== 1) throw new FlowError('NOT_AVAILABLE');
       const receipts = await client.query(RECEIPTS_SQL, [tenant, booking]);
       const refunds = await client.query(REFUNDS_SQL, [tenant, booking]);
+      const history = await client.query(HISTORY_SQL, [tenant, booking]);
       await client.query('commit');
       const value = core.rows[0]!.result as {booking: Record<string, unknown>; customer: Record<string, unknown> | null; payment: Record<string, unknown> | null};
       const b = value.booking;
@@ -255,13 +265,22 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
         createdAt: String(row.created_at),
       }));
       // Activity: every entry is backed by a persisted row/timestamp; nothing invented.
-      const activity: Array<{kind: string; at: string; detail: string | null}> = [
-        {kind: 'booking.created', at: String(b.createdAt), detail: null},
-      ];
+      const activity: Array<{kind: string; at: string; detail: string | null}> = [];
+      // Real transitions from the trigger-maintained trail. A null from_state is the insert.
+      for (const row of history.rows) {
+        const to = String(row.to_state);
+        const reason = row.reason === null || row.reason === undefined ? null : String(row.reason);
+        activity.push({
+          kind: row.from_state === null || row.from_state === undefined ? 'booking.created' : `booking.${to}`,
+          at: String(row.at),
+          detail: reason,
+        });
+      }
+      // Defensive: a booking predating the trail still reports its creation.
+      if (!activity.some((entry) => entry.kind === 'booking.created')) activity.push({kind: 'booking.created', at: String(b.createdAt), detail: null});
       if (payment) activity.push({kind: `payment.${payment.state}`, at: payment.createdAt, detail: `${payment.provider}`});
       for (const row of receipts.rows) activity.push({kind: `confirmation.delivered.${String(row.channel)}`, at: String(row.delivered_at), detail: null});
       for (const refund of refundRows) activity.push({kind: 'refund.recorded', at: refund.createdAt, detail: refund.reason});
-      if (b.state !== 'draft') activity.push({kind: `booking.state.${String(b.state)}`, at: String(b.updatedAt), detail: 'as of last update'});
       activity.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
       const parsed = OwnerBookingDetail.safeParse({
         tenantId: tenant,
