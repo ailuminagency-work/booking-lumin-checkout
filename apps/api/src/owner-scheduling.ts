@@ -1,8 +1,9 @@
 import type {Pool} from 'pg';
+import {capabilityEnabled} from './capability-flags';
 import {z} from 'zod';
 import {CreateOfferScheduling,OfferSchedulingReceipt,schedulingReceiptMatches} from '@lumin/contracts';
 import {FlowError} from './repository';
-export function schedulingAuthoringEnabled(env:Record<string,string|undefined>):boolean{return env.BOOKING_LUMIN_ENV==='staging'&&env.BOOKING_LUMIN_SCHEDULING_AUTHORING==='1';}
+export function schedulingAuthoringEnabled(env:Record<string,string|undefined>):boolean{return capabilityEnabled(env,'BOOKING_LUMIN_SCHEDULING_AUTHORING');}
 const Uuid=z.string().uuid().transform(s=>s.toLowerCase());
 export type OfferSchedulingCreator=(actor:string,tenant:string,service:string,input:CreateOfferScheduling)=>Promise<OfferSchedulingReceipt>;
 export function createOfferSchedulingCreator(pool:Pool):OfferSchedulingCreator{return async(actor,tenant,service,input)=>{

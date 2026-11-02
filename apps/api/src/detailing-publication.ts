@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {capabilityEnabled} from './capability-flags';
 import {isDeepStrictEqual} from 'node:util';
 import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
@@ -10,7 +11,7 @@ const Id=z.string().uuid().transform(s=>s.toLowerCase()),Origins=PublishDetailin
 const Publication=z.object({flowId:Id,draftRevision:z.number().int().positive().safe(),versionId:Id,installationId:Id,renderSchemaVersion:z.literal(7),replayed:z.boolean().optional()}).strict();
 export const DetailingSessionResult=z.object({expiresAt:z.string().datetime({offset:true}),render:DetailingCatalogRender}).strict();
 export {DetailingQuoteReceipt};
-export const detailingPublicationEnabled=(env:Record<string,string|undefined>)=>env.BOOKING_LUMIN_ENV==='staging'&&env.BOOKING_LUMIN_DETAILING_PUBLICATION==='1';
+export const detailingPublicationEnabled=(env:Record<string,string|undefined>)=>capabilityEnabled(env,'BOOKING_LUMIN_DETAILING_PUBLICATION');
 export interface DetailingPublicationApi{save(actor:string,tenant:string,flow:string,input:SaveDetailingDraft):Promise<DetailingDraft>;read(actor:string,tenant:string,flow:string):Promise<DetailingDraft>;publish(actor:string,tenant:string,flow:string,input:PublishDetailingDraft):Promise<DetailingPublicationReceipt>;recover(actor:string,tenant:string,flow:string):Promise<DetailingPublicationReceipt>;session(installation:string,hash:string,origin:string):Promise<z.infer<typeof DetailingSessionResult>>;quote(hash:string,origin:string,input:DetailingQuoteInput):Promise<DetailingQuoteReceipt>;}
 function invalid():never{throw new FlowError('INVALID_REQUEST');}
 function parse<T extends z.ZodTypeAny>(schema:T,value:unknown):z.output<T>{const p=schema.safeParse(value);if(!p.success)invalid();return p.data;}

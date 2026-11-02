@@ -1,9 +1,10 @@
 import type {Pool} from 'pg';
+import {capabilityEnabled} from './capability-flags';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {CreateSimpleOffer,SimpleOfferReceipt} from '@lumin/contracts';
 import {FlowError} from './repository';
-export function catalogAuthoringEnabled(env:Record<string,string|undefined>):boolean{return env.BOOKING_LUMIN_ENV==='staging'&&env.BOOKING_LUMIN_CATALOG_AUTHORING==='1';}
+export function catalogAuthoringEnabled(env:Record<string,string|undefined>):boolean{return capabilityEnabled(env,'BOOKING_LUMIN_CATALOG_AUTHORING');}
 const Uuid=z.string().uuid().transform(s=>s.toLowerCase());
 export type SimpleOfferCreator=(actor:string,tenant:string,input:CreateSimpleOffer)=>Promise<SimpleOfferReceipt>;
 export function createSimpleOfferCreator(pool:Pool):SimpleOfferCreator{return async(actor,tenant,input)=>{
