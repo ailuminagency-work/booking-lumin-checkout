@@ -1,6 +1,6 @@
 import {it, expect} from 'vitest';
 import type {Pool} from 'pg';
-import {createOwnerBookingsListReader} from './owner-bookings';
+import {createOwnerBookingsListReader, createOwnerBookingDetailReader} from './owner-bookings';
 import {FlowError} from './repository';
 
 const ACTOR = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -70,4 +70,28 @@ it('rejects invalid input before connecting', async () => {
   await expect(read(ACTOR, TENANT, {limit: 0, before: null})).rejects.toMatchObject({code: 'INVALID_REQUEST'});
   await expect(read(ACTOR, TENANT, {limit: 101, before: null})).rejects.toMatchObject({code: 'INVALID_REQUEST'});
   await expect(read(ACTOR, TENANT, {limit: 25, before: 'not-a-date'})).rejects.toMatchObject({code: 'INVALID_REQUEST'});
+});
+
+it('opens a write-capable snapshot, because flow_actor takes FOR SHARE locks', async () => {
+  // REGRESSION PIN. Both readers once opened `repeatable read read only`. The
+  // authorization predicate lumin.flow_actor takes FOR SHARE locks on
+  // public.tenants and public.tenant_members, and a share lock cannot be acquired
+  // in a read-only transaction: Postgres raises 25006 and every request 403s. The
+  // fake pool below cannot reproduce that (it answers any flow_actor SQL), which is
+  // exactly why this asserts on the transaction mode itself. See migration 0091 and
+  // supabase/tests/owner_booking_authorization_tests.sql, which pin it against a
+  // real database.
+  const list = fakePool({rows: []});
+  await createOwnerBookingsListReader(list.pool)(ACTOR, TENANT, {limit: 1, before: null});
+  const listBegin = list.queries.find((q) => q.startsWith('begin'))!;
+  expect(listBegin).toContain('repeatable read');
+  expect(listBegin).not.toContain('read only');
+
+  // The detail reader shares the pattern. It rejects an empty core row with
+  // NOT_AVAILABLE, which is fine: the begin has already been recorded by then.
+  const detail = fakePool({rows: []});
+  await expect(createOwnerBookingDetailReader(detail.pool)(ACTOR, TENANT, B1)).rejects.toBeInstanceOf(FlowError);
+  const detailBegin = detail.queries.find((q) => q.startsWith('begin'))!;
+  expect(detailBegin).toContain('repeatable read');
+  expect(detailBegin).not.toContain('read only');
 });

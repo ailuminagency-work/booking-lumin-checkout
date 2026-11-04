@@ -94,6 +94,7 @@ jobs:
             confirmation_outbox_tests \
             confirmation_delivery_store_tests \
             payment_provenance_tests \
+            owner_booking_authorization_tests \
             notification_planner_config_tests \
             mode_installations_tests \
             mode_flow_session_tests \
