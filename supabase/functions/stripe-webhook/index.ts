@@ -141,7 +141,7 @@ async function handleSucceeded(
 
   // F3 — AMOUNT GUARD, FAIL-CLOSED. A positive amount must be present AND equal
   // the server amount. Anything else (missing / null / ≤0 / mismatch) is a
-  // desync or tampering: NEVER confirm — compensate.
+  // desync or tampering: NEVER confirm — park it for a human (0090).
   const stripeAmount = webhookIntentAmount(event.raw);
   const amountOk = stripeAmount !== null && stripeAmount > 0 && stripeAmount === payment.amount;
 

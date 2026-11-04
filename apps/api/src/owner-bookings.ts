@@ -81,7 +81,12 @@ export function createOwnerBookingsListReader(pool: Pool): OwnerBookingsListRead
     let broken = false;
     try {
       client = await pool.connect();
-      await client.query('begin isolation level repeatable read read only');
+      // NOT `read only`: the authorization predicate lumin.flow_actor takes two
+      // FOR SHARE locks (on public.tenants and public.tenant_members), and a share
+      // lock cannot be acquired in a read-only transaction -- it fails with 25006.
+      // This reader still issues only SELECTs; `repeatable read` is what gives it a
+      // consistent snapshot. See migration 0091.
+      await client.query('begin isolation level repeatable read');
       await client.query("set local statement_timeout='5s'");
       await client.query("set local lock_timeout='3s'");
       await client.query('set local role service_role');
@@ -228,7 +233,12 @@ export function createOwnerBookingDetailReader(pool: Pool): OwnerBookingDetailRe
     let broken = false;
     try {
       client = await pool.connect();
-      await client.query('begin isolation level repeatable read read only');
+      // NOT `read only`: the authorization predicate lumin.flow_actor takes two
+      // FOR SHARE locks (on public.tenants and public.tenant_members), and a share
+      // lock cannot be acquired in a read-only transaction -- it fails with 25006.
+      // This reader still issues only SELECTs; `repeatable read` is what gives it a
+      // consistent snapshot. See migration 0091.
+      await client.query('begin isolation level repeatable read');
       await client.query("set local statement_timeout='5s'");
       await client.query("set local lock_timeout='3s'");
       await client.query('set local role service_role');
