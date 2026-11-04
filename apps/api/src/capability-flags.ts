@@ -31,3 +31,22 @@ export function capabilityEnabled(env: Record<string, string | undefined>, flag:
 export function paidPublicationEnabled(env: Record<string, string | undefined>): boolean {
   return capabilityEnabled(env, 'BOOKING_LUMIN_PAID_PUBLICATION');
 }
+
+/**
+ * The owner booking operations family: the list, the detail view with its
+ * answers and activity trail, and owner cancellation.
+ *
+ * These were gated on BOOKING_LUMIN_ENV==='staging' with no flag at all, so the
+ * "owner sees and manages the booking" end of the loop was unreachable in
+ * production by construction -- the same shape as the G1 publication defect, in
+ * the one place a real business cannot do without. A housekeeping owner who
+ * cannot open or cancel a booking has no business running on this.
+ *
+ * None of these takes, simulates or moves money. Cancellation is explicitly
+ * NOT a refund: owner-booking-cancel.ts asserts refundIssued:false and never
+ * touches payments, refunds or capacity. A cancelled booking may remain paid --
+ * the business decides what happens to the money, outside Booking Lumin.
+ */
+export function ownerBookingOperationsEnabled(env: Record<string, string | undefined>): boolean {
+  return capabilityEnabled(env, 'BOOKING_LUMIN_OWNER_BOOKING_OPS');
+}
