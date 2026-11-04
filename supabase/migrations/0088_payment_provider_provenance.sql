@@ -57,11 +57,19 @@ on conflict (provider) do nothing;
 -- the production migration set. A hosted staging environment must have this row
 -- inserted deliberately as a documented bootstrap step, which is precisely the
 -- condition the app-side readiness half refuses to serve under outside staging.
+-- Two simulated provider labels exist in the harnesses: 'staging_mock' (the app's
+-- own mock-payment writers and most suites) and 'fixture' (hand-seeded payment rows
+-- in apps/api/src/{atomic-confirmation,confirmation,rental-confirmation}.integration.ts).
+-- Both are simulated money and both must stay listed in SIMULATED_PROVIDERS in
+-- apps/api/src/simulated-payment-readiness.ts, so that a database willing to confirm
+-- either one is a database this service refuses to serve outside staging.
 do $seed$
 begin
   if current_database() ~ '^lumin_' then
     insert into public.confirmable_payment_providers (provider, note)
-    values ('staging_mock', 'Simulated evidence; confirmable only on a disposable database')
+    values
+      ('staging_mock', 'Simulated evidence; confirmable only on a disposable database'),
+      ('fixture',      'Hand-seeded integration-harness evidence; disposable databases only')
     on conflict (provider) do nothing;
   end if;
 end

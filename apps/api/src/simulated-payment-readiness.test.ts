@@ -74,6 +74,19 @@ it('reports UNSAFE when a non-staging process can confirm simulated money', asyn
   // An unset environment is not staging either: the dangerous default is covered.
   expect(await readSimulatedPaymentVerdict(fakePool({rows: [['staging_mock']]}).pool, undefined))
     .toEqual({status: 'unsafe', providers: ['staging_mock']});
+  // EITHER simulated label is enough. 'fixture' is what the confirmation
+  // integration harnesses hand-seed, and migration 0088 declares it confirmable
+  // on lumin_* databases, so a restored CI dump must trip the guard too.
+  expect(await readSimulatedPaymentVerdict(fakePool({rows: [['fixture']]}).pool, 'production'))
+    .toEqual({status: 'unsafe', providers: ['fixture']});
+  expect(await readSimulatedPaymentVerdict(fakePool({rows: [['fixture', 'staging_mock']]}).pool, 'production'))
+    .toEqual({status: 'unsafe', providers: ['fixture', 'staging_mock']});
+});
+
+it('asks about every simulated label migration 0088 can declare confirmable', () => {
+  // If 0088's disposable seed gains a provider and this list does not, the DB
+  // would confirm simulated money that the readiness guard never asks about.
+  expect([...SIMULATED_PROVIDERS].sort()).toEqual(['fixture', 'staging_mock']);
 });
 
 it('reports UNKNOWN, never safe, when the question cannot be answered', async () => {

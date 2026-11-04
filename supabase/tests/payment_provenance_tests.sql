@@ -49,21 +49,26 @@ reset role;
 -- to serve outside staging when it comes back non-empty. Pin that service_role
 -- really reads through forced RLS with no policies: if it silently read nothing,
 -- the readiness guard would report a clean bill of health forever.
+-- The array below must match SIMULATED_PROVIDERS in that module exactly.
 set local role service_role;
 select pg_temp.assert(
   (select coalesce(string_agg(provider,',' order by provider),'')
-     from public.confirmable_payment_providers where provider = any(array['staging_mock']::text[]))
-   = (case when current_database() ~ '^lumin_' then 'staging_mock' else '' end),
+     from public.confirmable_payment_providers where provider = any(array['staging_mock','fixture']::text[]))
+   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock' else '' end),
  'service_role sees the simulated-provider rows the readiness guard asks about');
 reset role;
 
 -- The real provider is seeded in every deployment; simulated evidence is
 -- confirmable ONLY where the database name marks it disposable.
 select pg_temp.assert(exists(select 1 from public.confirmable_payment_providers where provider='stripe_connect'),'stripe_connect seeded everywhere');
+-- The WHOLE allowlist is pinned, not just one row, so a provider added to the
+-- seed in either direction has to be declared here too. Two simulated labels
+-- exist: 'staging_mock' (the app's mock-payment writers and most suites) and
+-- 'fixture' (hand-seeded rows in the confirmation integration harnesses).
 select pg_temp.assert(
-  exists(select 1 from public.confirmable_payment_providers where provider='staging_mock')
-   = (current_database() ~ '^lumin_'),
- 'staging_mock is confirmable exactly on a disposable lumin_* database');
+  (select string_agg(provider,',' order by provider) from public.confirmable_payment_providers)
+   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect' else 'stripe_connect' end),
+ 'simulated providers are confirmable exactly on a disposable lumin_* database, and nothing else is seeded');
 
 -- ---- Behaviour: the writer refuses an undeclared provider --------------------
 create function pg_temp.whole_rows() returns jsonb language sql as $$

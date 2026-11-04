@@ -32,8 +32,15 @@ import type {Pool, PoolClient} from 'pg';
  * through PostgREST by any tenant or owner.
  */
 
-/** Providers that represent simulated, non-real money. */
-export const SIMULATED_PROVIDERS = Object.freeze(['staging_mock'] as const);
+/**
+ * Providers that represent simulated, non-real money. Must stay in step with the
+ * disposable-only seed block in migration 0088: every provider that migration
+ * will declare confirmable on a `lumin_*` database belongs here, so a database
+ * willing to confirm any of them is a database this service refuses to serve
+ * outside staging. 'staging_mock' is what the app's own mock-payment writers
+ * record; 'fixture' is what the integration harnesses hand-seed.
+ */
+export const SIMULATED_PROVIDERS = Object.freeze(['staging_mock', 'fixture'] as const);
 
 export type SimulatedPaymentVerdict =
   | {status: 'safe'}
