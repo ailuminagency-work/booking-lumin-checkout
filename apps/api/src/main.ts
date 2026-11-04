@@ -57,6 +57,7 @@ import { createStagingConfirmationDeliveryProvider } from './confirmation-delive
 import { createOwnerBookingsListReader, createOwnerBookingDetailReader } from './owner-bookings';
 import { createOwnerBookingCancelWriter } from './owner-booking-cancel';
 import { paidPublicationEnabled } from './capability-flags';
+import { createSimulatedPaymentGuard } from './simulated-payment-readiness';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
  *
@@ -159,6 +160,18 @@ function main(): void {
     // Never log connection error detail (may embed the connection string).
   });
 
+  // ---- Payment-provenance pairing (app-side half of migration 0088) ------
+  // The in-database allowlist refuses to confirm a provider this deployment
+  // has not declared confirmable, but it travels WITH a restored dump, so it
+  // cannot catch a staging database restored over production. This guard
+  // checks the pairing from the other side: a non-staging process in front of
+  // a database that would confirm simulated money serves nothing at all.
+  const simulatedPaymentGuard = createSimulatedPaymentGuard(pool, process.env.BOOKING_LUMIN_ENV, {
+    onUnsafe: (reason, providers) => {
+      console.error(JSON.stringify({event: 'payment_provenance_mismatch', reason, providers, environment: process.env.BOOKING_LUMIN_ENV ?? null}));
+    },
+  });
+
   const flowServer = createFlowHttpServer({
     repository: createFlowRepository(pool),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_AUTHORING==='1'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyCustomerFieldPublication:createPaidJourneyCustomerFieldPublicationOperations(pool,{configuredCustomerOrigins:customerOrigins}),paidJourneyCustomerFieldPublicRead:createPaidJourneyCustomerFieldPublicReader(pool,customerOrigins),paidJourneyCustomerFieldSessionIssue:createPaidJourneyCustomerFieldSessionIssuer(pool,customerOrigins),paidJourneyCustomerFieldSessionRead:createPaidJourneyCustomerFieldSessionReader(pool,{configuredCustomerOrigins:customerOrigins}),paidJourneyCustomerFieldAvailability:createPaidJourneyCustomerFieldAvailabilityReader(pool,{configuredCustomerOrigins:customerOrigins}),paidJourneyCustomerFieldHold:createPaidJourneyCustomerFieldHoldWriter(pool,{configuredCustomerOrigins:customerOrigins}),...(mockPaymentsEnabled(process.env)?{paidJourneyCustomerFieldMockPayment:createPaidJourneyCustomerFieldMockPaymentWriter(pool,process.env,{configuredCustomerOrigins:customerOrigins})}:{})}:{}),
@@ -207,6 +220,12 @@ function main(): void {
   const server = createServer({ maxHeaderSize: 16384 }, (req: IncomingMessage, res: ServerResponse) => {
     attachRequestId(req, res);
     observeRequest(req, res);
+    // Mispaired with a simulated-money database: serve nothing, not even the
+    // probes, so the platform stops routing traffic to this instance.
+    if (!simulatedPaymentGuard.serving()) {
+      send(res, 503, { status: "unready", reason: "payment_provenance_mismatch" });
+      return;
+    }
     let path = "/";
     try {
       path = new URL(req.url ?? "/", "http://localhost").pathname;
@@ -239,11 +258,29 @@ function main(): void {
   server.headersTimeout = 10000;
   server.keepAliveTimeout = 5000;
 
-  server.listen(listenPort, "0.0.0.0", () => {
-    // Keep deployment logs truthful without printing secrets or arbitrary env text.
-    const environment = process.env.BOOKING_LUMIN_ENV === "staging" ? "STAGING" : process.env.BOOKING_LUMIN_ENV === "demo" ? "DEMO" : "PRODUCTION";
-    console.log("@lumin/api listening on 0.0.0.0:" + listenPort + " (" + environment + "; real Supabase-JWT auth)");
-  });
+  const startListening = (): void => {
+    server.listen(listenPort, "0.0.0.0", () => {
+      // Keep deployment logs truthful without printing secrets or arbitrary env text.
+      const environment = process.env.BOOKING_LUMIN_ENV === "staging" ? "STAGING" : process.env.BOOKING_LUMIN_ENV === "demo" ? "DEMO" : "PRODUCTION";
+      console.log("@lumin/api listening on 0.0.0.0:" + listenPort + " (" + environment + "; real Supabase-JWT auth)");
+    });
+  };
+  // The first provenance check runs BEFORE the socket opens, so a process
+  // paired with a simulated-money database never serves a single request. An
+  // unreadable database yields 'unknown', not 'unsafe', and does not block
+  // startup: there the in-database gate is what refuses.
+  void simulatedPaymentGuard.check().then(
+    (verdict) => {
+      if (verdict.status === 'unsafe') {
+        console.error("@lumin/api refused to start: " + (simulatedPaymentGuard.reason() ?? "payment provenance mismatch"));
+        process.exit(1);
+        return;
+      }
+      startListening();
+    },
+    // The reader never rejects; listen anyway rather than hang on a surprise.
+    () => startListening(),
+  );
 
   // ---- Staging-only confirmation delivery driver --------------------------
   // Drains `booking.confirmed` outbox envelopes to the durable receipt ledger
@@ -267,6 +304,7 @@ function main(): void {
     if (stopping) return;
     stopping = true;
     console.log(`@lumin/api received ${signal}; shutting down`);
+    simulatedPaymentGuard.stop();
     server.close(() => {
       void Promise.resolve(confirmationDriver?.stop())
         .catch(() => {})

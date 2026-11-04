@@ -38,6 +38,22 @@ services:
       # ---- Environment identity --------------------------------------------
       # Declared explicitly so the service reports itself truthfully and so the
       # fake-payment gate has an unambiguous value to refuse against.
+      #
+      # This is a hard value, NOT sync:false, on purpose. The dangerous direction
+      # is a production service labelled 'staging', which would unlock simulated
+      # money on real traffic; pinning 'production' in code review makes that
+      # impossible to do by a dashboard edit alone.
+      #
+      # THE STAGING SERVICE OVERRIDES THIS IN THE RENDER DASHBOARD
+      # (BOOKING_LUMIN_ENV=staging) and that override must survive. Since
+      # migration 0088 the variable also decides AVAILABILITY, not just which
+      # capabilities compose: simulated-payment-readiness.ts refuses to start, and
+      # refuses every request including /health, when this is not 'staging' while
+      # the attached database would confirm a simulated provider. A staging
+      # database carries exactly that declaration as its documented bootstrap row,
+      # so syncing this blueprint onto the STAGING service relabels it
+      # 'production' and takes the staging API hard down until the dashboard value
+      # is restored. The log line names this variable so the cause is unambiguous.
       - key: BOOKING_LUMIN_ENV
         value: production
       # ---- Simulated money: must stay OFF outside staging -------------------
