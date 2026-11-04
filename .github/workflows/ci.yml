@@ -97,6 +97,7 @@ jobs:
             confirmation_delivery_store_tests \
             payment_provenance_tests \
             owner_booking_authorization_tests \
+            single_business_account_tests \
             payment_review_park_tests \
             notification_planner_config_tests \
             mode_installations_tests \

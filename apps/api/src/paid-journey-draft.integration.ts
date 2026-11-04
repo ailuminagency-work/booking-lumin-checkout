@@ -17,8 +17,8 @@ if(ci){
 }
 for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])assert.ok(!process.env[key]);
 const pool=new Pool({max:8}),id=(n:number)=>`39000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
-const actor=id(1),tenant=id(2),service=id(3),flow=id(4),foreignActor=id(99),foreignTenant=id(98),origin='https://portal.example.test';
-const server=createFlowHttpServer({repository:createFlowRepository(pool),ownerOrigins:[origin],customerOrigins:['https://checkout.example.test'],authenticateOwner:async token=>token==='owner-token-123456'?actor:token==='foreign-token-123456'?foreignActor:null,paidJourneyDrafts:true});
+const actor=id(1),tenant=id(2),service=id(3),flow=id(4),foreignActor=id(99),foreignTenant=id(98),detailingActor=id(89),tokens=new Map<string,string>([['owner-token-123456',actor],['foreign-token-123456',foreignActor],['detailing-token-123456',detailingActor]]),origin='https://portal.example.test';
+const server=createFlowHttpServer({repository:createFlowRepository(pool),ownerOrigins:[origin],customerOrigins:['https://checkout.example.test'],authenticateOwner:async token=>tokens.get(token)??null,paidJourneyDrafts:true});
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
 const journey={schemaVersion:1,stages:['service','options','schedule','information','review_payment','confirmation'].map(kind=>({id:kind,kind,label:kind,enabled:kind!=='options'}))};
 const body={schemaVersion:1,journey,serviceId:service,name:'Housekeeping',presentation:{accentColor:'#4f46e5',layout:'stacked'},expectedRevision:0};
@@ -26,7 +26,7 @@ async function request(method='POST',value:unknown=body,target=flow,targetTenant
 try{
  const actual=(await pool.query('select current_database() db,current_user actor,host(inet_server_addr()) host,inet_server_port() port')).rows[0];
  assert.equal(actual.db,process.env.PGDATABASE);assert.equal(actual.actor,'postgres');assert.equal(actual.host,trustedDatabaseHost);assert.equal(actual.port,Number(process.env.PGPORT));
- await pool.query(`insert into auth.users(id,email) values($1,'draft-owner@example.test'),($2,'draft-foreign@example.test')`,[actor,foreignActor]);
+ await pool.query(`insert into auth.users(id,email) select id,'draft-'||i||'@example.test' from unnest($1::uuid[]) with ordinality t(id,i)`,[[actor,foreignActor,detailingActor]]);
  await pool.query(`insert into public.tenants(id,name,slug,timezone,currency) values($1,'Draft','paid-draft-fixture','UTC','USD'),($2,'Foreign','paid-draft-foreign-fixture','UTC','USD')`,[tenant,foreignTenant]);
  await pool.query(`insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER'),($3,$4,'BUSINESS_OWNER')`,[tenant,actor,foreignTenant,foreignActor]);
  await pool.query('select public.initialize_staging_business_profile($1,$2,$3,$4)',[actor,tenant,'HOUSEKEEPING','journey_api_fixture_owner']);
@@ -54,9 +54,9 @@ try{
  for(const bad of [{...journey,schemaVersion:2},{...journey,price:1},{...journey,stages:journey.stages.filter(stage=>stage.kind!=='schedule')},{...journey,stages:journey.stages.map(stage=>stage.kind==='information'?{...stage,enabled:false}:stage)}])assert.equal((await request('POST',{...update,expectedRevision:3,journey:bad})).status,400);
  const unbound={id:'informational_consent',kind:'informational',label:'Consent',enabled:true};
  assert.equal((await request('POST',{...update,expectedRevision:3,journey:{...journey,stages:[...journey.stages.slice(0,4),unbound,...journey.stages.slice(4)]}})).status,422);
- await pool.query("select public.create_staging_business($1,$2,'Detailing','journey-detailing-profile','UTC','USD','AUTO_DETAILING','journey_api_detailing_profile')",[actor,id(90)]);
+ await pool.query("select public.create_staging_business($1,$2,'Detailing','journey-detailing-profile','UTC','USD','AUTO_DETAILING','journey_api_detailing_profile')",[detailingActor,id(90)]);
  await pool.query("insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values($1,$2,'Detailing','simple','USD',100,60)",[id(91),id(90)]);
- assert.equal((await request('POST',{...body,serviceId:id(91)},id(92),id(90))).status,422);
+ assert.equal((await request('POST',{...body,serviceId:id(91)},id(92),id(90),'detailing-token-123456')).status,422);
  assert.equal((await request('POST',{...update,expectedRevision:3,presentation:{...update.presentation,price:1}})).status,400);
  for(const status of ['inactive','suspended']){await pool.query('update public.tenants set status=$2 where id=$1',[tenant,status]);assert.equal((await request('GET')).status,403);assert.equal((await request('POST',{...update,expectedRevision:3})).status,403);}await pool.query("update public.tenants set status='active' where id=$1",[tenant]);
  await pool.query("update public.tenant_members set role='BUSINESS_STAFF' where tenant_id=$1 and user_id=$2",[tenant,actor]);assert.equal((await request('GET')).status,403);assert.equal((await request('POST',{...update,expectedRevision:3})).status,403);

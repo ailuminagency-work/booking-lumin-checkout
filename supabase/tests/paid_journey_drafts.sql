@@ -5,7 +5,8 @@ create function pg_temp.reject(q text,code text) returns void language plpgsql a
 insert into auth.users(id,email) values('69000000-0000-4000-8000-000000000001','journey-owner@example.test'),('69000000-0000-4000-8000-000000000099','journey-other@example.test');
 select public.create_staging_business('69000000-0000-4000-8000-000000000001','69000000-0000-4000-8000-000000000002','Journey','journey-sql','UTC','USD','HOUSEKEEPING','journey_fixture_01');
 select public.create_staging_business('69000000-0000-4000-8000-000000000099','69000000-0000-4000-8000-000000000098','Foreign','journey-foreign','UTC','USD','HOUSEKEEPING','journey_fixture_02');
-select public.create_staging_business('69000000-0000-4000-8000-000000000001','69000000-0000-4000-8000-000000000097','Detailing','journey-detailing','UTC','USD','AUTO_DETAILING','journey_fixture_03');
+insert into auth.users(id,email) values('69000000-0000-4000-8000-000000000095','journey-detailing-owner@example.test');
+select public.create_staging_business('69000000-0000-4000-8000-000000000095','69000000-0000-4000-8000-000000000097','Detailing','journey-detailing','UTC','USD','AUTO_DETAILING','journey_fixture_03');
 insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values
 ('69000000-0000-4000-8000-000000000003','69000000-0000-4000-8000-000000000002','Cleaning','simple','USD',12500,60),
 ('69000000-0000-4000-8000-000000000096','69000000-0000-4000-8000-000000000097','Detailing','simple','USD',12500,60);
@@ -27,7 +28,12 @@ select pg_temp.reject($q$select pg_temp.save()$q$,'42501');
 reset role;
 select pg_temp.reject($q$select pg_temp.save(a=>'69000000-0000-4000-8000-000000000099')$q$,'42501');
 select pg_temp.reject($q$select pg_temp.save(t=>'69000000-0000-4000-8000-000000000098',a=>'69000000-0000-4000-8000-000000000099')$q$,'42501');
-select pg_temp.reject($q$select pg_temp.save(t=>'69000000-0000-4000-8000-000000000097',s=>'69000000-0000-4000-8000-000000000096')$q$,'0A000');
+-- 0092: the business below has its own account, so this call is made BY that owner.
+-- flow_actor returns void and raises FORBIDDEN for a non-owner, so this block
+-- completing proves membership -- which is what keeps the refusal below a
+-- business-type refusal rather than a membership one.
+do $m$begin perform lumin.flow_actor('69000000-0000-4000-8000-000000000095','69000000-0000-4000-8000-000000000097',true);end$m$;
+select pg_temp.reject($q$select pg_temp.save(a=>'69000000-0000-4000-8000-000000000095',t=>'69000000-0000-4000-8000-000000000097',s=>'69000000-0000-4000-8000-000000000096')$q$,'0A000');
 select pg_temp.reject($q$select pg_temp.save(r=>-1)$q$,'22023');
 select pg_temp.reject($q$select pg_temp.save(r=>9007199254740991)$q$,'22023');
 select pg_temp.reject($q$select pg_temp.save(p=>'{"accentColor":"#4f46e5","layout":"stacked","price":1}')$q$,'22023');

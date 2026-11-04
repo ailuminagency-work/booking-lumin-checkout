@@ -21,14 +21,20 @@ update public.tenant_members set role='BUSINESS_STAFF' where tenant_id='70000000
 update public.tenant_members set role='BUSINESS_OWNER' where tenant_id='70000000-0000-4000-8000-000000000002';
 update public.tenants set status='suspended' where id='70000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.owner_read()$q$,'42501');update public.tenants set status='active' where id='70000000-0000-4000-8000-000000000002';
 update public.services set active=false where id='70000000-0000-4000-8000-000000000003';select pg_temp.reject($q$select pg_temp.owner_read()$q$,'42501');update public.services set active=true,base_price=12600 where id='70000000-0000-4000-8000-000000000003';select pg_temp.reject($q$select pg_temp.owner_read()$q$,'40001');update public.services set base_price=12500 where id='70000000-0000-4000-8000-000000000003';
-select public.create_staging_business('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000090','Detailing','journey-reader-detailing','UTC','USD','AUTO_DETAILING','journey_reader_detailing');
+insert into auth.users(id,email) values('70000000-0000-4000-8000-000000000089','journey-reader-detailing-owner@example.test');
+select public.create_staging_business('70000000-0000-4000-8000-000000000089','70000000-0000-4000-8000-000000000090','Detailing','journey-reader-detailing','UTC','USD','AUTO_DETAILING','journey_reader_detailing');
 insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('70000000-0000-4000-8000-000000000091','70000000-0000-4000-8000-000000000090','Detailing','simple','USD',12500,60);
 insert into public.flows(id,tenant_id,name,status) values('70000000-0000-4000-8000-000000000092','70000000-0000-4000-8000-000000000090','Unsupported profile','active');
 insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select '70000000-0000-4000-8000-000000000093','70000000-0000-4000-8000-000000000090','70000000-0000-4000-8000-000000000092',1,submission_mode,config,8,jsonb_set(journey_snapshot,'{service,id}','"70000000-0000-4000-8000-000000000091"') from public.flow_versions where id='70000000-0000-4000-8000-000000000005';
 insert into public.paid_journey_publications values('70000000-0000-4000-8000-000000000090','70000000-0000-4000-8000-000000000092','70000000-0000-4000-8000-000000000093','70000000-0000-4000-8000-000000000094');
 insert into public.flow_installations values('70000000-0000-4000-8000-000000000094','70000000-0000-4000-8000-000000000090','70000000-0000-4000-8000-000000000092','70000000-0000-4000-8000-000000000093','["https://checkout.example.test"]');
 update public.flows set published_version_id='70000000-0000-4000-8000-000000000093' where id='70000000-0000-4000-8000-000000000092';
-select pg_temp.reject($q$select pg_temp.owner_read(t=>'70000000-0000-4000-8000-000000000090',f=>'70000000-0000-4000-8000-000000000092')$q$,'0A000');
+-- 0092: the business below has its own account, so this call is made BY that owner.
+-- flow_actor returns void and raises FORBIDDEN for a non-owner, so this block
+-- completing proves membership -- which is what keeps the refusal below a
+-- business-type refusal rather than a membership one.
+do $m$begin perform lumin.flow_actor('70000000-0000-4000-8000-000000000089','70000000-0000-4000-8000-000000000090',true);end$m$;
+select pg_temp.reject($q$select pg_temp.owner_read(a=>'70000000-0000-4000-8000-000000000089',t=>'70000000-0000-4000-8000-000000000090',f=>'70000000-0000-4000-8000-000000000092')$q$,'0A000');
 select pg_temp.save(1,true);select pg_temp.assert(pg_temp.owner_read()->>'draftRevision'='1','editable draft2 does not replace published1');
 select pg_temp.publish(r=>2,v=>'70000000-0000-4000-8000-000000000025',i=>'70000000-0000-4000-8000-000000000026');
 select pg_temp.assert(pg_temp.owner_read()->>'draftRevision'='2' and pg_temp.owner_read()->>'installationId'='70000000-0000-4000-8000-000000000026','current pointer replaces historical receipt');
