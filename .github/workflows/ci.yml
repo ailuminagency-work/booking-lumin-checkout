@@ -1021,3 +1021,45 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/paid_journey_customer_field_payment.sql
           export PAID_JOURNEY_CUSTOMER_FIELD_PAYMENT_CI_DATABASE_HOST="$expected_server_host"
           node --import tsx apps/api/src/paid-journey-customer-field-payment.integration.ts
+
+  # apps/api/scripts/run-integration.sh has existed since the BFF was relocated and
+  # CI has never invoked it. Running it exposed three harnesses that could not pass:
+  # roster-http seeded one account into two businesses (refused by migration 0092),
+  # phase-a-rental-concurrency used a 5-character booking reference against a
+  # `length(reference) >= 6` check that has been there since 0005, and both rental
+  # harnesses compared two Date instances with node:assert/strict's `equal` (which is
+  # strictEqual, so distinct Dates never match). Two of those three had never passed.
+  # A script CI does not run is not a test, so it runs here now.
+  acceptance:
+    name: acceptance harnesses (pg-backed HTTP journeys)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Flow-BFF acceptance harnesses against a disposable PostgreSQL
+        # The script provisions and drops its own database, applies the local harness
+        # plus every checked-in migration, and runs each harness to completion rather
+        # than stopping at the first failure -- so one red harness still reports the
+        # others. It exits non-zero if any failed.
+        run: bash apps/api/scripts/run-integration.sh

@@ -110,9 +110,9 @@ try {
       `insert into public.bookings
         (id,tenant_id,reference,state,selection,pricing,slot_start,slot_end,idempotency_key)
        values
-        ($1,$3,'RNT-A','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$7),
-        ($2,$3,'RNT-B','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$8),
-        ($4,$9,'RNT-F','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$10)`,
+        ($1,$3,'RNT-A01','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$7),
+        ($2,$3,'RNT-B01','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$8),
+        ($4,$9,'RNT-F01','draft',jsonb_build_object('vertical','vehicle_rental'), '{}'::jsonb,$5,$6,$10)`,
       [bookingA, bookingB, tenant, foreignBooking, slotStart.toISOString(), slotEnd.toISOString(), `rental-${run}-a`, `rental-${run}-b`, foreignTenant, `rental-${run}-foreign`],
     );
   });
@@ -155,7 +155,13 @@ try {
   assert.equal(replay.result, 'GRANTED');
   assert.equal(replay.reservation_status, 'held');
   assert.equal(replay.reservation_id, winner.reservation_id);
-  assert.equal(replay.expires_at, winner.expires_at);
+  // node:assert/strict's `equal` IS strictEqual, so two Date instances carrying the
+  // same instant never compare equal -- pg hands back a fresh Date per row, so this
+  // could only have passed if both sides were the same object. Compare the instants.
+  assert.equal(
+    new Date(replay.expires_at as unknown as string).toISOString(),
+    new Date(winner.expires_at as unknown as string).toISOString(),
+  );
 
   const persisted = await pool.query<{ n: number }>(
     `select count(*)::int as n from public.resource_reservations
