@@ -14,18 +14,24 @@
 # with a park-for-human-review. This check exists so that cannot come back
 # unnoticed -- CI does not otherwise typecheck or test the edge functions at all.
 #
-# The provider CLIENT may still expose a refund method: a human-triggered refund
-# path needs it. Only _shared/stripe.ts may contain the call site that performs it.
+# The provider client no longer exposes a refund method at all. There is no
+# human-triggered refund path inside Booking Lumin either -- no owner button, no
+# partial-refund button, no cancel-and-refund. A person who decides to refund does
+# it in the provider's own dashboard, under that merchant's own credentials, and
+# this system learns about it from the inbound charge.refunded webhook. So the
+# allowlist below is EMPTY: there is nowhere a refund call may legitimately live.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Where a provider refund PRIMITIVE may be DEFINED. Everywhere else, a refund call
-# is a call site, and there must be none in production code.
-#   - supabase/functions/_shared/stripe.ts : the edge-function provider client
-#   - packages/adapters/src/*Payment.ts    : the PaymentProvider adapter implementations
-# Test files are exempt: they exercise the primitive's own guards (over-refund
-# rejection, partial-to-full accounting) without Booking Lumin initiating anything.
-ALLOWED_RE='^(supabase/functions/_shared/stripe\.ts|packages/adapters/src/[A-Za-z]*[Pp]ayment\.ts)$'
+# Empty by construction: no production file may define or call a refund primitive.
+# A regex that cannot match any path, rather than an unset variable, so `set -u`
+# still catches a typo here.
+#   Kept deliberately empty -- adding a path back to this list is the edit that
+#   re-arms automatic refunds, and it should look exactly that deliberate.
+# Test files stay exempt: the fake Stripe server implements /v1/refunds exactly as
+# Stripe does, which is what lets the tests prove the adapter never CALLS it, and
+# the reconciliation tests need charge.refunded fixtures.
+ALLOWED_RE='^$'
 TEST_RE='(/test/|\.test\.ts$|/fakeStripe\.ts$)'
 SCAN_DIRS='supabase/functions packages apps'
 status=0

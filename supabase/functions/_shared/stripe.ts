@@ -181,28 +181,10 @@ export function createStripeClient(opts: StripeClientOptions) {
       return toRef((await readJson(res)) as StripeIntent);
     },
 
-    /**
-     * Issue a refund against a PaymentIntent (F1 compensation / F4). Passing an
-     * explicit `amount` (minor units) makes a partial refund when it is less
-     * than the captured total and a full refund when it equals it; Stripe
-     * rejects an amount above the captured total (over-refund).
-     */
-    async refund(intentId: string, amount: Money): Promise<{ refundId: string }> {
-      if (!Number.isSafeInteger(amount.amount) || amount.amount <= 0) {
-        throw new PaymentError("INVALID_REQUEST", "refund amount must be a positive integer (minor units)");
-      }
-      const body = new URLSearchParams();
-      body.set("payment_intent", intentId);
-      body.set("amount", String(amount.amount));
-      const res = await doFetch(`${apiBase}/v1/refunds`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: body.toString(),
-      });
-      if (!res.ok) throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe refund failed");
-      const refund = (await readJson(res)) as { id: string };
-      return { refundId: refund.id };
-    },
+    // No refund operation. This function runs with the tenant connection and is
+    // the one place that could move money back; it deliberately cannot. 0090
+    // replaced the former compensation path with park-for-human-review, and
+    // inbound charge.refunded is still reconciled below.
 
     /**
      * Verify + normalize a Stripe webhook. Throws PaymentError("WEBHOOK_UNVERIFIED")

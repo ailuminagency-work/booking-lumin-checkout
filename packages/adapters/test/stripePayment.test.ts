@@ -146,7 +146,7 @@ describe("stripe idempotency — one charge (threat 8, 23)", () => {
   });
 });
 
-describe("stripe cancel + refund (threat 6; refund mapping)", () => {
+describe("stripe cancel (threat 6)", () => {
   it("threat 6: cancelIntent drives an unpaid intent to canceled → state failed", async () => {
     const { fake, provider } = makeProvider();
     const ref = await provider.createIntent(intentInput());
@@ -155,23 +155,14 @@ describe("stripe cancel + refund (threat 6; refund mapping)", () => {
     expect((await provider.getIntent(ref.intentId))?.state).toBe("failed");
   });
 
-  it("full and partial refunds map correctly; over-refund is rejected", async () => {
+  it("the adapter never calls Stripe's refunds endpoint, because it has no refund operation", async () => {
     const { fake, provider } = makeProvider();
     const ref = await provider.createIntent(intentInput({ amount: 10_000 }));
     fake.drive(ref.intentId, "succeeded");
-    const partial = await provider.refund(ref.intentId, { amount: 4_000, currency: "USD" });
-    expect(partial.refundId).toMatch(/^re_test_/);
-    await provider.refund(ref.intentId, { amount: 6_000, currency: "USD" }); // completes to full
-    expect(fake.refunds(ref.intentId)).toHaveLength(2);
-    // Over-refund beyond captured total is rejected by Stripe.
-    await expect(provider.refund(ref.intentId, { amount: 1, currency: "USD" })).rejects.toBeInstanceOf(PaymentError);
-  });
-
-  it("refund rejects a non-positive amount before any call", async () => {
-    const { provider } = makeProvider();
-    await expect(provider.refund("pi_test_1", { amount: 0, currency: "USD" })).rejects.toMatchObject({
-      code: "INVALID_REQUEST",
-    });
+    expect((provider as unknown as Record<string, unknown>).refund).toBeUndefined();
+    // The fake still implements /v1/refunds, exactly as Stripe does, so this
+    // asserts the absence of a CALL and not merely the absence of an endpoint.
+    expect(fake.refunds(ref.intentId)).toHaveLength(0);
   });
 });
 

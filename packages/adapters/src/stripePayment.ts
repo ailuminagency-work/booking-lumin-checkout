@@ -222,25 +222,9 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
       }
     },
 
-    async refund(intentId: string, amount: Money): Promise<{ refundId: string }> {
-      if (!Number.isSafeInteger(amount.amount) || amount.amount <= 0) {
-        throw new PaymentError("INVALID_REQUEST", "refund amount must be a positive integer (minor units)");
-      }
-      // Passing `amount` makes this a PARTIAL refund when it is less than the
-      // captured total, and a FULL refund when it equals it; Stripe rejects an
-      // amount above the captured total (over-refund).
-      const res = await doFetch(`${apiBase}/v1/refunds`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: formEncode({ payment_intent: intentId, amount: amount.amount }),
-      });
-      if (!res.ok) {
-        const err = await readJson(res);
-        throw new PaymentError("PROVIDER_UNAVAILABLE", stripeErrorMessage(err) ?? "stripe refund failed");
-      }
-      const refund = (await readJson(res)) as { id: string };
-      return { refundId: refund.id };
-    },
+    // No refund operation: Booking Lumin never issues one. See the note on
+    // PaymentProvider in @lumin/contracts; inbound refunds are reconciled from
+    // charge.refunded via parseWebhook + interpretRefundEvent.
 
     async parseWebhook(payload: string, signatureHeader: string | null): Promise<WebhookEvent> {
       // SI-10: never process an unverified payload. Implements Stripe's real
