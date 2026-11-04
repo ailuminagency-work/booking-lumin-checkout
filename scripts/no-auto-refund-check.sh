@@ -19,7 +19,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ALLOWED='supabase/functions/_shared/stripe.ts'
+# Where a provider refund PRIMITIVE may be DEFINED. Everywhere else, a refund call
+# is a call site, and there must be none in production code.
+#   - supabase/functions/_shared/stripe.ts : the edge-function provider client
+#   - packages/adapters/src/*Payment.ts    : the PaymentProvider adapter implementations
+# Test files are exempt: they exercise the primitive's own guards (over-refund
+# rejection, partial-to-full accounting) without Booking Lumin initiating anything.
+ALLOWED_RE='^(supabase/functions/_shared/stripe\.ts|packages/adapters/src/[A-Za-z]*[Pp]ayment\.ts)$'
+TEST_RE='(/test/|\.test\.ts$|/fakeStripe\.ts$)'
+SCAN_DIRS='supabase/functions packages apps'
 status=0
 
 # A refund CALL is code, never prose, so comment-only lines are not offenders --
@@ -31,12 +39,14 @@ code_hits() { # $1=file ; prints "line:text" for non-comment matches only
 
 offenders=''
 while IFS= read -r f; do
-  [[ -z "${f}" || "${f}" == "${ALLOWED}" ]] && continue
+  [[ -z "${f}" ]] && continue
+  [[ "${f}" =~ ${ALLOWED_RE} ]] && continue
+  [[ "${f}" =~ ${TEST_RE} ]] && continue
   [[ -n "$(code_hits "${f}")" ]] && offenders="${offenders} ${f}"
-done < <(grep -rl --include='*.ts' -e '\.refund(' -e 'v1/refunds' supabase/functions 2>/dev/null || true)
+done < <(grep -rl --include='*.ts' -e '\.refund(' -e 'v1/refunds' ${SCAN_DIRS} 2>/dev/null | grep -v node_modules || true)
 
 if [[ -n "${offenders// /}" ]]; then
-  echo "no-auto-refund-check: FAIL — provider refund call outside ${ALLOWED}:" >&2
+  echo "no-auto-refund-check: FAIL — provider refund call in production code:" >&2
   for f in ${offenders}; do
     echo "  ${f}" >&2
     code_hits "${f}" | sed 's/^/      /' >&2
@@ -48,11 +58,12 @@ if [[ -n "${offenders// /}" ]]; then
 fi
 
 # The one allowed file must contain the refund DEFINITION only, never a self-call.
-if [[ -f "${ALLOWED}" ]]; then
-  selfcalls="$(grep -nE '(stripe|client|provider)\.refund\(' "${ALLOWED}" \
+EDGE_CLIENT='supabase/functions/_shared/stripe.ts'
+if [[ -f "${EDGE_CLIENT}" ]]; then
+  selfcalls="$(grep -nE '(stripe|client|provider)\.refund\(' "${EDGE_CLIENT}" \
     | grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)' || true)"
   if [[ -n "${selfcalls}" ]]; then
-    echo "no-auto-refund-check: FAIL — ${ALLOWED} invokes its own refund method:" >&2
+    echo "no-auto-refund-check: FAIL — ${EDGE_CLIENT} invokes its own refund method:" >&2
     echo "${selfcalls}" | sed 's/^/      /' >&2
     status=1
   fi
