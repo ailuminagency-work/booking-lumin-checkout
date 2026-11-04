@@ -54,7 +54,16 @@ try{
  console.log('PASS committed state/pool restart/exact retry and clean role reuse');
 
  // Actual tenant/member authority, not mock result assertions.
- for(const kind of ['foreign','staff','platform'] as const){const target=await seed(c);const other=await seed(c);if(kind==='staff')await c.query("insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_STAFF')",[target.tenant,other.actor]);if(kind==='platform')await c.query('insert into public.platform_admins(user_id) values($1)',[other.actor]);const r=make();failed(await r.repository.allocate(actor(other),request(target)),'FORBIDDEN');await hasNoState(target);}
+ // 0092: one account, one business. The 'staff' case used to make `other.actor` --
+ // who already OWNS other.tenant -- a BUSINESS_STAFF of target.tenant, which is the
+ // breach the trigger refuses. The role denial it proves still needs a member of
+ // target.tenant whose role is not owner, so that member is now an account of its
+ // own, belonging to nothing else. 'foreign' already covers another business's owner
+ // and 'platform' a platform admin, so all three denials stay distinct.
+ for(const kind of ['foreign','staff','platform'] as const){const target=await seed(c);const other=await seed(c);let acting=other.actor;
+  if(kind==='staff'){acting=randomUUID();await c.query("insert into auth.users(id,email) values($1::uuid,'allocator-staff-'||$1::text||'@example.test')",[acting]);await c.query("insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_STAFF')",[target.tenant,acting]);}
+  if(kind==='platform')await c.query('insert into public.platform_admins(user_id) values($1)',[other.actor]);
+  const r=make();failed(await r.repository.allocate(actor({...other,actor:acting}),request(target)),'FORBIDDEN');await hasNoState(target);}
  console.log('PASS foreign owner, staff and platform cannot allocate another tenant');
 
  const revoke=await seed(c);const revoker=await blocker();try{await revoker.query("update public.tenant_members set role='BUSINESS_STAFF' where tenant_id=$1 and user_id=$2",[revoke.tenant,revoke.actor]);const r=make();const outcome=r.repository.allocate(actor(revoke),request(revoke));const pid=await waitPid(r);await blocked(c,pid,backendPid(revoker));await revoker.query('commit');failed(await outcome,'FORBIDDEN');await gone(c,pid);await hasNoState(revoke);}finally{await revoker.end();}
