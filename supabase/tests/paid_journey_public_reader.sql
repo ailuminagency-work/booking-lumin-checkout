@@ -26,7 +26,8 @@ update public.services set active=true where id='70000000-0000-4000-8000-0000000
 update public.flows set status='archived' where id='70000000-0000-4000-8000-000000000004';
 select pg_temp.reject($q$select public.get_paid_journey_render('70000000-0000-4000-8000-000000000006','https://checkout.example.test')$q$,'P0002');
 update public.flows set status='active' where id='70000000-0000-4000-8000-000000000004';
-select public.create_staging_business('70000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000090','Detailing','journey-reader-detailing','UTC','USD','AUTO_DETAILING','journey_reader_detailing');
+insert into auth.users(id,email) values('70000000-0000-4000-8000-000000000089','journey-reader-detailing-owner@example.test');
+select public.create_staging_business('70000000-0000-4000-8000-000000000089','70000000-0000-4000-8000-000000000090','Detailing','journey-reader-detailing','UTC','USD','AUTO_DETAILING','journey_reader_detailing');
 insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values('70000000-0000-4000-8000-000000000091','70000000-0000-4000-8000-000000000090','Detailing','simple','USD',12500,60);
 insert into public.flows(id,tenant_id,name,status) values('70000000-0000-4000-8000-000000000092','70000000-0000-4000-8000-000000000090','Unsupported profile','active');
 insert into public.flow_versions(id,tenant_id,flow_id,source_revision,submission_mode,config,render_schema_version,journey_snapshot) select '70000000-0000-4000-8000-000000000093','70000000-0000-4000-8000-000000000090','70000000-0000-4000-8000-000000000092',1,submission_mode,config,8,jsonb_set(journey_snapshot,'{service,id}','"70000000-0000-4000-8000-000000000091"') from public.flow_versions where id='70000000-0000-4000-8000-000000000005';
