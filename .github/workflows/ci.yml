@@ -34,6 +34,8 @@ jobs:
       - run: npm run test
       - run: npm run build
       - run: bash scripts/contamination-check.sh
+      - name: Never-auto-refund invariant (edge functions are not otherwise typechecked in CI)
+        run: bash scripts/no-auto-refund-check.sh
 
   database:
     name: database (migrations + RLS attack suite)
@@ -95,6 +97,7 @@ jobs:
             confirmation_delivery_store_tests \
             payment_provenance_tests \
             owner_booking_authorization_tests \
+            payment_review_park_tests \
             notification_planner_config_tests \
             mode_installations_tests \
             mode_flow_session_tests \
