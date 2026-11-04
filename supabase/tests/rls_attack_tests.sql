@@ -424,12 +424,15 @@ begin
     raise exception 'FAIL 5b: staff role changed to %', v_role;
   end if;
 
+  -- 0089 revoked every client write verb on payment_connections, so staff no
+  -- longer reach the UPDATE at all -- the verb is gone before RLS is consulted.
   begin
     update public.payment_connections
        set status = 'revoked'
      where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    get diagnostics n = row_count;
-    if n <> 0 then raise exception 'FAIL 5c: staff updated % connection row(s)', n; end if;
+    raise exception 'FAIL 5c: staff reached the payment_connections UPDATE verb';
+  exception when insufficient_privilege then
+    null; -- expected
   end;
 
   begin
@@ -456,6 +459,59 @@ begin
   exception when insufficient_privilege then
     raise notice 'PASS 5e: member denied on payment_connection_secrets';
   end;
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 5g — the tenant's OWNER cannot write their own payment connection.
+-- 0089 made payment_connections server-authoritative: provider, status and
+-- config decide which connected account money is created on, so an owner who
+-- could declare them would have a path to point money at an unverified account.
+-- Reading stays allowed; the portal must still be able to show the status.
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+set local role authenticated;
+do $t$
+declare
+  n bigint;
+begin
+  select count(*) into n from public.payment_connections
+   where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n <> 1 then raise exception 'FAIL 5g-read: owner sees % own connection row(s)', n; end if;
+
+  begin
+    insert into public.payment_connections (tenant_id, provider, status, config)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'stripe_connect', 'connected',
+            '{"accountId":"acct_owner_declared"}');
+    raise exception 'FAIL 5g-insert: owner declared a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  begin
+    update public.payment_connections set status = 'connected', config = '{"accountId":"acct_owner_declared"}'
+     where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL 5g-update: owner rewrote a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  begin
+    delete from public.payment_connections
+     where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL 5g-delete: owner deleted a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  if exists (select 1 from pg_policy where polrelid = 'public.payment_connections'::regclass and polcmd <> 'r') then
+    raise exception 'FAIL 5g-policy: a write policy exists on payment_connections';
+  end if;
+
+  raise notice 'PASS 5g: owner reads but can never write their payment connection';
 end;
 $t$;
 
