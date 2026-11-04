@@ -52,9 +52,9 @@ try{
  const admin=await pool.connect();
  try{await admin.query(`begin;
  create function pg_temp.id(n integer) returns uuid language sql immutable as $$select ('68000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid$$;
- insert into auth.users(id,email) values(pg_temp.id(1),'history-owner@example.test'),(pg_temp.id(2),'history-foreign@example.test'),(pg_temp.id(6),'history-staff@example.test'),(pg_temp.id(7),'history-worker@example.test');
+ insert into auth.users(id,email) values(pg_temp.id(1),'history-owner@example.test'),(pg_temp.id(2),'history-foreign@example.test'),(pg_temp.id(6),'history-staff@example.test'),(pg_temp.id(7),'history-worker@example.test'),(pg_temp.id(9),'history-suspended-owner@example.test');
  insert into public.tenants(id,name,slug,timezone,currency,status) values(pg_temp.id(3),'Reader proof','history-reader-proof','UTC','USD','active'),(pg_temp.id(4),'Foreign proof','history-reader-foreign','UTC','USD','active'),(pg_temp.id(5),'Suspended proof','history-reader-suspended','UTC','USD','suspended');
- insert into public.tenant_members(tenant_id,user_id,role) values(pg_temp.id(3),pg_temp.id(1),'BUSINESS_OWNER'),(pg_temp.id(4),pg_temp.id(2),'BUSINESS_OWNER'),(pg_temp.id(5),pg_temp.id(1),'BUSINESS_OWNER'),(pg_temp.id(3),pg_temp.id(6),'BUSINESS_STAFF');
+ insert into public.tenant_members(tenant_id,user_id,role) values(pg_temp.id(3),pg_temp.id(1),'BUSINESS_OWNER'),(pg_temp.id(4),pg_temp.id(2),'BUSINESS_OWNER'),(pg_temp.id(5),pg_temp.id(9),'BUSINESS_OWNER'),(pg_temp.id(3),pg_temp.id(6),'BUSINESS_STAFF');
  insert into public.workers(id,tenant_id,display_name) values(pg_temp.id(20),pg_temp.id(3),'Synthetic worker');
  insert into public.worker_access(tenant_id,user_id,worker_id,active) values(pg_temp.id(3),pg_temp.id(7),pg_temp.id(20),true);
  insert into public.services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values(pg_temp.id(8),pg_temp.id(3),'Simple proof','simple','USD',100,60);
@@ -75,7 +75,7 @@ try{
  assert.deepEqual(await read(actor,tenant,booking),{schemaVersion:1,tenantId:tenant,bookingId:booking,receipts:[email]});
  assert.deepEqual((await read(actor,tenant,id(11))).receipts,[]);
  for(const user of [id(2),id(6),id(7)])await assert.rejects(read(user,tenant,booking),{code:'FORBIDDEN',message:'FORBIDDEN'});
- await assert.rejects(read(actor,id(5),id(13)),{code:'FORBIDDEN'});
+ await assert.rejects(read(id(9),id(5),id(13)),{code:'FORBIDDEN'});
  await assert.rejects(read(actor,tenant,id(12)),{code:'NOT_AVAILABLE'});
  assert.deepEqual(await fingerprint(),before,'reader must not mutate authority/queue/ledger');
  stage='snapshot';

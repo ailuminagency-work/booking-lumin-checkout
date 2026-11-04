@@ -2,9 +2,9 @@
 begin;
 create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;end$$;
 create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
-insert into auth.users(id,email) values('62000000-0000-4000-8000-000000000001','detail-sql@example.test'),('62000000-0000-4000-8000-000000000010','detail-foreign-sql@example.test');
+insert into auth.users(id,email) values('62000000-0000-4000-8000-000000000001','detail-sql@example.test'),('62000000-0000-4000-8000-000000000010','detail-foreign-sql@example.test'),('62000000-0000-4000-8000-000000000011','detail-housekeeping-owner-sql@example.test');
 select public.create_staging_business('62000000-0000-4000-8000-000000000001','62000000-0000-4000-8000-000000000002','Detailing SQL','detail-sql','UTC','USD','AUTO_DETAILING','detail-sql-profile-key001');
-select public.create_staging_business('62000000-0000-4000-8000-000000000001','62000000-0000-4000-8000-000000000030','Housekeeping SQL','detail-housekeeping-sql','UTC','USD','HOUSEKEEPING','detail-sql-profile-key002');
+select public.create_staging_business('62000000-0000-4000-8000-000000000011','62000000-0000-4000-8000-000000000030','Housekeeping SQL','detail-housekeeping-sql','UTC','USD','HOUSEKEEPING','detail-sql-profile-key002');
 create function pg_temp.body() returns jsonb language sql as $$select '{"name":"Detail package menu","description":"Owner authored detailing","currency":"USD","durationMinutes":120,"packages":[{"id":"basic","label":"Basic","amount":8000},{"id":"deluxe","label":"Deluxe","amount":15000}],"vehicles":[{"id":"sedan","label":"Sedan","multiplierBp":10000},{"id":"suv","label":"SUV","multiplierBp":12500}],"addons":[{"id":"pet-hair","name":"Pet hair","amount":3000}],"locations":[{"id":"studio","label":"Studio","amount":0},{"id":"mobile","label":"Mobile visit","amount":2000}],"idempotencyKey":"detailing-create-fixture-001"}'::jsonb$$;
 create function pg_temp.create_offer(a uuid default '62000000-0000-4000-8000-000000000001',t uuid default '62000000-0000-4000-8000-000000000002',s uuid default '62000000-0000-4000-8000-000000000003',b jsonb default pg_temp.body()) returns jsonb language sql as $$select public.create_auto_detailing_offer(a,t,s,b)$$;
 select pg_temp.assert((select prosecdef and proconfig=array['search_path=pg_catalog'] from pg_proc where oid='public.create_auto_detailing_offer(uuid,uuid,uuid,jsonb)'::regprocedure),'fixed create definer');
@@ -15,7 +15,14 @@ select pg_temp.assert(not has_function_privilege('anon','public.create_auto_deta
 set local role anon;select pg_temp.reject($q$select pg_temp.create_offer()$q$,'42501');reset role;
 set local role authenticated;select pg_temp.reject($q$select pg_temp.create_offer()$q$,'42501');reset role;
 select pg_temp.reject($q$select pg_temp.create_offer(a=>'62000000-0000-4000-8000-000000000010')$q$,'42501');
-select pg_temp.reject($q$select pg_temp.create_offer(t=>'62000000-0000-4000-8000-000000000030')$q$,'42501');
+-- 0092 gave the housekeeping business its own account, so this call must be made BY
+-- that owner: driving it with the detailing owner would now fail on membership and
+-- silently stop exercising the business-type refusal this line exists for. The
+-- membership is asserted first so the 42501 below can only be the type check.
+-- flow_actor returns void and raises FORBIDDEN when the actor is not an owner of the
+-- tenant, so this block completing IS the membership proof.
+do $membership$begin perform lumin.flow_actor('62000000-0000-4000-8000-000000000011','62000000-0000-4000-8000-000000000030',true);end$membership$;
+select pg_temp.reject($q$select pg_temp.create_offer(a=>'62000000-0000-4000-8000-000000000011',t=>'62000000-0000-4000-8000-000000000030')$q$,'42501');
 select pg_temp.reject($q$select pg_temp.create_offer(b=>pg_temp.body()||'{"total":1}')$q$,'22023');
 select pg_temp.reject($q$select pg_temp.create_offer(b=>jsonb_set(pg_temp.body(),'{currency}','"EUR"'))$q$,'22023');
 select pg_temp.reject($q$select pg_temp.create_offer(b=>jsonb_set(pg_temp.body(),'{packages,0,amount}','-1'))$q$,'22023');

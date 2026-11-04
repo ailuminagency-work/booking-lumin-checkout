@@ -2,9 +2,9 @@
 begin;
 create function pg_temp.assert(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL %',label;end if;end$$;
 create function pg_temp.reject(q text,code text) returns void language plpgsql as $$begin begin execute q;exception when others then if sqlstate=code then return;end if;raise;end;raise exception 'FAIL accepted %',q;end$$;
-insert into auth.users(id,email) values('54000000-0000-4000-8000-000000000001','profile-init-owner@example.test'),('54000000-0000-4000-8000-000000000003','profile-init-staff@example.test'),('54000000-0000-4000-8000-000000000004','profile-init-foreign@example.test');
+insert into auth.users(id,email) values('54000000-0000-4000-8000-000000000001','profile-init-owner@example.test'),('54000000-0000-4000-8000-000000000003','profile-init-staff@example.test'),('54000000-0000-4000-8000-000000000004','profile-init-foreign@example.test'),('54000000-0000-4000-8000-000000000005','profile-init-second-owner@example.test'),('54000000-0000-4000-8000-000000000006','profile-init-ordinary@example.test');
 insert into public.tenants(id,name,slug,timezone,currency) values('54000000-0000-4000-8000-000000000002','Existing Housekeeping','profile-init-existing','America/Los_Angeles','USD'),('54000000-0000-4000-8000-000000000010','Second Existing','profile-init-second','UTC','USD');
-insert into public.tenant_members(tenant_id,user_id,role) values('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000001','BUSINESS_OWNER'),('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000003','BUSINESS_STAFF'),('54000000-0000-4000-8000-000000000010','54000000-0000-4000-8000-000000000001','BUSINESS_OWNER');
+insert into public.tenant_members(tenant_id,user_id,role) values('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000001','BUSINESS_OWNER'),('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000003','BUSINESS_STAFF'),('54000000-0000-4000-8000-000000000010','54000000-0000-4000-8000-000000000005','BUSINESS_OWNER');
 create function pg_temp.init(a uuid default '54000000-0000-4000-8000-000000000001',t uuid default '54000000-0000-4000-8000-000000000002',b text default 'HOUSEKEEPING',k text default 'existing-profile-sql-0001') returns jsonb language sql as $$select public.initialize_staging_business_profile(a,t,b,k)$$;
 select pg_temp.assert((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.business_profile_initializations'::regclass),'forced RLS ledger');
 select pg_temp.assert(not has_table_privilege('service_role','public.business_profile_initializations','SELECT') and not has_table_privilege('service_role','public.business_profile_initializations','INSERT') and not has_table_privilege('service_role','public.business_profiles','INSERT'),'all private grants closed');
@@ -19,19 +19,32 @@ select pg_temp.reject($q$select pg_temp.init(b=>'simple')$q$,'22023');
 select pg_temp.assert(pg_temp.init()=jsonb_build_object('schemaVersion',1,'tenantId','54000000-0000-4000-8000-000000000002','businessType','HOUSEKEEPING','templateVersion',1),'insert receipt');
 select pg_temp.assert(pg_temp.init()=public.owner_business_profile('54000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000002'),'exact operation replay');
 select pg_temp.reject($q$select pg_temp.init(b=>'AUTO_DETAILING')$q$,'40001');select pg_temp.reject($q$select pg_temp.init(k=>'existing-profile-sql-0002')$q$,'40001');
-select pg_temp.reject($q$select pg_temp.init(t=>'54000000-0000-4000-8000-000000000010')$q$,'40001');
+-- SUPERSEDED BY THE SINGLE-BUSINESS INVARIANT (0092). This line used to assert that
+-- an account which had already initialized one business profile could not initialize
+-- a second (40001) -- it was driven by ...0001, who held memberships in BOTH ...0002
+-- and ...0010. That scenario is now unreachable: an account can never hold a second
+-- membership, so it can never be in a position to initialize a second profile. Proved
+-- below: ...0005 owns ...0010 alone, so re-pointing the old assertion at it would
+-- have made the init SUCCEED -- there is no second business left to conflict with.
+--
+-- The replacement is strictly stronger -- the breach is refused one layer earlier, at
+-- membership, so the profile guard is never even reached.
+do $m$begin perform lumin.flow_actor('54000000-0000-4000-8000-000000000005','54000000-0000-4000-8000-000000000010',true);end$m$;
+select pg_temp.reject($q$insert into public.tenant_members(tenant_id,user_id,role) values('54000000-0000-4000-8000-000000000010','54000000-0000-4000-8000-000000000001','BUSINESS_OWNER')$q$,'42501');
+select pg_temp.reject($q$select public.create_staging_business('54000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000023','Third','profile-init-third','UTC','USD','HOUSEKEEPING','third-business-0001')$q$,'42501');
 -- New-create must not replay an initializer's key even with exact tenant metadata.
 select pg_temp.reject($q$select public.create_staging_business('54000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000020','Existing Housekeeping','profile-init-existing','America/Los_Angeles','USD','HOUSEKEEPING','existing-profile-sql-0001')$q$,'40001');
-select pg_temp.assert(public.create_staging_business('54000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000021','New Business','profile-init-new','UTC','USD','HOUSEKEEPING','ordinary-new-business-0001')->>'tenantId'='54000000-0000-4000-8000-000000000021','ordinary create');
-select pg_temp.assert(public.create_staging_business('54000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000022','New Business','profile-init-new','UTC','USD','HOUSEKEEPING','ordinary-new-business-0001')->>'tenantId'='54000000-0000-4000-8000-000000000021','ordinary create replay retained');
-select pg_temp.reject($q$select pg_temp.init(t=>'54000000-0000-4000-8000-000000000021',k=>'ordinary-new-business-0001')$q$,'40001');
+-- 0092: an ordinary create is made by an account with no business yet.
+select pg_temp.assert(public.create_staging_business('54000000-0000-4000-8000-000000000006','54000000-0000-4000-8000-000000000021','New Business','profile-init-new','UTC','USD','HOUSEKEEPING','ordinary-new-business-0001')->>'tenantId'='54000000-0000-4000-8000-000000000021','ordinary create');
+select pg_temp.assert(public.create_staging_business('54000000-0000-4000-8000-000000000006','54000000-0000-4000-8000-000000000022','New Business','profile-init-new','UTC','USD','HOUSEKEEPING','ordinary-new-business-0001')->>'tenantId'='54000000-0000-4000-8000-000000000021','ordinary create replay retained');
+select pg_temp.reject($q$select pg_temp.init(a=>'54000000-0000-4000-8000-000000000006',t=>'54000000-0000-4000-8000-000000000021',k=>'ordinary-new-business-0001')$q$,'40001');
 select pg_temp.reject($q$select * from public.business_profile_initializations where tenant_id='54000000-0000-4000-8000-000000000002'$q$,'42501');reset role;
 select pg_temp.assert((select creation_name='Existing Housekeeping' and creation_slug='profile-init-existing' and creation_timezone='America/Los_Angeles' and creation_currency='USD' from public.business_profiles where tenant_id='54000000-0000-4000-8000-000000000002'),'exact existing metadata snapshot');
 select pg_temp.assert(not exists(select 1 from public.tenants where id in('54000000-0000-4000-8000-000000000020','54000000-0000-4000-8000-000000000022')) and (select count(*)=1 from public.business_profile_initializations where tenant_id in('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000010','54000000-0000-4000-8000-000000000021')),'no collision orphans');
 select pg_temp.reject($q$update public.business_profiles set business_type='AUTO_DETAILING' where tenant_id='54000000-0000-4000-8000-000000000002'$q$,'55000');select pg_temp.reject($q$delete from public.business_profile_initializations where tenant_id='54000000-0000-4000-8000-000000000002'$q$,'55000');
 create function pg_temp.fail_ledger() returns trigger language plpgsql as $$begin if new.tenant_id='54000000-0000-4000-8000-000000000010' then raise exception 'fixture ledger failure';end if;return new;end$$;
 create trigger fixture_profile_ledger before insert on public.business_profile_initializations for each row execute function pg_temp.fail_ledger();
-select pg_temp.reject($q$select pg_temp.init(t=>'54000000-0000-4000-8000-000000000010',k=>'existing-profile-sql-0010')$q$,'P0001');
+select pg_temp.reject($q$select pg_temp.init(a=>'54000000-0000-4000-8000-000000000005',t=>'54000000-0000-4000-8000-000000000010',k=>'existing-profile-sql-0010')$q$,'P0001');
 select pg_temp.assert(not exists(select 1 from public.business_profiles where tenant_id='54000000-0000-4000-8000-000000000010'),'ledger failure rolls profile back');drop trigger fixture_profile_ledger on public.business_profile_initializations;
 insert into public.tenant_members(tenant_id,user_id,role) values('54000000-0000-4000-8000-000000000002','54000000-0000-4000-8000-000000000004','BUSINESS_OWNER');select pg_temp.reject($q$select pg_temp.init(a=>'54000000-0000-4000-8000-000000000004')$q$,'40001');
 update public.tenants set status='inactive' where id='54000000-0000-4000-8000-000000000002';select pg_temp.reject($q$select pg_temp.init()$q$,'42501');update public.tenants set status='active' where id='54000000-0000-4000-8000-000000000002';
