@@ -4,7 +4,7 @@ import {businessOnboardingEnabled} from './business';
 import {catalogAuthoringEnabled} from './owner-catalog';
 import {schedulingAuthoringEnabled} from './owner-scheduling';
 import {detailingPublicationEnabled} from './detailing-publication';
-import {paidPublicationEnabled} from './capability-flags';
+import {paidPublicationEnabled, ownerBookingOperationsEnabled} from './capability-flags';
 import {mockPaymentsEnabled} from './mock-payment';
 
 /**
@@ -19,6 +19,10 @@ const CAPABILITIES: Array<[string, string, (e: Record<string, string | undefined
   ['BOOKING_LUMIN_SCHEDULING_AUTHORING', 'schedulingAuthoring', schedulingAuthoringEnabled],
   ['BOOKING_LUMIN_DETAILING_PUBLICATION', 'detailingPublication', detailingPublicationEnabled],
   ['BOOKING_LUMIN_PAID_PUBLICATION', 'paidPublication', paidPublicationEnabled],
+  // P2: owner booking list, detail, answers and cancellation. Previously gated on
+  // BOOKING_LUMIN_ENV==='staging' with no flag, so the owner half of the loop could
+  // not run in production at all.
+  ['BOOKING_LUMIN_OWNER_BOOKING_OPS', 'ownerBookingOperations', ownerBookingOperationsEnabled],
 ];
 const everyFlagOn = Object.fromEntries(CAPABILITIES.map(([flag]) => [flag, '1']));
 

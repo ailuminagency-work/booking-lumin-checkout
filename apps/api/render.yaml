@@ -78,6 +78,13 @@ services:
       # rollback. Previously trapped behind the fake-payment gate (gap G1).
       - key: BOOKING_LUMIN_PAID_PUBLICATION
         sync: false
+      # Owner booking operations: list, detail (answers + activity trail) and owner
+      # cancellation. Previously gated on BOOKING_LUMIN_ENV==='staging' with no flag,
+      # so the owner half of the booking loop could not run in production at all.
+      # Cancellation here is NOT a refund: it never touches payments or refunds, and a
+      # cancelled booking may remain paid.
+      - key: BOOKING_LUMIN_OWNER_BOOKING_OPS
+        sync: false
       - key: BOOKING_LUMIN_JOURNEY_AUTHORING
         sync: false
       - key: BOOKING_LUMIN_JOURNEY_PUBLICATION
