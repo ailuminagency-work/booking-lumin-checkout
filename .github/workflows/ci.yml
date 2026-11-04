@@ -34,8 +34,39 @@ jobs:
       - run: npm run test
       - run: npm run build
       - run: bash scripts/contamination-check.sh
-      - name: Never-auto-refund invariant (edge functions are not otherwise typechecked in CI)
+      - name: Never-auto-refund invariant
         run: bash scripts/no-auto-refund-check.sh
+
+  # The edge functions run under Deno, not the Node workspace, so the `verify` job's
+  # tsc and vitest never see them -- and they are the money path: the Stripe webhook
+  # that confirms a payment, and the intent creator. That blind spot is how a
+  # deterministic "refund-on-oversell" shipped and survived until an audit found it
+  # (migration 0090 replaced it with park-for-human-review). This job closes the
+  # typecheck half of the gap; scripts/no-auto-refund-check.sh above remains the
+  # behavioural half.
+  edge-functions:
+    name: edge functions (deno typecheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Typecheck every TypeScript file under supabase/functions
+        working-directory: supabase/functions
+        run: |
+          set -euo pipefail
+          # Enumerated from git rather than listed by hand, so a NEW function or shared
+          # module is covered the moment it is committed. A hand-written list is how a
+          # file quietly stops being checked.
+          mapfile -t files < <(git ls-files '*.ts' | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo 'No TypeScript files found under supabase/functions -- the path moved and this job was checking nothing.' >&2
+            exit 1
+          fi
+          printf 'typechecking %d file(s):\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          deno check "${files[@]}"
 
   database:
     name: database (migrations + RLS attack suite)

@@ -26,7 +26,9 @@
 //        action that rule exists to prevent, and it fired on a RACE (a hold
 //        expiring between capture and webhook delivery), not on fraud. Nothing in
 //        this function may invoke the provider's refund API; scripts/
-//        no-auto-refund-check.sh enforces that mechanically in CI.
+//        no-auto-refund-check.sh enforces that mechanically in CI, and since the
+//        refund primitive itself was deleted from _shared/stripe.ts there is no
+//        longer anything here to invoke.
 //     A replayed succeeded event finds the booking already `confirmed` (or its
 //        hold `consumed`) and is a no-op.
 //
