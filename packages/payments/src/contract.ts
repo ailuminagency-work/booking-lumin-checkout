@@ -123,11 +123,12 @@ export interface MerchantPaymentProvider {
   /** Capture up to the authorized amount; omit `amount` to capture in full. */
   capture(chargeId: string, amount?: Money): Promise<MerchantCharge>;
 
-  // --- Refunds ---
-  /** Full refund of the captured amount. */
-  refund(chargeId: string): Promise<MerchantCharge>;
-  /** Partial refund (supportsPartialRefund). */
-  partialRefund(chargeId: string, amount: Money): Promise<MerchantCharge>;
+  // --- Refunds: NOT AN OPERATION ---
+  // Booking Lumin never issues a refund, full or partial. `MerchantCharge.refunded`
+  // is still here because it is READ during reconciliation -- it reports what the
+  // provider says has already been refunded out there. `supportsPartialRefund` in
+  // the capability record likewise describes the provider, not a call this system
+  // is allowed to make. See the note on PaymentProvider in @lumin/contracts.
 
   // --- Saved methods (supportsSavedMethods) ---
   saveMethod(input: SaveMethodInput): Promise<SavedMethodRef>;

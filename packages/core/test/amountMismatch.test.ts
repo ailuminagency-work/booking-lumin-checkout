@@ -55,9 +55,6 @@ function stubProvider(overrideGetAmount: (real: Money) => Money): {
       return null;
     },
     async cancelIntent() {},
-    async refund() {
-      return { refundId: "re_stub" };
-    },
     async parseWebhook() {
       return { kind: "unrecognized", intentId: null, raw: null };
     },

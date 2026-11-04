@@ -74,14 +74,6 @@ describe("provider A (mock-merchant-a): declared capabilities honored", () => {
     expect(a.listMarketplaceAccounts()).toHaveLength(0);
   });
 
-  it("rejects a partial refund it does not support", async () => {
-    const a = createMockMerchantProviderA();
-    const c = await a.createCharge(charge(10_000, "USD", "US", "card", "k4"));
-    await expect(a.partialRefund(c.chargeId, { amount: 2_000, currency: "USD" })).rejects.toMatchObject({
-      code: "PROVIDER_UNAVAILABLE",
-    });
-  });
-
   it("supports the auth/capture flow", async () => {
     const a = createMockMerchantProviderA();
     const auth = await a.authorize(charge(8_000, "USD", "US", "card", "auth1"));
@@ -101,12 +93,15 @@ describe("provider A (mock-merchant-a): declared capabilities honored", () => {
     expect(captured.captured.amount).toBe(5_000);
   });
 
-  it("supports a full refund", async () => {
+  it("exposes no refund operation, whatever the provider itself can do", async () => {
     const a = createMockMerchantProviderA();
     const c = await a.createCharge(charge(10_000, "USD", "US", "card", "k5"));
-    const refunded = await a.refund(c.chargeId);
-    expect(refunded.state).toBe("refunded");
-    expect(refunded.refunded.amount).toBe(10_000);
+    const surface = a as unknown as Record<string, unknown>;
+    expect(surface.refund).toBeUndefined();
+    expect(surface.partialRefund).toBeUndefined();
+    // `refunded` survives because reconciliation READS it: it reports what the
+    // provider says has already been refunded, and starts at zero.
+    expect(c.refunded.amount).toBe(0);
   });
 
   it("supports the saved-method flow", async () => {
@@ -157,26 +152,16 @@ describe("provider B (mock-merchant-b): declared capabilities honored", () => {
     });
   });
 
-  it("supports a partial refund, tracking state and remaining refundable", async () => {
+  it("declares partial-refund support and still exposes no way to issue one", async () => {
     const b = createMockMerchantProviderB();
     const c = await b.createCharge(charge(10_000, "MXN", "MX", "local_scheme", "b-k1"));
     expect(c.state).toBe("captured");
-
-    const r1 = await b.partialRefund(c.chargeId, { amount: 3_000, currency: "MXN" });
-    expect(r1.state).toBe("partially_refunded");
-    expect(r1.refunded.amount).toBe(3_000);
-
-    const r2 = await b.partialRefund(c.chargeId, { amount: 7_000, currency: "MXN" });
-    expect(r2.state).toBe("refunded");
-    expect(r2.refunded.amount).toBe(10_000);
-  });
-
-  it("rejects a partial refund exceeding the captured amount", async () => {
-    const b = createMockMerchantProviderB();
-    const c = await b.createCharge(charge(5_000, "MXN", "MX", "card", "b-k2"));
-    await expect(b.partialRefund(c.chargeId, { amount: 9_999, currency: "MXN" })).rejects.toMatchObject({
-      code: "INVALID_REQUEST",
-    });
+    // The capability record says the PROVIDER can refund in part. That is a fact
+    // about the provider, not permission for this system to act on it.
+    expect(b.capability.supportsPartialRefund).toBe(true);
+    const surface = b as unknown as Record<string, unknown>;
+    expect(surface.refund).toBeUndefined();
+    expect(surface.partialRefund).toBeUndefined();
   });
 
   it("supports marketplace onboarding", async () => {
