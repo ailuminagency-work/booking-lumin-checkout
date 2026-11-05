@@ -83,7 +83,16 @@ const FINISHED: MockAccountFacts = {
   blockedReason: null,
 };
 
-/** The provider saying "I do not recognise this account" -- data, not an outage. */
+/**
+ * The provider saying "I do not recognise this account" -- data, not an outage.
+ *
+ * This mock's accounts live in process memory, so a restart or a second instance
+ * answers this for accounts that were real a moment ago. That is deliberate and
+ * faithful: it is exactly what Stripe answers for an account it does not know,
+ * and softening it would make the mock less like the thing it stands in for.
+ * What made it dangerous was that 'revoked' used to be terminal for the owner as
+ * well as for automation; migration 0093 now lets an owner reconnect.
+ */
 const UNRECOGNISED: MockAccountFacts = {
   chargesEnabled: false,
   payoutsEnabled: false,
@@ -106,7 +115,18 @@ export function createMockPaymentConnectionProvider(
   const ttlSeconds = opts.handoffTtlSeconds ?? 300;
 
   const handoffs = new Map<string, HandoffState>(); // handoffId → state
-  const byIdempotencyKey = new Map<string, string>(); // key → handoffId
+  // Keyed on TENANT and key, not the key alone. Keyed on the key alone, one
+  // tenant presenting another tenant's idempotency key was handed that tenant's
+  // handoff -- and so its minted account. The database ledger is correctly
+  // scoped (unique (tenant_id, provider, idempotency_key)), so a bind would have
+  // been refused there, but an adapter must not depend on something downstream
+  // to keep tenants apart. NUL cannot occur in a uuid or in a key, so the
+  // composite cannot be forged by a key that embeds a separator.
+  const byIdempotencyKey = new Map<string, string>(); // tenant\0key → handoffId
+
+  function idempotencyScope(tenantId: string, key: string): string {
+    return `${tenantId}\u0000${key}`;
+  }
   const accounts = new Map<string, MockAccountFacts>(); // accountId → canned answer
   let unavailableArmed = false;
 
@@ -168,7 +188,8 @@ export function createMockPaymentConnectionProvider(
 
       // Idempotent: the same key NEVER begins a second handoff, and so never
       // mints a second account for one owner's single attempt.
-      const existing = byIdempotencyKey.get(input.idempotencyKey);
+      const scope = idempotencyScope(input.tenantId, input.idempotencyKey);
+      const existing = byIdempotencyKey.get(scope);
       if (existing) return { ...handoffs.get(existing)!.handoff };
 
       const handoffId = `mch_${randomHex(12)}`;
@@ -180,7 +201,7 @@ export function createMockPaymentConnectionProvider(
         expiresAt: new Date(Date.parse(now()) + ttlSeconds * 1000).toISOString(),
       });
       handoffs.set(handoffId, { handoff, tenantId: input.tenantId, accountId, completed: false });
-      byIdempotencyKey.set(input.idempotencyKey, handoffId);
+      byIdempotencyKey.set(scope, handoffId);
       // The account exists at the provider but can do nothing: beginning a
       // handoff grants no payment capability whatsoever.
       accounts.set(accountId, { ...UNFINISHED });

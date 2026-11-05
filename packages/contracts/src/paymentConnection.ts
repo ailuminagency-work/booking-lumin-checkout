@@ -214,8 +214,18 @@ export const ConnectionHandoff = z
     provider: z.string().min(1),
     /** Opaque; the server stores it to resolve the handoff later. */
     handoffId: z.string().min(1),
-    /** The URL the owner visits. Single-purpose and short-lived. */
-    onboardingUrl: z.string().url(),
+    /**
+     * The URL the owner visits. Single-purpose and short-lived.
+     *
+     * HTTPS ONLY. `z.string().url()` alone accepts `javascript:` and `data:`,
+     * and this value is handed to a browser, so the scheme is constrained here
+     * rather than trusted to each adapter. A provider answering with any other
+     * scheme is not something to navigate to.
+     */
+    onboardingUrl: z
+      .string()
+      .url()
+      .refine((u) => /^https:\/\//i.test(u), "onboardingUrl must be https"),
     expiresAt: z.string().datetime(),
   })
   .strict();
