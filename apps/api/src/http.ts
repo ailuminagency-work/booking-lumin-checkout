@@ -17,6 +17,7 @@ import {PublishPaidJourneyDraft} from './paid-journey-publication';
 import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
 import {OwnerBookingsList,OwnerBookingDetail,type OwnerBookingsListReader,type OwnerBookingDetailReader} from './owner-bookings';
+import {OwnerPaymentReviews,type OwnerPaymentReviewsReader} from './owner-payment-reviews';
 import {OwnerBookingCancelReceipt,type OwnerBookingCancelWriter} from './owner-booking-cancel';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -82,6 +83,7 @@ export interface FlowHttpOptions{
  bookingFormAnswers?:BookingFormAnswersReader;
  ownerBookings?:OwnerBookingsListReader;
  ownerBookingDetail?:OwnerBookingDetailReader;
+ ownerPaymentReviews?:OwnerPaymentReviewsReader;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
@@ -413,7 +415,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!result.success||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
-   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==="/api/bookings"?["tenantId","limit","before"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers','/api/bookings/detail'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
+   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==="/api/bookings"?["tenantId","limit","before"]:url.pathname==="/api/payment-reviews"?["tenantId","limit","before","status"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers','/api/bookings/detail'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
    const journeyFieldPublication=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/(publish|publication)$/);
@@ -496,6 +498,22 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(before!==null&&!Number.isFinite(Date.parse(before)))throw new FlowError('INVALID_REQUEST');
     const tenantId=tenant.toLowerCase();
     const result=OwnerBookingsList.safeParse(await options.ownerBookings(actor,tenantId,{limit,before}));
+    if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/payment-reviews'){
+    if(!options.ownerPaymentReviews)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    if(url.searchParams.getAll('limit').length>1||url.searchParams.getAll('before').length>1||url.searchParams.getAll('status').length>1)throw new FlowError('INVALID_REQUEST');
+    const limitRaw=url.searchParams.get('limit'),limit=limitRaw===null?25:Number(limitRaw);
+    if(!Number.isInteger(limit)||limit<1||limit>100)throw new FlowError('INVALID_REQUEST');
+    const before=url.searchParams.get('before');
+    if(before!==null&&!Number.isFinite(Date.parse(before)))throw new FlowError('INVALID_REQUEST');
+    // Default to the open queue: the operational question is what is parked now.
+    const status=url.searchParams.get('status');
+    if(status!==null&&status!=='open'&&status!=='all')throw new FlowError('INVALID_REQUEST');
+    const tenantId=tenant.toLowerCase();
+    const result=OwnerPaymentReviews.safeParse(await options.ownerPaymentReviews(actor,tenantId,{limit,before,openOnly:status!=='all'}));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
    }
