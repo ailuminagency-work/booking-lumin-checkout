@@ -123,6 +123,22 @@ describe("beginning a handoff creates an account that can do nothing", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("refuses a return or refresh URL carrying userinfo", async () => {
+    // Stripe hands these to the owner's browser, and userinfo is a classic way
+    // to make a hostile host look trusted in an address bar.
+    const { spy, connect } = harness();
+    for (const [i, bad] of [
+      "https://user:pass@evil.test/return",
+      "https://victim.test@evil.test/return",
+      "http://u@evil.test/",
+    ].entries()) {
+      await expect(
+        connect.beginConnection({ tenantId: TENANT, ...URLS, returnUrl: bad, idempotencyKey: `userinfo-key-${i}` }),
+      ).rejects.toThrow(/userinfo/);
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("refuses an idempotency key that is not header-safe, before any request", async () => {
     // The key is sent as a header VALUE and is also the basis of the derived
     // `${key}:link` key, so a CR or LF in it reached two endpoints and surfaced
@@ -406,6 +422,55 @@ describe("an inconclusive answer changes nothing", () => {
     }
   });
 
+  it("EVERY unexpected status stays inconclusive — including a rotated platform key", async () => {
+    // The old suite exercised only 500 / 429 / transport / non-JSON, so widening
+    // disownsAccount to 400 and 401 went undetected (proven by the review). The
+    // scenario that makes it serious: the platform key is rotated or disabled, so
+    // GET /v1/accounts answers 401 api_key_expired for EVERY tenant at once, and
+    // each one is read as disowned -> credentials_invalid -> revoked.
+    const cases: Array<[number, unknown]> = [
+      [400, { error: { type: "invalid_request_error", code: "parameter_invalid_empty" } }],
+      [401, { error: { type: "invalid_request_error", code: "api_key_expired" } }],
+      [401, { error: { type: "authentication_error", message: "Invalid API Key provided" } }],
+      [402, { error: { type: "card_error", code: "card_declined" } }],
+      [409, { error: { type: "idempotency_error" } }],
+      [500, { error: { type: "api_error" } }],
+      [502, {}],
+      [503, { error: { type: "api_error" } }],
+    ];
+    for (const [status, body] of cases) {
+      const connect = createStripeConnectProvider({
+        secretKey: SECRET,
+        apiBase: "https://api.stripe.test",
+        fetchImpl: (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch,
+      });
+      await expect(
+        connect.inspectConnection("acct_test00000001"),
+        `status ${status} must be inconclusive`,
+      ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    }
+  });
+
+  it("ONLY Stripe's own two disown codes become data", async () => {
+    // The complement of the above, so the pair pins the boundary from both sides.
+    for (const [status, code] of [
+      [404, "resource_missing"],
+      [403, "account_invalid"],
+      [404, "account_invalid"],
+    ] as Array<[number, string]>) {
+      const connect = createStripeConnectProvider({
+        secretKey: SECRET,
+        apiBase: "https://api.stripe.test",
+        fetchImpl: (async () =>
+          new Response(JSON.stringify({ error: { type: "invalid_request_error", code } }), {
+            status,
+          })) as unknown as typeof fetch,
+      });
+      const snapshot = await connect.inspectConnection("acct_test00000001");
+      expect(snapshot.blockedReason, `${status}/${code}`).toBe("credentials_invalid");
+    }
+  });
+
   it("an outage during beginConnection creates nothing", async () => {
     const { fake, connect } = harness();
     fake.armServerError();
@@ -431,7 +496,14 @@ describe("Stripe disowning the account is DATA, not an outage", () => {
     expect(snapshot.blockedReason).toBe("credentials_invalid");
   });
 
-  it("the disowned snapshot carries no provider prose", async () => {
+  // NOTE, after review: this assertion cannot fail. disownedSnapshot passes seven
+  // hard-coded literals through a .strict() schema whose fields are three
+  // booleans, an enum, a regex-constrained id, a literal provider and an ISO
+  // datetime -- no mutation of disownsAccount, disownedSnapshot or read can put
+  // Stripe's body text into any of them, and .strict() rejects an added field.
+  // I7 is held STRUCTURALLY by the schema, not by this check. It is kept as
+  // documentation of the intent, labelled so nobody counts it as evidence.
+  it("the disowned snapshot carries no provider prose (held by the schema, not by this assertion)", async () => {
     const { fake, connect } = harness();
     const handoff = await begin(connect);
     fake.disownAccount(handoff.handoffId);
@@ -526,9 +598,43 @@ describe("the adapter cannot change a connection", () => {
   });
 
   it("only ever POSTs to account creation and account links", () => {
+    // Template literals COUNT. This used to require a double-quoted path, and a
+    // review proved the hole by adding `call(`/v1/accounts/${id}`, {method:
+    // "POST"})` -- Stripe's Update-an-Account endpoint, a write against a live
+    // connected account -- which all three guards missed. The file already uses
+    // a template literal for its GET, so that is the established idiom here.
     const src = readSource();
-    const posts = [...src.matchAll(/call\("(\/v1\/[^"]+)",\s*\{\s*\n?\s*method:\s*"POST"/g)].map((m) => m[1]);
+    const posts = [...src.matchAll(/call\(\s*[`"](\/v1\/[^`"]*)[`"]\s*,\s*\{[^}]*?method:\s*"POST"/gs)].map(
+      (m) => (m[1] ?? "").replace(/\$\{[^}]*\}/g, "{}"),
+    );
+    expect(posts.length, "the guard must find the POSTs it is checking").toBeGreaterThan(0);
     expect(new Set(posts)).toEqual(new Set(["/v1/accounts", "/v1/account_links"]));
+  });
+
+  it("every call() in the file is one of the three known request shapes", () => {
+    // The positive form of the guard above: enumerate EVERY call() site, so a
+    // new one cannot be invisible merely by not matching a denylist.
+    const src = readSource();
+    const sites = [...src.matchAll(/call\(\s*[`"](\/v1\/[^`"]*)[`"]/g)].map((m) =>
+      (m[1] ?? "").replace(/\$\{[^}]*\}/g, "{}"),
+    );
+    expect(sites.length).toBe(3);
+    expect(new Set(sites)).toEqual(new Set(["/v1/accounts", "/v1/account_links", "/v1/accounts/{}"]));
+  });
+
+  it("exposes no member whose name suggests writing to an account", () => {
+    // A regex companion to the exact-name list: that list could not have caught
+    // a member called `quietlyRepoint`, which is what the review added.
+    const p = harness().connect as unknown as Record<string, unknown>;
+    const ALLOWED = new Set([
+      "providerName",
+      "beginConnection",
+      "linkExistingAccount",
+      "resolveConnection",
+      "inspectConnection",
+    ]);
+    const unexpected = Object.keys(p).filter((m) => !ALLOWED.has(m));
+    expect(unexpected, `unexpected member(s): ${unexpected.join(", ")}`).toEqual([]);
   });
 });
 

@@ -131,6 +131,14 @@ export interface StripeConnectProvider extends PaymentConnectionProvider {
    * account. It is not on the contract because Account Links are a Stripe
    * concept; it has the same safety character as beginConnection -- inert until
    * a person completes it, and unable to alter or disable the account.
+   *
+   * CALLER OBLIGATION, because this adapter has no tenant context and so cannot
+   * check it: the caller MUST have established that `accountId` is the account
+   * already bound to the tenant whose owner is acting -- by reading it from that
+   * tenant's own public.payment_connections row, never from a request. Called
+   * with an arbitrary reference it would mint a real onboarding link for an
+   * account this platform does not represent. No caller exists yet; step 5 is
+   * where this obligation has to be met.
    */
   linkExistingAccount(
     accountId: string,
@@ -190,6 +198,12 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     }
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new PaymentError("INVALID_REQUEST", `${field} must be an http(s) URL`);
+    }
+    // Userinfo is never legitimate in a redirect target and is a classic way to
+    // make a hostile host look like a trusted one in a browser's address bar.
+    // Stripe hands these URLs straight to the owner's browser.
+    if (parsed.username !== "" || parsed.password !== "") {
+      throw new PaymentError("INVALID_REQUEST", `${field} must not carry userinfo`);
     }
     return parsed.toString();
   }
