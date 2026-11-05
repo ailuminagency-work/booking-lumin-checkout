@@ -231,7 +231,14 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
                                message: `The provided key does not have access to account ${id}` } }, 403);
       }
       const account = accounts.get(id);
-      if (!account) return stripeError(`No such account: ${id}`, 404);
+      if (!account) {
+        // Stripe's own 404 for an unknown account carries code resource_missing.
+        // A BARE 404 (no error object) is what an intermediary returns, and the
+        // adapter must treat that as inconclusive instead of as a disowned
+        // account -- exercised by its own test with a plain fetchImpl.
+        return json({ error: { type: "invalid_request_error", code: "resource_missing",
+                               message: `No such account: ${id}` } }, 404);
+      }
       if (method === "GET") return json(account);
       return stripeError("Method not allowed", 405);
     }

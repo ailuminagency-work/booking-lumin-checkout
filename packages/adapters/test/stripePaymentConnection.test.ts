@@ -109,10 +109,29 @@ describe("beginning a handoff creates an account that can do nothing", () => {
 
   it("refuses a return or refresh URL that is not absolute http(s), before any request", async () => {
     const { spy, connect } = harness();
-    for (const bad of ["/relative", "javascript:alert(1)", "", "not a url"]) {
+    // The keys here are deliberately VALID: the idempotency key is validated
+    // first, so reusing the bad URL as part of the key would make this test pass
+    // on the wrong error.
+    for (const [i, bad] of ["/relative", "javascript:alert(1)", "", "not a url"].entries()) {
       await expect(
-        connect.beginConnection({ tenantId: TENANT, ...URLS, returnUrl: bad, idempotencyKey: `k-${bad}-xxxxxxxxxx` }),
+        connect.beginConnection({ tenantId: TENANT, ...URLS, returnUrl: bad, idempotencyKey: `url-check-key-${i}` }),
       ).rejects.toThrow(/absolute URL|http\(s\) URL/);
+      await expect(
+        connect.beginConnection({ tenantId: TENANT, ...URLS, refreshUrl: bad, idempotencyKey: `url-check-rk-${i}` }),
+      ).rejects.toThrow(/absolute URL|http\(s\) URL/);
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an idempotency key that is not header-safe, before any request", async () => {
+    // The key is sent as a header VALUE and is also the basis of the derived
+    // `${key}:link` key, so a CR or LF in it reached two endpoints and surfaced
+    // as a raw TypeError from the fetch layer rather than a PaymentError.
+    const { spy, connect } = harness();
+    for (const bad of ["k\r\nX: 1", "k\n", "short", "", "has space", "k;v", "k".repeat(201)]) {
+      await expect(
+        connect.beginConnection({ tenantId: TENANT, ...URLS, idempotencyKey: bad }),
+      ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
     }
     expect(spy).not.toHaveBeenCalled();
   });
@@ -209,6 +228,17 @@ describe("every Stripe account state maps onto the closed vocabulary", () => {
     expect(s.blockedReason).toBe("charges_disabled");
     expect(JSON.stringify(s)).not.toContain("OFAC");
     expect(JSON.stringify(s)).not.toContain("req_abc123");
+  });
+
+  it("a charging account Stripe still marks disabled is not reported as clean", async () => {
+    const s = await staged({
+      charges_enabled: true,
+      payouts_enabled: true,
+      details_submitted: true,
+      requirements: { disabled_reason: "under_review", currently_due: [], past_due: [] },
+    });
+    expect(s.blockedReason).toBe("charges_disabled");
+    expect(healthOf(s)).toBe("degraded");
   });
 
   it("mapStripeAccountReason always produces a reason when charges are off", () => {
@@ -309,6 +339,71 @@ describe("an inconclusive answer changes nothing", () => {
     await expect(connect.inspectConnection("acct_test00000001")).rejects.toMatchObject({
       code: "PROVIDER_UNAVAILABLE",
     });
+  });
+
+  it("a BARE 404 with no Stripe error object is inconclusive, NOT a disowned account", async () => {
+    // This was the serious one: any 404 was read as "Stripe disowned this
+    // account" and recorded as credentials_invalid, which the database derives
+    // to 'revoked'. A misconfigured apiBase or any intermediary answering 404
+    // therefore took merchants offline.
+    const connect = createStripeConnectProvider({
+      secretKey: SECRET,
+      apiBase: "https://api.stripe.test",
+      fetchImpl: (async () => new Response(JSON.stringify({ message: "not found" }), { status: 404 })) as unknown as typeof fetch,
+    });
+    await expect(connect.inspectConnection("acct_test00000001")).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+    });
+  });
+
+  it("a 403 without Stripe's own error shape is inconclusive too", async () => {
+    const connect = createStripeConnectProvider({
+      secretKey: SECRET,
+      apiBase: "https://api.stripe.test",
+      fetchImpl: (async () => new Response("{}", { status: 403 })) as unknown as typeof fetch,
+    });
+    await expect(connect.inspectConnection("acct_test00000001")).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+    });
+  });
+
+  it("a 200 that is not the requested account is inconclusive, not all-false facts", async () => {
+    // Every boolean is read with === true, so an unexpected 200 body produced
+    // all-false facts and quietly moved a live connection to not_connected.
+    for (const body of [{}, { object: "account" }, { object: "account", id: "acct_someoneelse01" }, { object: "customer", id: "acct_test00000001" }]) {
+      const connect = createStripeConnectProvider({
+        secretKey: SECRET,
+        apiBase: "https://api.stripe.test",
+        fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch,
+      });
+      await expect(connect.inspectConnection("acct_test00000001")).rejects.toMatchObject({
+        code: "PROVIDER_UNAVAILABLE",
+      });
+    }
+  });
+
+  it("an onboarding link that is not https, or has an unusable expiry, is refused", async () => {
+    const cases = [
+      { url: "http://connect.stripe.test/setup/s/x", expires_at: 1_900_000_000 },
+      { url: "javascript:alert(1)", expires_at: 1_900_000_000 },
+      { url: "https://connect.stripe.com/setup/s/x", expires_at: 0 },
+      { url: "https://connect.stripe.com/setup/s/x", expires_at: 8.64e15 },
+    ];
+    for (const link of cases) {
+      let calls = 0;
+      const connect = createStripeConnectProvider({
+        secretKey: SECRET,
+        apiBase: "https://api.stripe.test",
+        fetchImpl: (async (input: any) => {
+          calls += 1;
+          return String(input).endsWith("/v1/accounts")
+            ? new Response(JSON.stringify({ object: "account", id: "acct_test00000001" }), { status: 200 })
+            : new Response(JSON.stringify({ object: "account_link", ...link }), { status: 200 });
+        }) as unknown as typeof fetch,
+      });
+      await expect(begin(connect, "link-shape-key-01")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+      expect(calls).toBe(2);
+    }
   });
 
   it("an outage during beginConnection creates nothing", async () => {

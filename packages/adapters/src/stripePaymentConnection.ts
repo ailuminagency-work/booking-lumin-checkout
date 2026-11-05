@@ -112,6 +112,11 @@ export function mapStripeAccountReason(account: StripeAccount): PaymentConnectio
   if (!payouts) return "payouts_disabled";
   if (pastDue) return "requirements_past_due";
   if (!submitted || currentlyDue) return "onboarding_incomplete";
+  // A charging account that Stripe nonetheless marks disabled_reason is not
+  // clean. Returning null here read a restricted-but-still-charging merchant as
+  // having no caveat at all, which is the state the four-value health verdict
+  // exists to surface.
+  if (disabled) return "charges_disabled";
   return null;
 }
 
@@ -162,6 +167,20 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     return safe;
   }
 
+  /**
+   * An idempotency key is sent as a header VALUE, so it is validated with the
+   * same care as the account reference and before any request is made. It went
+   * into `Idempotency-Key` unchecked: a key carrying CR or LF surfaced as a raw
+   * TypeError from the fetch layer rather than a PaymentError, and the derived
+   * `${key}:link` carried the same characters to a second endpoint.
+   */
+  function headerSafeKey(value: string): string {
+    if (!/^[A-Za-z0-9_.:-]{8,200}$/.test(value)) {
+      throw new PaymentError("INVALID_REQUEST", "idempotencyKey must be 8-200 chars of [A-Za-z0-9_.:-]");
+    }
+    return value;
+  }
+
   function absoluteUrl(value: string, field: string): string {
     let parsed: URL;
     try {
@@ -193,7 +212,14 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     }
 
     let body: any = {};
-    const text = await res.text();
+    let text: string;
+    try {
+      // Inside the transport guard: a body that terminates mid-transfer is a
+      // transport failure, and escaped as a raw TypeError before this.
+      text = await res.text();
+    } catch {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe response body could not be read");
+    }
     if (text) {
       try {
         body = JSON.parse(text);
@@ -218,9 +244,29 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
    * Is this response Stripe saying "I do not recognise this account"? Only then
    * is a failure DATA rather than an outage.
    */
+  /**
+   * Is this response Stripe ITSELF saying "I do not recognise this account"?
+   * Only then is a failure DATA rather than an outage.
+   *
+   * A BARE 404 is not enough, and treating it as enough was a real defect: a
+   * misconfigured apiBase, a proxy, or any intermediary that answers 404 would
+   * have been read as "Stripe disowned this account" and recorded as
+   * credentials_invalid -- which the database derives to 'revoked'. Combined
+   * with the owner-recovery bug fixed in migration 0093, that silently and
+   * permanently took every merchant offline.
+   *
+   * So the answer must carry Stripe's own error shape. Stripe's 404 for an
+   * unknown account has type "invalid_request_error" and code
+   * "resource_missing" (or "account_invalid"); an intermediary's 404 has no
+   * `error` object at all, and is therefore inconclusive.
+   */
   function disownsAccount(status: number, body: any): boolean {
-    if (status === 404) return true;
-    return status === 403 && errorCode(body) === "account_invalid";
+    const type = typeof body?.error?.type === "string" ? body.error.type : "";
+    if (type !== "invalid_request_error") return false;
+    const code = errorCode(body);
+    if (status === 403) return code === "account_invalid";
+    if (status === 404) return code === "resource_missing" || code === "account_invalid";
+    return false;
   }
 
   function snapshot(accountId: string, account: StripeAccount, observedAt: string): PaymentConnectionSnapshot {
@@ -269,8 +315,14 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     }
     const url = typeof link.body?.url === "string" ? link.body.url : "";
     const expires = Number(link.body?.expires_at);
-    if (!url || !Number.isFinite(expires)) {
+    // Bounded, not merely finite: an epoch-0 expiry would make the handoff
+    // instantly stale and a huge one throws RangeError inside toISOString.
+    // 1e6..1e11 covers every plausible unix-seconds value.
+    if (!url || !Number.isFinite(expires) || expires < 1e6 || expires > 1e11) {
       throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe returned an unusable onboarding link");
+    }
+    if (!/^https:\/\//.test(url)) {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe onboarding link is not https");
     }
     return ConnectionHandoff.parse({
       provider: "stripe_connect",
@@ -287,7 +339,17 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
 
   async function read(accountId: string, observedAt: string): Promise<PaymentConnectionSnapshot> {
     const got = await call(`/v1/accounts/${encodeURIComponent(accountId)}`, { method: "GET" });
-    if (got.ok) return snapshot(accountId, got.body as StripeAccount, observedAt);
+    if (got.ok) {
+      // A 200 is not on its own evidence about this account. Every boolean below
+      // is read with `=== true`, so an unexpected body would have produced
+      // all-false facts and quietly moved a live connection to not_connected.
+      // The body must say it is an account, and the account asked for.
+      const body = got.body as StripeAccount & { object?: unknown };
+      if (body?.object !== "account" || body?.id !== accountId) {
+        throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe returned something other than the requested account");
+      }
+      return snapshot(accountId, body, observedAt);
+    }
     if (disownsAccount(got.status, got.body)) return disownedSnapshot(accountId, observedAt);
     throw new PaymentError("PROVIDER_UNAVAILABLE", `stripe account read failed (${got.status})`);
   }
@@ -296,9 +358,7 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     providerName: "stripe_connect",
 
     async beginConnection(input: BeginConnectionInput): Promise<ConnectionHandoff> {
-      if (!input.idempotencyKey) {
-        throw new PaymentError("INVALID_REQUEST", "idempotencyKey is required");
-      }
+      const idempotencyKey = headerSafeKey(input.idempotencyKey ?? "");
       // Validated before any request: Stripe hands these to a browser.
       const returnUrl = absoluteUrl(input.returnUrl, "returnUrl");
       const refreshUrl = absoluteUrl(input.refreshUrl, "refreshUrl");
@@ -307,7 +367,7 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
         method: "POST",
         // Stripe-native idempotency: the same key returns the ORIGINAL account,
         // so a double-submit cannot create two merchant accounts.
-        idempotencyKey: input.idempotencyKey,
+        idempotencyKey,
         body: new URLSearchParams({
           type: "standard",
           country,
@@ -321,7 +381,7 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
 
       // A DIFFERENT key, because Stripe scopes idempotency by key alone and
       // reusing one across two endpoints is an error, not a replay.
-      return accountLink(accountId, { returnUrl, refreshUrl }, `${input.idempotencyKey}:link`);
+      return accountLink(accountId, { returnUrl, refreshUrl }, `${idempotencyKey}:link`);
     },
 
     async linkExistingAccount(
