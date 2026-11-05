@@ -17,7 +17,9 @@
  * pins the adapter shape.
  *
  * It also covers supabase/functions/_shared/stripe.ts, the deliberate Deno
- * duplicate, which has no test harness of its own.
+ * duplicate, which has no test harness of its own, and
+ * packages/adapters/src/stripePaymentConnection.ts, the Connect adapter, whose
+ * authHeaders is a third copy.
  */
 
 import { describe, expect, it } from "vitest";
@@ -26,6 +28,9 @@ import { readFileSync } from "node:fs";
 const SOURCES: Array<[string, URL]> = [
   ["packages/adapters/src/stripePayment.ts", new URL("../src/stripePayment.ts", import.meta.url)],
   ["supabase/functions/_shared/stripe.ts", new URL("../../../supabase/functions/_shared/stripe.ts", import.meta.url)],
+  // The Connect adapter has its own copy of authHeaders, so it needs its own
+  // assertion: the property does not travel by being true next door.
+  ["packages/adapters/src/stripePaymentConnection.ts", new URL("../src/stripePaymentConnection.ts", import.meta.url)],
 ];
 
 describe("authHeaders pins the credential after the caller's headers", () => {
