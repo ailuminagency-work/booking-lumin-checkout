@@ -72,9 +72,22 @@ select pg_temp.assert(
 -- 0089 took the write verbs away from clients; 0093 takes them from the runtime
 -- too, so the ONLY path that changes a connection row is a function whose body
 -- constrains what may change.
+-- Every write-ish verb, not just the obvious three. TRUNCATE empties the table;
+-- TRIGGER lets a role attach a BEFORE UPDATE trigger that then runs INSIDE the
+-- definer RPCs and rewrites whatever it likes, which would defeat write-once
+-- outright. An earlier version of this suite checked only insert/update/delete
+-- and passed while service_role still held truncate, trigger and references.
 select pg_temp.assert(not bool_or(has_table_privilege(r,'public.payment_connections',v)),
   'no role holds a DIRECT write verb on payment_connections')
- from unnest(array['anon','authenticated','service_role']) r, unnest(array['insert','update','delete']) v;
+ from unnest(array['anon','authenticated','service_role']) r,
+      unnest(array['insert','update','delete','truncate','trigger','references']) v;
+select pg_temp.assert(not bool_or(has_table_privilege(r,'public.payment_connection_handoffs',v)),
+  'no role holds a DIRECT write verb on the handoff ledger')
+ from unnest(array['anon','authenticated','service_role']) r,
+      unnest(array['insert','update','delete','truncate','trigger','references']) v;
+select pg_temp.assert((select count(*)=1 from information_schema.role_table_grants
+  where table_schema='public' and table_name='payment_connections' and grantee='service_role'),
+ 'service_role holds exactly one grant on payment_connections, and it is SELECT');
 select pg_temp.assert(count(*)=0,'payment_connections still has no write policy')
  from pg_policy where polrelid='public.payment_connections'::regclass and polcmd<>'r';
 
@@ -254,6 +267,56 @@ select pg_temp.assert(
  'the reader does not derive a second health verdict');
 select pg_temp.reject($$select public.payment_connection_facts('93000000-0000-4000-8000-000000000003'::uuid,
  '93000000-0000-4000-8000-000000000010'::uuid)$$,'42501','FORBIDDEN');
+reset role;
+
+-- ---- 6b. A dead connection is recoverable BY THE OWNER, and only by them -----
+-- The derivation is terminal for automation so that no automatic path can
+-- resurrect a dead connection. Terminal for the OWNER as well would be a
+-- permanent brick: when a provider disowns an account, the owner's fresh handoff
+-- necessarily yields a DIFFERENT account, so with no recovery path the tenant
+-- could never take payments again -- and the row sat incoherent, 'revoked'
+-- beside charges_enabled true with no reason. That is exactly the standing rule
+-- this migration exists to honour, so the recovery path is asserted here.
+set local role service_role;
+-- Automation still cannot heal it, however healthy the provider now says it is.
+select pg_temp.assert(
+ (select public.observe_payment_connection(pg_temp.id(10),'acct_conn_suite_a1',
+   true,true,true,null,'2035-02-01T00:00:00Z')->>'status')='revoked',
+ 'automation cannot heal a revoked connection, however healthy the provider reports it');
+-- An owner with a FRESH handoff can, and binds the new account the handoff produced.
+select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
+ 'connect-attempt-a-0003','mch_conn_suite_a3','2035-02-01T00:05:00Z');
+select pg_temp.assert(
+ (select public.record_payment_connection(pg_temp.id(1),pg_temp.id(10),'mch_conn_suite_a3',
+   'acct_conn_suite_a2',true,true,true,null,'2035-02-01T00:02:00Z')->>'status')='connected',
+ 'an owner reconnects a revoked connection with a fresh handoff');
+reset role;
+select pg_temp.assert((select status='connected' and charges_enabled and account_id='acct_conn_suite_a2'
+  and blocked_reason is null from public.payment_connections
+  where tenant_id=pg_temp.id(10) and provider='conn_suite'),
+ 'the recovered row is coherent: connected, charging, bound to the new account');
+
+-- While the connection is LIVE, write-once still refuses a different account.
+set local role service_role;
+select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a3','acct_somewhere_else_2',true,true,true,null,'2035-02-01T00:03:00Z')$$,'42501','PAYMENT_CONNECTION_ALREADY_BOUND');
+-- A bind must NAME an account. `account_id <> NULL` is NULL rather than true, so
+-- a NULL argument used to slip past the write-once guard and unbind the row.
+select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a3',null,true,true,true,null,'2035-02-01T00:03:00Z')$$,'22023','a bind must name a provider account');
+reset role;
+select pg_temp.assert((select account_id='acct_conn_suite_a2' from public.payment_connections
+  where tenant_id=pg_temp.id(10) and provider='conn_suite'),
+ 'the refused binds left the account untouched');
+
+-- ---- 6c. A handoff is short-lived authorization, not a permanent token -------
+-- expires_at was recorded and never consulted, so a handoff from any time in the
+-- past stayed usable forever.
+insert into public.payment_connection_handoffs(handoff_id,tenant_id,provider,idempotency_key,expires_at)
+ values('mch_conn_suite_stale',pg_temp.id(11),'conn_suite','stale-handoff-key-0001','2020-01-01T00:00:00Z');
+set local role service_role;
+select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000003'::uuid,
+ '93000000-0000-4000-8000-000000000011'::uuid,'mch_conn_suite_stale','acct_stale_000000001',true,true,true,null,'2035-02-01T00:03:00Z')$$,'22023','this handoff has expired');
 reset role;
 
 -- ---- 7. Column constraints ---------------------------------------------------

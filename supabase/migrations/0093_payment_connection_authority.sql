@@ -29,9 +29,14 @@
 --     cross product. A restricted merchant -- connected, looks fine, cannot charge
 --     -- stays 'connected' and is surfaced as a HEALTH verdict instead, which is
 --     why 'error' is unnecessary rather than merely unused.
---   * 'error' AND 'revoked' ARE TERMINAL FOR AUTOMATION. Once a row is in either,
---     the derivation returns it unchanged. Automation can never bring a connection
---     back; only an owner completing a fresh handoff can.
+--   * 'error' AND 'revoked' ARE TERMINAL FOR AUTOMATION, AND ONLY FOR AUTOMATION.
+--     lumin.payment_connection_status returns either unchanged, so
+--     public.observe_payment_connection -- which takes no actor -- can never bring
+--     a dead connection back. public.record_payment_connection restarts the
+--     derivation from 'not_connected', because it requires BUSINESS_OWNER and a
+--     fresh handoff: a person reconnecting is the recovery path, and it must exist.
+--     Automation being able to revoke with no way back would be a permanent brick,
+--     which is the very thing the standing rule forbids.
 --   * AUTOMATION MAY RECORD 'revoked' ONLY ON THE PROVIDER'S OWN WORD -- a reason
 --     of credentials_invalid or account_rejected, which means the connection is
 --     already dead out there. Recording that is not a decision.
@@ -356,21 +361,60 @@ begin
       using errcode = '22023', detail = 'no handoff of this tenant matches';
   end if;
 
+  -- A handoff is a short-lived authorization to bind, not a permanent token.
+  -- expires_at was recorded and then never consulted, so a handoff from any time
+  -- in the past stayed usable forever. The grace window absorbs the gap between
+  -- the provider-side link expiring and the owner's browser returning.
+  if h.expires_at + interval '1 hour' < clock_timestamp() then
+    raise exception 'CONNECTION_UNVERIFIED'
+      using errcode = '22023', detail = 'this handoff has expired; begin a new one';
+  end if;
+
   select * into row_before from public.payment_connections
    where tenant_id = p_tenant and provider = h.provider for update;
   if not found then
     raise exception 'CONNECTION_UNVERIFIED' using errcode = '22023', detail = 'no connection row for this handoff';
   end if;
 
-  -- WRITE-ONCE. A bound connection is never repointed: rebinding to a different
-  -- account would silently move a tenant's money, and rebinding to the same one is
-  -- a replay that must be harmless.
-  if row_before.account_id is not null and row_before.account_id <> p_account_id then
+  -- A bind must name an account. Spelled out rather than left to the <> below,
+  -- because `account_id <> NULL` is NULL, not true, so a NULL argument slipped
+  -- past the write-once guard and unbound the connection. (It did not actually
+  -- repoint anything -- the ledger's resolved-coherence constraint aborted the
+  -- transaction a few lines later -- but that was luck, not design.)
+  if p_account_id is null then
+    raise exception 'CONNECTION_UNVERIFIED'
+      using errcode = '22023', detail = 'a bind must name a provider account';
+  end if;
+
+  -- WRITE-ONCE WHILE THE CONNECTION IS LIVE. Rebinding a live connection to a
+  -- different account would silently move a tenant's money, and rebinding to the
+  -- same one is a replay that must be harmless.
+  --
+  -- A DEAD connection is the exception, and it has to be: when a provider
+  -- disowns an account, the owner's fresh handoff necessarily produces a
+  -- DIFFERENT account, so refusing it here would leave the tenant permanently
+  -- unable to take payments. Reconnecting a dead connection is owner action --
+  -- this function requires BUSINESS_OWNER above -- not automation repointing a
+  -- live one. public.observe_payment_connection, which has no actor, cannot
+  -- reach this branch at all.
+  if row_before.account_id is not null
+     and row_before.account_id <> p_account_id
+     and row_before.status not in ('revoked', 'error') then
     raise exception 'PAYMENT_CONNECTION_ALREADY_BOUND'
       using errcode = '42501', detail = 'this connection is already bound to a different account';
   end if;
 
-  new_status := lumin.payment_connection_status(row_before.status, p_charges_enabled, p_blocked_reason);
+  -- An OWNER binding against a fresh handoff restarts the derivation from
+  -- 'not_connected'. Without this, 'revoked' and 'error' were terminal for the
+  -- owner too: a connection the provider had disowned stayed revoked forever
+  -- even as the provider reported the new account fully healthy, leaving the row
+  -- incoherent (status 'revoked' beside charges_enabled true and no reason) and
+  -- the tenant permanently unable to charge. The terminal rule exists to stop
+  -- AUTOMATION resurrecting a dead connection, and observe_payment_connection
+  -- still cannot; it was never meant to bind the owner.
+  new_status := lumin.payment_connection_status(
+    case when row_before.status in ('revoked', 'error') then 'not_connected' else row_before.status end,
+    p_charges_enabled, p_blocked_reason);
 
   update public.payment_connections
      set account_id          = p_account_id,
@@ -513,12 +557,21 @@ grant execute on function
 -- which could otherwise `update ... set config = ...` at will. 0089 verified there
 -- is no other writer: zero references in apps/ and packages/, and no SQL writer
 -- outside the RLS attack fixture (which runs as the superuser).
-revoke insert, update, delete on public.payment_connections from service_role;
+--
+-- TRUNCATE, TRIGGER and REFERENCES are revoked too, and each for its own reason:
+-- TRUNCATE empties every tenant's connection in one statement, which is a write
+-- by any honest reading; TRIGGER lets a role attach a BEFORE UPDATE trigger that
+-- then runs INSIDE these definer RPCs and rewrites whatever it likes, which would
+-- defeat write-once and the claim above outright; REFERENCES lets a foreign key be
+-- pointed at the table. Revoking only insert/update/delete left all three, and the
+-- guard below used to check only those three, so it passed.
+revoke insert, update, delete, truncate, trigger, references on public.payment_connections from service_role;
+revoke truncate, trigger, references on public.payment_connection_handoffs from service_role;
 
 do $guard$
 declare v text;
 begin
-  foreach v in array array['insert', 'update', 'delete'] loop
+  foreach v in array array['insert', 'update', 'delete', 'truncate', 'trigger', 'references'] loop
     if has_table_privilege('authenticated', 'public.payment_connections', v)
        or has_table_privilege('anon', 'public.payment_connections', v)
        or has_table_privilege('service_role', 'public.payment_connections', v) then
