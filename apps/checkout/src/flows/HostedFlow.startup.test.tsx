@@ -1,0 +1,32 @@
+import {act,render,screen,fireEvent,cleanup} from '@testing-library/react';
+import {afterEach,it,expect,vi} from 'vitest';
+import {FLOW_SESSION_STARTUP_TIMEOUT_MS} from '@lumin/flow-ui';
+import {HostedFlow} from './HostedFlow';
+const id='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222';
+const response=(name='Recovered form')=>new Response(JSON.stringify({ok:true,data:{sessionToken:'t'.repeat(43),expiresAt:'2035-01-01T00:00:00Z',render:{versionId:id,config:{key:'request',steps:[{key:'q',questionKey:'q',kind:'question',required:true}]},service:{id,name,durationMinutes:30,questions:[{id:'q',prompt:'Choose an option',kind:'single_choice',required:true,choices:[{id:'a',label:'Option A'}]}]}}}}));
+afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.useRealTimers();});
+it.each(['fetch','body'])('replaces a nonsettling startup %s with an honest error and opens a new session only on explicit retry',async stage=>{
+ vi.useFakeTimers();vi.stubGlobal('location',{protocol:'https:'});let finish!:(value:Response|unknown)=>void;
+ const fetcher=vi.fn<typeof fetch>(async()=>stage==='fetch'?new Promise<Response>(resolve=>finish=value=>resolve(value as Response)):({ok:true,json:()=>new Promise(resolve=>finish=resolve)}) as Response);vi.stubGlobal('fetch',fetcher);
+ render(<HostedFlow installationId={id} apiUrl="https://api.example"/>);
+ expect(screen.getByRole('status')).toHaveTextContent('Opening request form');
+ await act(async()=>{await vi.advanceTimersByTimeAsync(FLOW_SESSION_STARTUP_TIMEOUT_MS);});
+ expect(screen.queryByText('Opening request form…')).toBeNull();expect(screen.getByRole('alert')).toHaveTextContent('temporary session could not be verified');
+ expect(screen.getByText(/A temporary session may have been issued/)).toBeVisible();expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(2*FLOW_SESSION_STARTUP_TIMEOUT_MS);});expect(fetcher).toHaveBeenCalledTimes(1);
+ await act(async()=>{finish(stage==='fetch'?response('Late discarded form'):await response('Late discarded form').json());await Promise.resolve();});
+ expect(screen.queryByText('Late discarded form')).toBeNull();expect(screen.queryByLabelText('Your name')).toBeNull();
+ fetcher.mockImplementation(async()=>response());await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'Retry opening form'}));await Promise.resolve();});
+ expect(screen.getByRole('heading',{name:'Recovered form'})).toBeVisible();expect(screen.queryByRole('button',{name:'Retry opening form'})).toBeNull();expect(fetcher).toHaveBeenCalledTimes(2);
+ expect(fetcher.mock.calls.every(([url])=>String(url).endsWith('/sessions'))).toBe(true);
+});
+it('aborts startup on context replacement and unmount, without displaying a late prior form or automatic retry',async()=>{
+ vi.useFakeTimers();vi.stubGlobal('location',{protocol:'https:'});const finishes:Array<(value:Response)=>void>=[];
+ const fetcher=vi.fn<typeof fetch>(()=>new Promise(resolve=>finishes.push(resolve)));vi.stubGlobal('fetch',fetcher);
+ const view=render(<HostedFlow installationId={id} apiUrl="https://api.example"/>);
+ view.rerender(<HostedFlow installationId={other} apiUrl="https://api.example"/>);
+ expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);expect(fetcher).toHaveBeenCalledTimes(2);
+ await act(async()=>{finishes[0]!(response('Old context form'));await Promise.resolve();});expect(screen.queryByText('Old context form')).toBeNull();expect(screen.getByRole('status')).toHaveTextContent('Opening request form');
+ view.unmount();expect(fetcher.mock.calls[1]![1]!.signal!.aborted).toBe(true);expect(vi.getTimerCount()).toBe(0);
+ await act(async()=>{finishes[1]!(response('Unmounted form'));await Promise.resolve();});expect(document.body.textContent).not.toContain('Unmounted form');expect(fetcher).toHaveBeenCalledTimes(2);
+});

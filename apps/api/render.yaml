@@ -35,3 +35,61 @@ services:
         sync: false
       - key: CUSTOMER_ORIGINS # comma-separated hosted-checkout origins
         sync: false
+      # ---- Environment identity --------------------------------------------
+      # Declared explicitly so the service reports itself truthfully and so the
+      # fake-payment gate has an unambiguous value to refuse against.
+      #
+      # This is a hard value, NOT sync:false, on purpose. The dangerous direction
+      # is a production service labelled 'staging', which would unlock simulated
+      # money on real traffic; pinning 'production' in code review makes that
+      # impossible to do by a dashboard edit alone.
+      #
+      # THE STAGING SERVICE OVERRIDES THIS IN THE RENDER DASHBOARD
+      # (BOOKING_LUMIN_ENV=staging) and that override must survive. Since
+      # migration 0088 the variable also decides AVAILABILITY, not just which
+      # capabilities compose: simulated-payment-readiness.ts refuses to start, and
+      # refuses every request including /health, when this is not 'staging' while
+      # the attached database would confirm a simulated provider. A staging
+      # database carries exactly that declaration as its documented bootstrap row,
+      # so syncing this blueprint onto the STAGING service relabels it
+      # 'production' and takes the staging API hard down until the dashboard value
+      # is restored. The log line names this variable so the cause is unambiguous.
+      - key: BOOKING_LUMIN_ENV
+        value: production
+      # ---- Simulated money: must stay OFF outside staging -------------------
+      # mockPaymentsEnabled() THROWS if this is '1' while BOOKING_LUMIN_ENV is
+      # not 'staging', so the service refuses to start rather than taking fake
+      # money. Pinned to '0' here; never set it to '1' in a production service.
+      - key: BOOKING_LUMIN_FAKE_PAYMENTS
+        value: "0"
+      # ---- Product capabilities: production-legal, DEFAULT-CLOSED -----------
+      # Each is enabled only by the exact string '1'. Absent means off, so a
+      # production deploy opts in to one capability at a time. None of these can
+      # enable simulated payments -- that is the gate above, and only there.
+      - key: BOOKING_LUMIN_BUSINESS_ONBOARDING
+        sync: false
+      - key: BOOKING_LUMIN_CATALOG_AUTHORING
+        sync: false
+      - key: BOOKING_LUMIN_SCHEDULING_AUTHORING
+        sync: false
+      - key: BOOKING_LUMIN_DETAILING_PUBLICATION
+        sync: false
+      # Publishing / reading publications, install health, version history and
+      # rollback. Previously trapped behind the fake-payment gate (gap G1).
+      - key: BOOKING_LUMIN_PAID_PUBLICATION
+        sync: false
+      # Owner booking operations: list, detail (answers + activity trail) and owner
+      # cancellation. Previously gated on BOOKING_LUMIN_ENV==='staging' with no flag,
+      # so the owner half of the booking loop could not run in production at all.
+      # Cancellation here is NOT a refund: it never touches payments or refunds, and a
+      # cancelled booking may remain paid.
+      - key: BOOKING_LUMIN_OWNER_BOOKING_OPS
+        sync: false
+      - key: BOOKING_LUMIN_JOURNEY_AUTHORING
+        sync: false
+      - key: BOOKING_LUMIN_JOURNEY_PUBLICATION
+        sync: false
+      - key: BOOKING_LUMIN_JOURNEY_SESSIONS
+        sync: false
+      - key: BOOKING_LUMIN_NOTIFICATION_AUTHORING
+        sync: false

@@ -151,35 +151,7 @@ function makeProvider(providerName: string, defaultCapability: ProviderCapabilit
       return { ...s.charge };
     },
 
-    async refund(chargeId: string): Promise<MerchantCharge> {
-      const s = mustGet(chargeId);
-      if (s.charge.state !== "captured") {
-        throw new PaymentError("ILLEGAL_TRANSITION", `cannot refund charge in state ${s.charge.state}`);
-      }
-      s.charge.refunded = { ...s.charge.captured };
-      s.charge.state = "refunded";
-      return { ...s.charge };
-    },
-
-    async partialRefund(chargeId: string, amount: Money): Promise<MerchantCharge> {
-      if (!capability.supportsPartialRefund) {
-        throw new PaymentError("PROVIDER_UNAVAILABLE", `${providerName} does not support partial refunds`);
-      }
-      const s = mustGet(chargeId);
-      assertCurrencyMatch(s.charge, amount);
-      if (amount.amount <= 0) throw new PaymentError("INVALID_REQUEST", "refund amount must be positive");
-      const refundable = s.charge.state === "captured" || s.charge.state === "partially_refunded";
-      if (!refundable) {
-        throw new PaymentError("ILLEGAL_TRANSITION", `cannot refund charge in state ${s.charge.state}`);
-      }
-      const newRefunded = s.charge.refunded.amount + amount.amount;
-      if (newRefunded > s.charge.captured.amount) {
-        throw new PaymentError("INVALID_REQUEST", "refund exceeds captured amount");
-      }
-      s.charge.refunded = { amount: newRefunded, currency: s.charge.amount.currency };
-      s.charge.state = newRefunded === s.charge.captured.amount ? "refunded" : "partially_refunded";
-      return { ...s.charge };
-    },
+    // No refund / partialRefund: not operations on this contract.
 
     async saveMethod(input: SaveMethodInput): Promise<SavedMethodRef> {
       if (!capability.supportsSavedMethods) {

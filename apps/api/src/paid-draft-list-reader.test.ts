@@ -1,0 +1,27 @@
+import {afterEach,describe,expect,it,vi} from 'vitest';
+import type {Pool} from 'pg';
+import type {Server} from 'node:http';
+import {createPaidDraftListReader} from './paid-draft-list-reader';
+import {createFlowHttpServer} from './http';
+import {FlowError} from './repository';
+const id=(n:number)=>`41000000-0000-4000-8000-${String(n).padStart(12,'0')}`,actor=id(1),tenant=id(2),origin='https://portal.example.test';
+const draft={flowId:id(4),name:'Saved housekeeping',revision:2,serviceId:id(3),presentation:{accentColor:'#4f46e5',layout:'stacked' as const},} as const;
+const good={drafts:[draft]};
+let server:Server;afterEach(async()=>{server?.closeAllConnections();if(server)await new Promise<void>(r=>server.close(()=>r()));});
+function db(result:unknown=good,error?:unknown){const release=vi.fn(),query=vi.fn(async(sql:string)=>{if(sql.startsWith('select')){if(error)throw error;return{rows:[{result}]};}return{rows:[]};}),connect=vi.fn(async()=>({query,release}));return{read:createPaidDraftListReader({connect} as unknown as Pool),query,release,connect};}
+describe('fixed private draft discovery reader',()=>{
+ it('uses one parameterized read RPC and repeatable snapshot, preserving only authoring fields',async()=>{const f=db();expect(await f.read(actor,tenant)).toEqual(good);expect(f.query.mock.calls.map(c=>c[0])).toEqual(['begin isolation level repeatable read','set local role service_role','select public.owner_paid_simple_drafts($1::uuid,$2::uuid) as result','commit']);expect(f.query).toHaveBeenNthCalledWith(3,expect.any(String),[actor,tenant]);expect(f.release).toHaveBeenCalledOnce();});
+ it('allows authorized empty results',async()=>{expect(await db({drafts:[]}).read(actor,tenant)).toEqual({drafts:[]});});
+ it.each([{drafts:[{...draft,total:12500}]},{drafts:[{...draft,presentation:{...draft.presentation,price:1}}]},{drafts:[{...draft,revision:0}]},{drafts:[{...draft,name:''}]},{drafts:[{...draft,presentation:{accentColor:'url(x)',layout:'stacked'}}]},{drafts:[draft,draft]},{drafts:[{...draft,flowId:id(5)},draft]},{drafts:Array.from({length:51},(_,i)=>({...draft,flowId:id(i+10)}))},{drafts:[draft],tenantId:tenant}])('rolls back malformed or widened evidence',async result=>{const f=db(result);await expect(f.read(actor,tenant)).rejects.toMatchObject({code:'INTERNAL_ERROR'});expect(f.query).toHaveBeenLastCalledWith('rollback');expect(f.release).toHaveBeenCalledOnce();});
+ it.each([['42501','FORBIDDEN'],['P0002','NOT_AVAILABLE'],['0A000','UNSUPPORTED_CONFIG'],['XX000','INTERNAL_ERROR']])('maps only safe SQL errors %s',async(code,expected)=>{const f=db(undefined,{code,message:'private data'});await expect(f.read(actor,tenant)).rejects.toMatchObject({code:expected,message:expected});expect(f.query).toHaveBeenLastCalledWith('rollback');});
+ it('rejects invalid identities before connecting',async()=>{const f=db();await expect(f.read('invalid',tenant)).rejects.toMatchObject({code:'INVALID_REQUEST'});expect(f.connect).not.toHaveBeenCalled();});
+});
+async function http(result:unknown=good,enabled=true){const read=vi.fn(async()=>{if(result instanceof Error)throw result;return result as typeof good;}),call=vi.fn();server=createFlowHttpServer({repository:{call},paidSimplePublication:enabled,paidDrafts:read,ownerOrigins:[origin],customerOrigins:[],authenticateOwner:async token=>token==='owner-token-123456'?actor:null});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return{read,call,request:(query=`tenantId=${tenant}`,method='GET',token='owner-token-123456',o=origin)=>fetch(`http://127.0.0.1:${(server.address() as {port:number}).port}/api/paid-simple-drafts?${query}`,{method,headers:{origin:o,authorization:`Bearer ${token}`}})};}
+describe('owner draft discovery transport',()=>{
+ it('returns strict bounded authoring evidence and invokes no writer',async()=>{const f=await http();const r=await f.request();expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toBe('no-store');expect(await r.json()).toEqual({ok:true,data:good});expect(f.read).toHaveBeenCalledWith(actor,tenant);expect(f.call).not.toHaveBeenCalled();});
+ it.each(['',`tenantId=${tenant}&tenantId=${tenant}`,`tenantId=${tenant}&role=BUSINESS_OWNER`,'tenantId=invalid'])('denies malformed query %s',async q=>{const f=await http();expect((await f.request(q)).status).toBe(400);expect(f.read).not.toHaveBeenCalled();});
+ it('requires fresh identity, exact owner origin and staging gate',async()=>{const f=await http(good,false);expect((await f.request()).status).toBe(422);expect((await f.request(undefined,'GET','invalid-token-123456')).status).toBe(401);expect((await f.request(undefined,'GET',undefined,'https://checkout.example.test')).status).toBe(403);expect(f.read).not.toHaveBeenCalled();});
+ it('rejects mutation method without invoking writer or reader',async()=>{const f=await http();expect((await f.request(undefined,'POST')).status).toBe(404);expect(f.read).not.toHaveBeenCalled();expect(f.call).not.toHaveBeenCalled();});
+ it.each([['FORBIDDEN',403],['NOT_AVAILABLE',404],['UNSUPPORTED_CONFIG',422]] as const)('preserves safe %s failure',async(code,status)=>{const f=await http(new FlowError(code));const r=await f.request();expect(r.status).toBe(status);expect(await r.json()).toEqual({ok:false,code});expect(f.call).not.toHaveBeenCalled();});
+ it('checks transport evidence even for injected readers',async()=>{const f=await http({drafts:[{...draft,provider:'stripe'}]});expect((await f.request()).status).toBe(500);expect(f.call).not.toHaveBeenCalled();});
+});
