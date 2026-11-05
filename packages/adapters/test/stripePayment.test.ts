@@ -268,3 +268,39 @@ describe("stripe parseWebhook — real signature scheme (threat 10, 11, 12)", ()
  *     their DB-constraint backing (unique payment_id / provider_intent_id) is a
  *     live-run assertion.
  */
+
+describe("the bearer token cannot be displaced by a caller-supplied header", () => {
+  it("pins Authorization and Content-Type even when a header map tries to override them", async () => {
+    // This pins what reaches Stripe: the bearer and content type are the
+    // adapter's own, and the one caller-influenced value (the idempotency key)
+    // travels as a VALUE and changes neither. It does NOT prove the header
+    // ORDERING -- no public operation lets a caller choose a header name, so
+    // this passes under either ordering (I checked). stripeAuthHeaderOrder.test.ts
+    // asserts the ordering where it lives, in the source.
+    const seen: Array<Record<string, string>> = [];
+    const provider = createStripePaymentProvider({
+      secretKey: "sk_test_pinned",
+      webhookSecret: WHSEC,
+      // Capture the headers, then answer with a minimal valid PaymentIntent.
+      fetchImpl: (async (_url: string, init: {headers: Record<string, string>}) => {
+        seen.push(init.headers);
+        return new Response(
+          JSON.stringify({id: "pi_test_pin", client_secret: "pi_test_pin_secret", status: "requires_payment_method", amount: 1000, currency: "usd"}),
+          {status: 200, headers: {"content-type": "application/json"}},
+        );
+      }) as unknown as typeof fetch,
+    });
+    // The idempotency key is the one caller-influenced value that reaches the
+    // header map; it is a VALUE, not a key, and must not change the bearer.
+    await provider.createIntent({
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      bookingId: "22222222-2222-4222-8222-222222222222",
+      amount: {amount: 1000, currency: "USD"},
+      idempotencyKey: "Bearer sk_attacker_not_a_header_name",
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.Authorization).toBe("Bearer sk_test_pinned");
+    expect(seen[0]!["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(seen[0]!["Idempotency-Key"]).toBe("Bearer sk_attacker_not_a_header_name");
+  });
+});

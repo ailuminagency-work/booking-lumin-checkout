@@ -120,10 +120,17 @@ export function createStripeClient(opts: StripeClientOptions) {
   const now = opts.now ?? (() => Date.now());
 
   function authHeaders(extra?: Record<string, string>): Record<string, string> {
+    // `extra` is spread FIRST and the credential headers pinned LAST, so a
+    // caller-supplied header map can never override the bearer token or the
+    // content type. It used to be the other way round: `...extra` last meant
+    // any call site that ever passed a caller-derived map could silently
+    // replace Authorization. No current call site does -- the only key passed
+    // is a literal "Idempotency-Key" -- so this closes the class rather than a
+    // live hole, in the one function every Stripe request goes through.
     return {
+      ...extra,
       Authorization: `Bearer ${opts.secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
-      ...extra,
     };
   }
 
