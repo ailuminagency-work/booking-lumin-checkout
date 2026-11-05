@@ -132,9 +132,20 @@ select pg_temp.assert(count(*)=0,'automation can never CREATE the error status')
 select pg_temp.assert(count(*)=0,'error and revoked are terminal for automation') from pg_temp_pcs
  where current_status in ('error','revoked') and derived<>current_status;
 -- Revoking is only ever the provider's own word, never an inference.
+-- coalesce, NOT a bare IN: `blocked_reason in (...)` is NULL when the reason is
+-- NULL, so the comparison was NULL and the WHERE clause DROPPED those rows
+-- instead of testing them. Four of the rows this clause claims to examine were
+-- silently excused. Verified by execution before the fix.
 select pg_temp.assert(count(*)=0,'revoked is reached only when the provider disowns the account') from pg_temp_pcs
  where current_status not in ('error','revoked')
-   and ((blocked_reason in ('credentials_invalid','account_rejected'))<>(derived='revoked'));
+   and ((coalesce(blocked_reason,'') in ('credentials_invalid','account_rejected'))<>(derived='revoked'));
+-- And prove the clause examines every row it claims to: a NULL predicate is a
+-- row that was never tested. This assertion is what would have caught the above.
+select pg_temp.assert(count(*)=0,'the revoke-path clause leaves no row untested') from pg_temp_pcs
+ where current_status not in ('error','revoked')
+   and ((coalesce(blocked_reason,'') in ('credentials_invalid','account_rejected'))<>(derived='revoked')) is null;
+select pg_temp.assert((select count(*)=28 from pg_temp_pcs where current_status not in ('error','revoked')),
+ 'the revoke-path clause examines all 28 non-terminal rows');
 -- A restricted merchant stays CONNECTED; the restriction is a health verdict.
 select pg_temp.assert((select count(*)=1 and bool_and(derived='connected') from pg_temp_pcs
   where current_status='connected' and not charges_enabled and blocked_reason='requirements_past_due'),
@@ -146,11 +157,26 @@ select pg_temp.assert(
  (select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
    'connect-attempt-a-0001','mch_conn_suite_a1','2035-01-01T00:05:00Z')->>'replayed')='false',
  'the owner begins a handoff');
--- A double-click must not begin a second handoff.
+-- A double-click must not begin a second handoff -- and must hand back the
+-- ORIGINAL handoff id. Asserting only the `replayed` flag let the id be echoed
+-- from the caller's argument instead, which the ledger holds no row for, so the
+-- later bind would raise CONNECTION_UNVERIFIED and an owner who double-clicked
+-- could never finish connecting.
 select pg_temp.assert(
  (select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
-   'connect-attempt-a-0001','mch_conn_suite_a2','2035-01-01T00:05:00Z')->>'replayed')='true',
- 'the same idempotency key replays rather than beginning a second handoff');
+   'connect-attempt-a-0001','mch_conn_suite_a2','2035-01-01T00:05:00Z'))
+   @> '{"replayed":true,"handoffId":"mch_conn_suite_a1"}'::jsonb,
+ 'a replay returns the ORIGINAL handoff id, not the one just passed in');
+select pg_temp.assert((select count(*)=0 from public.payment_connection_handoffs where handoff_id='mch_conn_suite_a2'),
+ 'the replayed handoff id was never recorded');
+-- The OTHER collision path: a different idempotency key reusing a handoff id
+-- already taken. The early select misses, the insert collides on the primary
+-- key, and the re-read finds no row for this key -- so it must refuse rather
+-- than hand back a handoff belonging to a different attempt. This is the branch
+-- a concurrent double-click takes, which a transactional suite cannot reach by
+-- racing, so it is reached here by colliding the id instead.
+select pg_temp.reject($$select public.begin_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
+ '93000000-0000-4000-8000-000000000010'::uuid,'conn_suite','connect-attempt-a-0009','mch_conn_suite_a1','2035-01-01T00:05:00Z')$$,'22023','handoff could not be recorded');
 reset role;
 select pg_temp.assert(count(*)=1,'one handoff row for one owner attempt')
  from public.payment_connection_handoffs where tenant_id=pg_temp.id(10);
@@ -225,12 +251,21 @@ select pg_temp.assert(
  (select public.observe_payment_connection(pg_temp.id(10),'acct_conn_suite_a1',
    true,false,true,'payouts_disabled','2035-01-03T00:00:00Z')->>'status')='connected',
  'payouts failing does not disconnect a merchant that still charges');
--- An unknown account is not silently created.
+-- An unknown account is not silently created -- asserted below, against the
+-- specific not-found guard rather than the generic code.
+-- A header-unsafe reference is refused BY THE SHAPE CHECK, before the lookup.
+-- The fragment names that guard specifically: with the generic
+-- 'CONNECTION_UNVERIFIED' this assertion passed on the not-found branch -- the
+-- same guard the unknown-account test above hits -- and so asserted nothing.
+-- Verified by execution: both cases used to return the identical DETAIL.
 select pg_temp.reject($$select public.observe_payment_connection('93000000-0000-4000-8000-000000000010'::uuid,
- 'acct_never_bound_here',true,true,true,null,'2035-01-04T00:00:00Z')$$,'22023','CONNECTION_UNVERIFIED');
--- A header-unsafe reference cannot even be looked up, let alone recorded.
+ E'acct_conn_suite_a1\r\nAuthorization: Bearer stolen',true,true,true,null,'2035-01-04T00:00:00Z')$$,'22023','not header-safe');
 select pg_temp.reject($$select public.observe_payment_connection('93000000-0000-4000-8000-000000000010'::uuid,
- E'acct_conn_suite_a1\r\nAuthorization: Bearer stolen',true,true,true,null,'2035-01-04T00:00:00Z')$$,'22023','CONNECTION_UNVERIFIED');
+ 'short',true,true,true,null,'2035-01-04T00:00:00Z')$$,'22023','not header-safe');
+-- The unknown-but-well-formed account must still hit the OTHER guard, or the two
+-- would be indistinguishable again in the opposite direction.
+select pg_temp.reject($$select public.observe_payment_connection('93000000-0000-4000-8000-000000000010'::uuid,
+ 'acct_never_bound_here',true,true,true,null,'2035-01-04T00:00:00Z')$$,'22023','no bound connection of this tenant');
 reset role;
 select pg_temp.assert((select account_id='acct_conn_suite_a1' and payouts_enabled=false and blocked_reason='payouts_disabled'
   from public.payment_connections where tenant_id=pg_temp.id(10) and provider='conn_suite'),

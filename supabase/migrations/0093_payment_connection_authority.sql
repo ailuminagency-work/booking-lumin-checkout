@@ -220,6 +220,7 @@ declare
   n_invented_error integer;
   n_not_terminal   integer;
   n_not_revoked    integer;
+  n_untested       integer;
   n_distinct       integer;
 begin
   create temporary table lumin_pcs_guard on commit drop as
@@ -260,11 +261,27 @@ begin
   end if;
 
   -- A provider disowning the account is the ONLY automatic route to 'revoked'.
+  --
+  -- coalesce, NOT a bare IN. `blocked_reason in (...)` is NULL when the reason is
+  -- NULL, so `NULL <> (derived='revoked')` is NULL and the WHERE clause dropped
+  -- the row instead of testing it. That silently excused the four NULL-reason
+  -- rows -- a quarter of the rows this clause is supposed to examine -- so a
+  -- derivation returning 'revoked' for a NULL reason passed the guard. Verified
+  -- by execution before the fix: 24 rows examined, 4 skipped.
   select count(*) into n_not_revoked from lumin_pcs_guard
    where current_status not in ('error', 'revoked')
-     and ((blocked_reason in ('credentials_invalid', 'account_rejected')) <> (derived = 'revoked'));
+     and ((coalesce(blocked_reason, '') in ('credentials_invalid', 'account_rejected')) <> (derived = 'revoked'));
   if n_not_revoked > 0 then
     raise exception 'PAYMENT_CONNECTION_STATUS_REVOKE_PATH_WRONG: % combinations', n_not_revoked;
+  end if;
+
+  -- And prove the clause above examines every row it claims to: a predicate that
+  -- evaluates to NULL is a row that was never tested.
+  select count(*) into n_untested from lumin_pcs_guard
+   where current_status not in ('error', 'revoked')
+     and ((coalesce(blocked_reason, '') in ('credentials_invalid', 'account_rejected')) <> (derived = 'revoked')) is null;
+  if n_untested > 0 then
+    raise exception 'PAYMENT_CONNECTION_STATUS_GUARD_UNTESTED_ROWS: % combinations', n_untested;
   end if;
 
   -- No verdict is dead code.
@@ -321,11 +338,27 @@ begin
   on conflict (tenant_id, provider) do nothing;
   select id into conn_id from public.payment_connections where tenant_id = p_tenant and provider = p_provider;
 
-  insert into public.payment_connection_handoffs (handoff_id, tenant_id, provider, idempotency_key, expires_at)
-  values (p_handoff_id, p_tenant, p_provider, p_idempotency_key, p_expires_at);
+  -- The select above is not a lock, so two concurrent calls with one key both
+  -- missed it and the loser used to get a raw unique violation instead of a
+  -- replay -- i.e. an owner double-clicking Connect saw an error. Swallow the
+  -- collision and re-read, so the winner's handoff is what both callers get.
+  begin
+    insert into public.payment_connection_handoffs (handoff_id, tenant_id, provider, idempotency_key, expires_at)
+    values (p_handoff_id, p_tenant, p_provider, p_idempotency_key, p_expires_at);
+  exception when unique_violation then
+    null;
+  end;
 
-  return jsonb_build_object('handoffId', p_handoff_id, 'provider', p_provider,
-                            'expiresAt', p_expires_at, 'connectionId', conn_id, 'replayed', false);
+  select * into existing from public.payment_connection_handoffs
+   where tenant_id = p_tenant and provider = p_provider and idempotency_key = p_idempotency_key;
+  if not found then
+    raise exception 'CONNECTION_UNVERIFIED'
+      using errcode = '22023', detail = 'handoff could not be recorded';
+  end if;
+
+  return jsonb_build_object('handoffId', existing.handoff_id, 'provider', p_provider,
+                            'expiresAt', existing.expires_at, 'connectionId', conn_id,
+                            'replayed', existing.handoff_id <> p_handoff_id);
 end
 $fn$;
 
@@ -384,6 +417,13 @@ begin
   if p_account_id is null then
     raise exception 'CONNECTION_UNVERIFIED'
       using errcode = '22023', detail = 'a bind must name a provider account';
+  end if;
+  -- Shape-checked here as well as by the column constraint, so a malformed
+  -- reference is refused as unverifiable rather than surfacing as a 23514 from
+  -- whichever column happened to catch it.
+  if p_account_id !~ '^[A-Za-z0-9][A-Za-z0-9_.-]{7,127}$' then
+    raise exception 'CONNECTION_UNVERIFIED'
+      using errcode = '22023', detail = 'provider account reference is not header-safe';
   end if;
 
   -- WRITE-ONCE WHILE THE CONNECTION IS LIVE. Rebinding a live connection to a
@@ -467,6 +507,17 @@ set search_path = pg_catalog
 as $fn$
 declare row_before public.payment_connections; new_status text;
 begin
+  -- FIRST, before the lookup, mirroring the adapter's own ordering. Without this
+  -- a reference carrying CR or LF was refused only because it matched no stored
+  -- row -- the same guard an unknown-but-well-formed account hits -- so the
+  -- suite's "a header-unsafe reference cannot even be looked up" assertion was
+  -- passing on the not-found branch and asserting nothing. Verified by
+  -- execution: both cases returned the identical DETAIL.
+  if p_account_id is null or p_account_id !~ '^[A-Za-z0-9][A-Za-z0-9_.-]{7,127}$' then
+    raise exception 'CONNECTION_UNVERIFIED'
+      using errcode = '22023', detail = 'provider account reference is not header-safe';
+  end if;
+
   select * into row_before from public.payment_connections
    where tenant_id = p_tenant and account_id = p_account_id for update;
   if not found then
