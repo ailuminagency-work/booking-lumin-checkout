@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  ConnectionHandoff,
   ERROR_CODES,
   LuminError,
   PaymentConnectionFacts,
@@ -258,6 +259,36 @@ describe("a snapshot that cannot charge must say why", () => {
   it("carries no credential field of any kind", () => {
     const keys = Object.keys(PaymentConnectionSnapshot.parse(good));
     for (const k of keys) expect(k).not.toMatch(/secret|key|token|password|credential/i);
+  });
+});
+
+describe("the onboarding URL is a place a browser may be sent", () => {
+  const good = {
+    provider: "staging_mock",
+    handoffId: "mch_abcdef123456",
+    onboardingUrl: "https://connect.stripe.com/setup/s/abc",
+    expiresAt: "2026-11-05T00:05:00.000Z",
+  };
+
+  it("accepts an https link", () => {
+    expect(ConnectionHandoff.parse(good).onboardingUrl).toBe(good.onboardingUrl);
+  });
+
+  it("refuses javascript:, data: and http: — z.string().url() accepts the first two", () => {
+    for (const bad of [
+      "javascript:alert(1)",
+      "data:text/html,<script>1</script>",
+      "http://connect.stripe.com/setup/s/abc",
+      "JAVASCRIPT:alert(1)",
+    ]) {
+      expect(ConnectionHandoff.safeParse({ ...good, onboardingUrl: bad }).success, bad).toBe(false);
+    }
+  });
+
+  it("carries no credential field", () => {
+    for (const k of Object.keys(ConnectionHandoff.parse(good))) {
+      expect(k).not.toMatch(/secret|key|token|password|credential/i);
+    }
   });
 });
 

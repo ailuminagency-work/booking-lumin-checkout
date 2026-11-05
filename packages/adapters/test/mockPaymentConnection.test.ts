@@ -97,6 +97,29 @@ describe("beginning a handoff grants nothing", () => {
     expect(p.listHandoffs()).toHaveLength(2);
   });
 
+  it("scopes idempotency BY TENANT: one tenant's key never replays another's handoff", async () => {
+    // Keyed on the key alone, tenant B presenting tenant A's key was handed A's
+    // handoff -- and so A's minted account. The database ledger is scoped
+    // correctly, but an adapter must not rely on something downstream to keep
+    // tenants apart.
+    const p = provider();
+    const OTHER = "99999999-9999-4999-8999-999999999999";
+    const a = await p.beginConnection({ tenantId: TENANT, ...ORIGINS, idempotencyKey: "shared-key-000001" });
+    const b = await p.beginConnection({ tenantId: OTHER, ...ORIGINS, idempotencyKey: "shared-key-000001" });
+    expect(b.handoffId).not.toBe(a.handoffId);
+    expect(p.listHandoffs()).toHaveLength(2);
+    const [sa, sb] = [await p.resolveConnection(a.handoffId), await p.resolveConnection(b.handoffId)];
+    expect(sb.accountId).not.toBe(sa.accountId);
+  });
+
+  it("still replays within one tenant", async () => {
+    const p = provider();
+    const first = await begin(p, "same-tenant-key-01");
+    const again = await begin(p, "same-tenant-key-01");
+    expect(again).toEqual(first);
+    expect(p.listHandoffs()).toHaveLength(1);
+  });
+
   it("mints a distinct account per handoff, so two attempts never share one", async () => {
     const p = provider();
     const a = await p.resolveConnection((await begin(p, "key-a")).handoffId);
