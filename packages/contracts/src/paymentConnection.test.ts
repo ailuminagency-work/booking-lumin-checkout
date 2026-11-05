@@ -66,12 +66,28 @@ describe("derivePaymentConnectionHealth is total", () => {
     expect([...seen].sort()).toEqual(["blocked", "chargeable", "degraded", "not_connected"]);
   });
 
-  it("is a pure function of exactly those four fields", () => {
+  it("reads ONLY those four fields — an extra property cannot change the verdict", () => {
+    // `{ ...facts, ...{} }` used to stand in for "extra property", which adds
+    // nothing, so this could never fail. A review proved the point by adding a
+    // hidden fifth input that forces 'chargeable' and watching all 34 tests pass.
+    // PaymentConnectionFacts is a STRUCTURAL interface and TypeScript's
+    // excess-property check does not apply to a variable of a wider type, so the
+    // step-3 reader can hand a database row with extra columns straight in.
+    const DECOYS: Record<string, unknown> = {
+      overrideChargeable: true,
+      health: "chargeable",
+      chargeable: true,
+      status_override: "connected",
+      charges_enabled: true,
+      id: "11111111-1111-4111-8111-111111111111",
+      tenant_id: "22222222-2222-4222-8222-222222222222",
+    };
     for (const facts of ALL) {
       const first = derivePaymentConnectionHealth(facts);
-      // Same fields, different object, extra property: same answer.
-      const second = derivePaymentConnectionHealth({ ...facts, ...{} } as PaymentConnectionFacts);
-      expect(second).toBe(first);
+      for (const [key, value] of Object.entries(DECOYS)) {
+        const widened = { ...facts, [key]: value } as unknown as PaymentConnectionFacts;
+        expect(derivePaymentConnectionHealth(widened), `${describeFacts(facts)} + ${key}`).toBe(first);
+      }
     }
   });
 });
