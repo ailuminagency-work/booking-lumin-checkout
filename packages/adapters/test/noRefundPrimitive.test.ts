@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import { createMockPaymentProvider } from "../src/mockPayment";
 import { createStripePaymentProvider } from "../src/stripePayment";
+import { createStripeConnectProvider } from "../src/stripePaymentConnection";
 
 /** Member names that would mean "this system can move money back". */
 const ISSUING = ["refund", "partialRefund", "createRefund", "issueRefund", "refundCharge", "reverse"];
@@ -36,6 +37,17 @@ const adapters: Array<[string, object]> = [
     createStripePaymentProvider({
       secretKey: "sk_test_shape_only_no_request_is_made",
       webhookSecret: "whsec_shape_only",
+      fetchImpl: () => {
+        throw new Error("no request may be made by a shape test");
+      },
+    }),
+  ],
+  [
+    // The connection adapter moves no money at all, so a refund member on it
+    // would be doubly wrong. Asserted rather than assumed.
+    "stripe connect",
+    createStripeConnectProvider({
+      secretKey: "sk_test_shape_only_no_request_is_made",
       fetchImpl: () => {
         throw new Error("no request may be made by a shape test");
       },

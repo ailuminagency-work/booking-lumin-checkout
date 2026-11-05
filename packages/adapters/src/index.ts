@@ -23,3 +23,9 @@ export type { MockWebhookProvider } from "./mockWebhook";
 // functions / trusted runtime. Behind the same PaymentProvider contract.
 export { createStripePaymentProvider, signStripeTestWebhook, interpretRefundEvent } from "./stripePayment";
 export type { StripePaymentProviderOptions, RefundOutcome } from "./stripePayment";
+
+// Real Stripe CONNECT adapter (P1 step 4). Behind the separate
+// PaymentConnectionProvider contract: it resolves WHICH connected account a
+// charge is later created on, and moves no money itself.
+export { createStripeConnectProvider, mapStripeAccountReason } from "./stripePaymentConnection";
+export type { StripeConnectProvider, StripeConnectProviderOptions } from "./stripePaymentConnection";
