@@ -17,6 +17,7 @@ export * from "./pricing";
 export * from "./availability";
 export * from "./booking";
 export * from "./payment";
+export * from "./paymentConnection";
 export * from "./integrations";
 export * from "./errors";
 export * from "./events";

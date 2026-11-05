@@ -5,6 +5,12 @@
  */
 export { createMockPaymentProvider, signMockWebhook, mockHash } from "./mockPayment";
 export type { MockPaymentProvider, MockPaymentProviderOptions } from "./mockPayment";
+export { createMockPaymentConnectionProvider } from "./mockPaymentConnection";
+export type {
+  MockAccountFacts,
+  MockPaymentConnectionProvider,
+  MockPaymentConnectionProviderOptions,
+} from "./mockPaymentConnection";
 export { createMockCalendarProvider } from "./mockCalendar";
 export type { MockCalendarProvider } from "./mockCalendar";
 export { createMockNotificationProvider } from "./mockNotification";

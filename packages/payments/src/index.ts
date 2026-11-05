@@ -23,6 +23,7 @@
  */
 
 export * from "./capability";
+export * from "./connectionCapability";
 export * from "./contract";
 export * from "./routing";
 export * from "./mocks";
