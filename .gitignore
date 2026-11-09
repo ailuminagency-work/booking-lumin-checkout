@@ -3,5 +3,7 @@ dist/
 *.local
 .env
 .env.*
+!.env.staging.example
+!**/.env.staging.example
 coverage/
 .claude/

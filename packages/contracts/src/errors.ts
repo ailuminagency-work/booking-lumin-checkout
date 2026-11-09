@@ -26,6 +26,9 @@ export const ERROR_CODES = [
   "PAYMENT_AMOUNT_MISMATCH",
   "WEBHOOK_UNVERIFIED",
   "PROVIDER_UNAVAILABLE",
+  // A connection the provider did not confirm, or a provider account
+  // reference that is not header-safe. Never treat it as a connection.
+  "CONNECTION_UNVERIFIED",
   // auth / tenancy
   "UNAUTHENTICATED",
   "FORBIDDEN",

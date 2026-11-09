@@ -40,7 +40,16 @@ export interface MockPaymentProvider extends PaymentProvider {
   armFailure(): void;
   /** Inspection: all intents ever created, in creation order. */
   listIntents(): PaymentIntentRef[];
-  /** Inspection: refunds issued against an intent. */
+  /**
+   * Test affordance: record a refund that SOMEONE ELSE issued at the provider,
+   * the way an inbound charge.refunded webhook would. This is reconciliation,
+   * not issuing -- it mutates local bookkeeping only and no provider is called.
+   * It is the only way a mock payment can reach refunded/partially_refunded,
+   * which is the point: that transition belongs to the outside world.
+   */
+  observeExternalRefund(intentId: string, amount: Money): { refundId: string; amount: Money }[];
+
+  /** Inspection: refunds OBSERVED against an intent (never ones we issued). */
   listRefunds(intentId: string): { refundId: string; amount: Money }[];
 }
 
@@ -132,25 +141,8 @@ export function createMockPaymentProvider(opts: MockPaymentProviderOptions = {})
       state.ref.state = "failed";
     },
 
-    async refund(intentId: string, amount: Money): Promise<{ refundId: string }> {
-      const state = mustGet(intentId);
-      if (amount.currency !== state.ref.amount.currency) {
-        throw new PaymentError("INVALID_REQUEST", "refund currency mismatch");
-      }
-      if (amount.amount <= 0) throw new PaymentError("INVALID_REQUEST", "refund amount must be positive");
-      const refundable: PaymentState[] = ["succeeded", "partially_refunded"];
-      if (!refundable.includes(state.ref.state)) {
-        throw new PaymentError("ILLEGAL_TRANSITION", `cannot refund intent in state ${state.ref.state}`);
-      }
-      if (state.refundedMinorUnits + amount.amount > state.ref.amount.amount) {
-        throw new PaymentError("INVALID_REQUEST", "refund exceeds captured amount");
-      }
-      state.refundedMinorUnits += amount.amount;
-      state.ref.state = state.refundedMinorUnits === state.ref.amount.amount ? "refunded" : "partially_refunded";
-      const refundId = `mre_${state.refunds.length + 1}_${intentId}`;
-      state.refunds.push({ refundId, amount: { ...amount } });
-      return { refundId };
-    },
+    // No refund operation, deliberately: the mock mirrors the real contract so a
+    // caller cannot develop against a capability production does not have.
 
     async parseWebhook(payload: string, signatureHeader: string | null): Promise<WebhookEvent> {
       // SI-10: never process an unverified payload. HMAC keyed by the
@@ -195,6 +187,29 @@ export function createMockPaymentProvider(opts: MockPaymentProviderOptions = {})
 
     listIntents(): PaymentIntentRef[] {
       return [...intents.values()].map((s) => ({ ...s.ref }));
+    },
+
+    observeExternalRefund(intentId: string, amount: Money): { refundId: string; amount: Money }[] {
+      const state = mustGet(intentId);
+      if (amount.currency !== state.ref.amount.currency) {
+        throw new PaymentError("INVALID_REQUEST", "observed refund currency mismatch");
+      }
+      if (amount.amount <= 0) throw new PaymentError("INVALID_REQUEST", "observed refund amount must be positive");
+      // Observation is fail-closed on nonsense: a provider cannot have refunded
+      // more than it captured, so such a report is a bug in the caller, not a
+      // state this adapter should record.
+      const observable: PaymentState[] = ["succeeded", "partially_refunded"];
+      if (!observable.includes(state.ref.state)) {
+        throw new PaymentError("ILLEGAL_TRANSITION", `cannot observe a refund of an intent in state ${state.ref.state}`);
+      }
+      if (state.refundedMinorUnits + amount.amount > state.ref.amount.amount) {
+        throw new PaymentError("INVALID_REQUEST", "observed refund exceeds captured amount");
+      }
+      state.refundedMinorUnits += amount.amount;
+      state.ref.state = state.refundedMinorUnits === state.ref.amount.amount ? "refunded" : "partially_refunded";
+      const refundId = `mre_${state.refunds.length + 1}_${intentId}`;
+      state.refunds.push({ refundId, amount: { ...amount } });
+      return this.listRefunds(intentId);
     },
 
     listRefunds(intentId: string): { refundId: string; amount: Money }[] {
