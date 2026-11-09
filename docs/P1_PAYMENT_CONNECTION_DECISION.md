@@ -132,10 +132,10 @@ capability-flag flip. **Only steps 6 and 7 need a human with Stripe dashboard ac
 | # | Step | Blocks on |
 |---|---|---|
 | 0 | **Parked-payment reader** — `GET /api/payment-reviews` | **done (#246)** |
-| 1 | Contract, connection capability registry, mock adapter | nobody |
-| 2 | Migration 0093: idempotency ledger, status trigger, four service_role RPCs, SQL suite, attack-suite additions | nobody |
-| 3 | `apps/api` read-only reader behind a capability flag | a flag flip |
-| 4 | Stripe Connect adapter + fake-Stripe extension (`/v1/accounts`, `/v1/account_links`, and the fake made to observe and scope by `Stripe-Account`) | nobody |
+| 1 | Contract, connection capability registry, mock adapter | **done (#249)** |
+| 2 | Migration 0093: idempotency ledger, status trigger, four service_role RPCs, SQL suite, attack-suite additions | **done (#250)**, applied to the staging child |
+| 3 | Connection view — `GET /api/payment-connections`, behind `BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY` | **done (#252)**; needs the flag set to be reachable |
+| 4 | Stripe Connect adapter + fake-Stripe extension (`/v1/accounts`, `/v1/account_links`, and the fake made to observe and scope by `Stripe-Account`) | **done (#251)** |
 | 5 | Write path behind a flag, pointed at the **mock** connection adapter | a flag flip |
 | 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **a human + Stripe test-mode credentials** |
 | 7 | Route the money behind a separate flag; `Stripe-Account` on charge creation, `event.account` attribution on the webhook | **a human** |
@@ -156,6 +156,36 @@ that payment. That is recording a refund someone else issued — reconciliation,
 allowed — not issuing one, which this system cannot do at all since every refund-issuing
 primitive was deleted (#239). The foreclosure is irreversible, so it is a human decision and
 is pinned by a standing test.
+
+## What the build found that this record got wrong
+
+An adversarial security review of #249, #250 and #251 found **fourteen real
+defects** in work that was 4/4 green on CI. Four were serious and four were
+failures of test design rather than of code. Two corrections belong in this
+record, because it asserted them:
+
+1. **"Automation can never bring a connection back; only an owner completing a
+   fresh handoff can."** False as first implemented. `revoked` and `error` were
+   terminal for the OWNER too, so a connection the provider had disowned stayed
+   revoked forever even as the provider reported the new account healthy — and
+   the row went incoherent (`revoked` beside `charges_enabled` true, no reason).
+   Since `observe_payment_connection` takes no actor, **automation could brick a
+   tenant's payments permanently**: the exact hazard the rejected SECURITY FIRST
+   design was disqualified for, reached by another route. Fixed in two places —
+   an owner bind restarts the derivation from `not_connected`, *and* write-once
+   applies only while the connection is live, because a disowned account means
+   the owner's fresh handoff necessarily yields a *different* account.
+
+2. **Graft 1's "executable cross-product guard, proving the derivation total"**
+   examined 24 of the 56 rows it advertised. `blocked_reason in (...)` is NULL
+   over a NULL, so the predicate was NULL and the `WHERE` dropped those four
+   rows rather than testing them. The mutation it was supposed to catch —
+   deriving `revoked` from a NULL reason — passed. Now coalesced, with a
+   companion assertion that fails on any row whose predicate evaluates to NULL.
+
+The lesson worth carrying into steps 5–8: green CI did not test any of these,
+because the same author wrote the code and its tests. Every step from here
+should get an independent adversarial pass before it is called ready.
 
 ## Open questions — business decisions, not engineering
 
