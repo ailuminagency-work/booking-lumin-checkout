@@ -63,8 +63,28 @@ export function ownerBookingOperationsEnabled(env: Record<string, string | undef
  *
  * Reading only. The flag does not open a path to begin a handoff, bind an
  * account or record an observation -- those are the other three RPCs of
- * migration 0093 and no apps/api surface calls them yet.
+ * migration 0093, and the two an owner can reach are behind
+ * BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE below. Setting this flag alone grants
+ * no write.
  */
 export function paymentConnectionVisibilityEnabled(env: Record<string, string | undefined>): boolean {
   return capabilityEnabled(env, 'BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY');
+}
+
+/**
+ * The payment connection WRITE path: begin a provider handoff, and record the
+ * verified connection it produces.
+ *
+ * Separate from BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY on purpose, and the
+ * separation is the point: reading which account a tenant is connected to and
+ * CHANGING it are different authorities. A deployment can show the connection
+ * state without being able to alter it, which is the posture to run in while
+ * the write path is still being proven.
+ *
+ * This moves no money. It decides which connected account a later charge would
+ * be created on; routing the charge is a further step behind a further flag.
+ * The status is never passed by a caller -- the database derives it.
+ */
+export function paymentConnectionWriteEnabled(env: Record<string, string | undefined>): boolean {
+  return capabilityEnabled(env, 'BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE');
 }

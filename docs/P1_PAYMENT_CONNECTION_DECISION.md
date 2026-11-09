@@ -136,7 +136,7 @@ capability-flag flip. **Only steps 6 and 7 need a human with Stripe dashboard ac
 | 2 | Migration 0093: idempotency ledger, status trigger, four service_role RPCs, SQL suite, attack-suite additions | **done (#250)**, applied to the staging child |
 | 3 | Connection view — `GET /api/payment-connections`, behind `BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY` | **done (#252)**; needs the flag set to be reachable |
 | 4 | Stripe Connect adapter + fake-Stripe extension (`/v1/accounts`, `/v1/account_links`, and the fake made to observe and scope by `Stripe-Account`) | **done (#251)** |
-| 5 | Write path behind a flag, pointed at the **mock** connection adapter | a flag flip |
+| 5 | Write path behind a flag, pointed at the **mock** connection adapter — `POST /api/payment-connections/{begin,resolve}` behind `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE` | **done (#PR5)**; needs the flag set to be reachable |
 | 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **a human + Stripe test-mode credentials** |
 | 7 | Route the money behind a separate flag; `Stripe-Account` on charge creation, `event.account` attribution on the webhook | **a human** |
 | 8 | Reconciliation behind a flag | a flag flip |

@@ -19,6 +19,7 @@ import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-f
 import {OwnerBookingsList,OwnerBookingDetail,type OwnerBookingsListReader,type OwnerBookingDetailReader} from './owner-bookings';
 import {OwnerPaymentReviews,type OwnerPaymentReviewsReader} from './owner-payment-reviews';
 import {OwnerPaymentConnections,type OwnerPaymentConnectionsReader} from './owner-payment-connections';
+import {OwnerConnectionBeginInput,OwnerConnectionBeginReceipt,OwnerConnectionResolveInput,OwnerConnectionResolveReceipt,type OwnerConnectionBeginWriter,type OwnerConnectionResolveWriter} from './owner-payment-connection-write';
 import {OwnerBookingCancelReceipt,type OwnerBookingCancelWriter} from './owner-booking-cancel';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -86,6 +87,8 @@ export interface FlowHttpOptions{
  ownerBookingDetail?:OwnerBookingDetailReader;
  ownerPaymentReviews?:OwnerPaymentReviewsReader;
  ownerPaymentConnections?:OwnerPaymentConnectionsReader;
+ ownerConnectionBegin?:OwnerConnectionBeginWriter;
+ ownerConnectionResolve?:OwnerConnectionResolveWriter;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
@@ -530,6 +533,24 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=OwnerPaymentConnections.safeParse(await options.ownerPaymentConnections(actor,tenantId));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/payment-connections/begin'){
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    if(!options.ownerConnectionBegin)throw new FlowError('UNSUPPORTED_CONFIG');
+    const body=OwnerConnectionBeginInput.parse(await jsonBody(req));
+    const tenantId=tenant.toLowerCase();
+    const receipt=OwnerConnectionBeginReceipt.safeParse(await options.ownerConnectionBegin(actor,tenantId,body));
+    if(!receipt.success||receipt.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:receipt.data});return;
+   }
+   if(url.pathname==='/api/payment-connections/resolve'){
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    if(!options.ownerConnectionResolve)throw new FlowError('UNSUPPORTED_CONFIG');
+    const body=OwnerConnectionResolveInput.parse(await jsonBody(req));
+    const tenantId=tenant.toLowerCase();
+    const receipt=OwnerConnectionResolveReceipt.safeParse(await options.ownerConnectionResolve(actor,tenantId,body));
+    if(!receipt.success||receipt.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:receipt.data});return;
    }
    if(url.pathname==='/api/bookings/cancel'){
     if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');

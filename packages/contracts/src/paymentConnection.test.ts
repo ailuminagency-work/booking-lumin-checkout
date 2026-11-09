@@ -1,3 +1,4 @@
+import {readFileSync} from "node:fs";
 /**
  * paymentConnection.test.ts
  *
@@ -11,6 +12,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ConnectionHandoff,
+  ConnectionHandoffId,
+  HANDOFF_ID_PATTERN,
+  OnboardingUrl,
   ERROR_CODES,
   LuminError,
   PaymentConnectionFacts,
@@ -304,6 +308,76 @@ describe("the onboarding URL is a place a browser may be sent", () => {
   it("carries no credential field", () => {
     for (const k of Object.keys(ConnectionHandoff.parse(good))) {
       expect(k).not.toMatch(/secret|key|token|password|credential/i);
+    }
+  });
+});
+
+describe("a handoff reference is header-safe and matches the ledger", () => {
+  // The id arrives from a browser and, for Stripe, IS the connected account
+  // reference that travels in a `Stripe-Account` request header. The pattern is
+  // the same one 0093 puts on payment_connection_handoffs.handoff_id, so an API
+  // that accepts one can always store it.
+  const good = {
+    provider: "staging_mock",
+    handoffId: "mch_abcdef123456",
+    onboardingUrl: "https://connect.stripe.com/setup/s/abc",
+    expiresAt: "2026-11-05T00:05:00.000Z",
+  };
+
+  it("accepts the references the adapters actually mint", () => {
+    for (const id of ["mch_abcdef123456", "acct_mock_0123456789abcdef01234567", "acct_1PxYzAbCdEfGhIjK", "a.b-c_d12"]) {
+      expect(ConnectionHandoffId.safeParse(id).success, id).toBe(true);
+    }
+  });
+
+  it("refuses anything a header would not carry", () => {
+    for (const bad of [
+      "acct_000\r\nX-Injected: 1",
+      "acct_000\nX-Injected: 1",
+      "acct_000 with space",
+      "acct_000\tTab",
+      "acct/../../etc",
+      "acct_000;drop",
+      "acct_\u0000null",
+      "acct_é00000",
+    ]) {
+      expect(ConnectionHandoffId.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+      expect(ConnectionHandoff.safeParse({ ...good, handoffId: bad }).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("refuses a reference the ledger could not store", () => {
+    // 8..200, the column constraint exactly. A looser API would accept an id,
+    // call a provider with it, and only then fail to record the result.
+    expect(ConnectionHandoffId.safeParse("mch_123").success, "7 chars").toBe(false);
+    expect(ConnectionHandoffId.safeParse("m".repeat(8)).success, "8 chars").toBe(true);
+    expect(ConnectionHandoffId.safeParse("m".repeat(200)).success, "200 chars").toBe(true);
+    expect(ConnectionHandoffId.safeParse("m".repeat(201)).success, "201 chars").toBe(false);
+    expect(ConnectionHandoffId.safeParse("").success, "empty").toBe(false);
+  });
+
+  it("is the SAME check the ledger's column applies", () => {
+    // Read the constraint out of the migration rather than restating it: if one
+    // side is ever loosened without the other, this fails.
+    const sql = readFileSync(
+      new URL("../../../supabase/migrations/0093_payment_connection_authority.sql", import.meta.url),
+      "utf8",
+    );
+    const column = sql
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .find((line) => /handoff_id\s+text primary key/.test(line));
+    expect(column, "0093 still declares handoff_id").toBeTruthy();
+    const pattern = /~ '(\^[^']+\$)'/.exec(column ?? "");
+    expect(pattern?.[1]).toBe(HANDOFF_ID_PATTERN.source);
+  });
+});
+
+describe("OnboardingUrl is one authority, not a check each layer repeats", () => {
+  it("is exported so the API receipt uses the same rule as the adapter boundary", () => {
+    expect(OnboardingUrl.safeParse("https://connect.stripe.com/s/a").success).toBe(true);
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", "http://connect.stripe.com/s/a", "not a url"]) {
+      expect(OnboardingUrl.safeParse(bad).success, bad).toBe(false);
     }
   });
 });

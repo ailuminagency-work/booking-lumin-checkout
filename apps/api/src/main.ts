@@ -57,8 +57,10 @@ import { createStagingConfirmationDeliveryProvider } from './confirmation-delive
 import { createOwnerBookingsListReader, createOwnerBookingDetailReader } from './owner-bookings';
 import { createOwnerPaymentReviewsReader } from './owner-payment-reviews';
 import { createOwnerPaymentConnectionsReader } from './owner-payment-connections';
+import { createOwnerConnectionBeginWriter, createOwnerConnectionResolveWriter } from './owner-payment-connection-write';
+import { createMockPaymentConnectionProvider } from '@lumin/adapters';
 import { createOwnerBookingCancelWriter } from './owner-booking-cancel';
-import { paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled } from './capability-flags';
+import { paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled, paymentConnectionWriteEnabled } from './capability-flags';
 import { createSimulatedPaymentGuard } from './simulated-payment-readiness';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
@@ -185,6 +187,13 @@ function main(): void {
     // Its OWN flag: a deployment may want the booking surfaces on before any
     // payment connection exists to look at, and this one is read-only.
     ...(paymentConnectionVisibilityEnabled(process.env)?{ownerPaymentConnections:createOwnerPaymentConnectionsReader(pool)}:{}),
+    // Step 5 points the write path at the MOCK connection adapter. Its provider
+    // label is `staging_mock`, which migration 0088 seeds only where
+    // current_database() ~ '^lumin_' -- so on a production database the
+    // connect-time gate makes a mock connection physically unrecordable, not
+    // merely disallowed by this flag. Step 6 swaps in the Stripe adapter, which
+    // is the step that needs real credentials.
+    ...(paymentConnectionWriteEnabled(process.env)?(()=>{const connectionProvider=createMockPaymentConnectionProvider();return{ownerConnectionBegin:createOwnerConnectionBeginWriter(pool,connectionProvider),ownerConnectionResolve:createOwnerConnectionResolveWriter(pool,connectionProvider)};})():{}),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),
     ...(catalogAuthoringEnabled(process.env)?{catalogAuthoring:true,simpleOfferCreate:createSimpleOfferCreator(pool),detailingOfferCreate:createDetailingOfferCreator(pool),detailingOfferRead:createDetailingOfferReader(pool)}:{}),
