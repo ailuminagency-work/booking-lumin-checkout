@@ -4,7 +4,7 @@ import {businessOnboardingEnabled} from './business';
 import {catalogAuthoringEnabled} from './owner-catalog';
 import {schedulingAuthoringEnabled} from './owner-scheduling';
 import {detailingPublicationEnabled} from './detailing-publication';
-import {paidPublicationEnabled, ownerBookingOperationsEnabled} from './capability-flags';
+import {paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled} from './capability-flags';
 import {mockPaymentsEnabled} from './mock-payment';
 
 /**
@@ -23,6 +23,9 @@ const CAPABILITIES: Array<[string, string, (e: Record<string, string | undefined
   // BOOKING_LUMIN_ENV==='staging' with no flag, so the owner half of the loop could
   // not run in production at all.
   ['BOOKING_LUMIN_OWNER_BOOKING_OPS', 'ownerBookingOperations', ownerBookingOperationsEnabled],
+  // P1 step 3: the read-only payment connection view. Reading only -- it opens
+  // no path to begin a handoff, bind an account or record an observation.
+  ['BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY', 'paymentConnectionVisibility', paymentConnectionVisibilityEnabled],
 ];
 const everyFlagOn = Object.fromEntries(CAPABILITIES.map(([flag]) => [flag, '1']));
 

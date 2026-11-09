@@ -85,6 +85,16 @@ services:
       # cancelled booking may remain paid.
       - key: BOOKING_LUMIN_OWNER_BOOKING_OPS
         sync: false
+      # Payment connection visibility (P1 step 3): the READ-ONLY view of which
+      # provider account a tenant is connected to and whether it can actually take
+      # money. Migration 0093 recorded those facts and nothing could show them, so
+      # an owner whose payments had gone degraded or blocked had no way to find out.
+      # Reading only: this opens no path to begin a handoff, bind an account or
+      # record an observation, and it exposes no credential -- under the Connect
+      # design a connection is an account REFERENCE, useless without the platform
+      # secret that never leaves the server runtime.
+      - key: BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY
+        sync: false
       - key: BOOKING_LUMIN_JOURNEY_AUTHORING
         sync: false
       - key: BOOKING_LUMIN_JOURNEY_PUBLICATION

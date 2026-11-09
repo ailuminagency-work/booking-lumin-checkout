@@ -25,6 +25,9 @@
 #   - rental-confirmation, phase-a-http-golden, draft, reservation, confirmation
 #     and mock-payment (the last five were runnable under this same
 #     FLOW_TEST_DISPOSABLE contract all along, and were simply not listed)
+#   - owner-payment-connections (the connection view 0093 records and nothing
+#     could show; drives the connection through 0093's own RPCs, because every
+#     direct write verb is revoked, and checks the four health verdicts)
 #   - owner-payment-reviews (the parked-payment queue migration 0090 writes and
 #     nothing could read: tenant scoping, owner+staff read, cross-business denial)
 # The golden flow checks sequential replay and tenant isolation, not concurrent
@@ -111,7 +114,8 @@ for harness in \
   src/reservation.integration.ts \
   src/confirmation.integration.ts \
   src/mock-payment.integration.ts \
-  src/owner-payment-reviews.integration.ts
+  src/owner-payment-reviews.integration.ts \
+  src/owner-payment-connections.integration.ts
 do
   n=$((n + 1))
   DB="lumin_r2a_$$_${n}"

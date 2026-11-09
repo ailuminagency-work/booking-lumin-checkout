@@ -50,3 +50,21 @@ export function paidPublicationEnabled(env: Record<string, string | undefined>):
 export function ownerBookingOperationsEnabled(env: Record<string, string | undefined>): boolean {
   return capabilityEnabled(env, 'BOOKING_LUMIN_OWNER_BOOKING_OPS');
 }
+
+/**
+ * Payment connection visibility: the read-only view of which provider account a
+ * tenant is connected to and whether it can actually take money.
+ *
+ * Its own flag, not folded into the owner-booking family, because it is a
+ * different surface with a different audience: a connection that has gone
+ * `degraded` or `blocked` is an operational fact staff need, and a deployment
+ * may reasonably want the booking surfaces on before any payment connection
+ * exists to look at.
+ *
+ * Reading only. The flag does not open a path to begin a handoff, bind an
+ * account or record an observation -- those are the other three RPCs of
+ * migration 0093 and no apps/api surface calls them yet.
+ */
+export function paymentConnectionVisibilityEnabled(env: Record<string, string | undefined>): boolean {
+  return capabilityEnabled(env, 'BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY');
+}

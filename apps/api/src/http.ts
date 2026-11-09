@@ -18,6 +18,7 @@ import {SavePaidJourneyDraft} from './paid-journey-draft';
 import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-form-answers';
 import {OwnerBookingsList,OwnerBookingDetail,type OwnerBookingsListReader,type OwnerBookingDetailReader} from './owner-bookings';
 import {OwnerPaymentReviews,type OwnerPaymentReviewsReader} from './owner-payment-reviews';
+import {OwnerPaymentConnections,type OwnerPaymentConnectionsReader} from './owner-payment-connections';
 import {OwnerBookingCancelReceipt,type OwnerBookingCancelWriter} from './owner-booking-cancel';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -84,6 +85,7 @@ export interface FlowHttpOptions{
  ownerBookings?:OwnerBookingsListReader;
  ownerBookingDetail?:OwnerBookingDetailReader;
  ownerPaymentReviews?:OwnerPaymentReviewsReader;
+ ownerPaymentConnections?:OwnerPaymentConnectionsReader;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
@@ -514,6 +516,18 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(status!==null&&status!=='open'&&status!=='all')throw new FlowError('INVALID_REQUEST');
     const tenantId=tenant.toLowerCase();
     const result=OwnerPaymentReviews.safeParse(await options.ownerPaymentReviews(actor,tenantId,{limit,before,openOnly:status!=='all'}));
+    if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/payment-connections'){
+    if(!options.ownerPaymentConnections)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    // tenantId only -- no limit, no cursor. 0006 holds unique (tenant_id,
+    // provider), so a tenant has at most a handful of rows and paging it would
+    // be a parameter surface for nothing. The global allowlist's ["tenantId"]
+    // fallback already refuses every other query parameter.
+    const tenantId=tenant.toLowerCase();
+    const result=OwnerPaymentConnections.safeParse(await options.ownerPaymentConnections(actor,tenantId));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
    }
