@@ -19,6 +19,7 @@ import {OwnerBookingFormAnswers,type BookingFormAnswersReader} from './booking-f
 import {OwnerBookingsList,OwnerBookingDetail,type OwnerBookingsListReader,type OwnerBookingDetailReader} from './owner-bookings';
 import {OwnerPaymentReviews,type OwnerPaymentReviewsReader} from './owner-payment-reviews';
 import {OwnerPaymentConnections,type OwnerPaymentConnectionsReader} from './owner-payment-connections';
+import {OwnerConnectionBeginInput,OwnerConnectionBeginReceipt,OwnerConnectionResolveInput,OwnerConnectionResolveReceipt,type OwnerConnectionBeginWriter,type OwnerConnectionResolveWriter} from './owner-payment-connection-write';
 import {OwnerBookingCancelReceipt,type OwnerBookingCancelWriter} from './owner-booking-cancel';
 import {NotificationPlannerReceipt,SaveNotificationPlannerConfig,type NotificationPlannerConfigApi} from './notification-planner-config';
 import {ConfirmationReceiptStatus,type ConfirmationReceiptStatusReader} from './confirmation-receipt-status';
@@ -77,7 +78,7 @@ import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDraft,CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,OwnerBookingCancelInput,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
-const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
+const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429,PROVIDER_UNAVAILABLE:503};
 export interface FlowHttpOptions{
  notificationAuthoring?:boolean;
  notificationPlannerConfig?:NotificationPlannerConfigApi;
@@ -86,6 +87,8 @@ export interface FlowHttpOptions{
  ownerBookingDetail?:OwnerBookingDetailReader;
  ownerPaymentReviews?:OwnerPaymentReviewsReader;
  ownerPaymentConnections?:OwnerPaymentConnectionsReader;
+ ownerConnectionBegin?:OwnerConnectionBeginWriter;
+ ownerConnectionResolve?:OwnerConnectionResolveWriter;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
  confirmationReceiptHistory?:ConfirmationReceiptHistoryReader;
@@ -530,6 +533,24 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const result=OwnerPaymentConnections.safeParse(await options.ownerPaymentConnections(actor,tenantId));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/payment-connections/begin'){
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    if(!options.ownerConnectionBegin)throw new FlowError('UNSUPPORTED_CONFIG');
+    const body=OwnerConnectionBeginInput.parse(await jsonBody(req));
+    const tenantId=tenant.toLowerCase();
+    const receipt=OwnerConnectionBeginReceipt.safeParse(await options.ownerConnectionBegin(actor,tenantId,body));
+    if(!receipt.success||receipt.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:receipt.data});return;
+   }
+   if(url.pathname==='/api/payment-connections/resolve'){
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    if(!options.ownerConnectionResolve)throw new FlowError('UNSUPPORTED_CONFIG');
+    const body=OwnerConnectionResolveInput.parse(await jsonBody(req));
+    const tenantId=tenant.toLowerCase();
+    const receipt=OwnerConnectionResolveReceipt.safeParse(await options.ownerConnectionResolve(actor,tenantId,body));
+    if(!receipt.success||receipt.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:receipt.data});return;
    }
    if(url.pathname==='/api/bookings/cancel'){
     if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
