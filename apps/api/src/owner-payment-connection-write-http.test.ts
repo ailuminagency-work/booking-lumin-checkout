@@ -1,6 +1,7 @@
 import {afterEach, it, expect, vi} from 'vitest';
 import type {Server} from 'node:http';
 import {createFlowHttpServer} from './http';
+import {FlowError} from './repository';
 import type {
   OwnerConnectionBeginWriter,
   OwnerConnectionResolveWriter,
@@ -237,6 +238,28 @@ it('refuses a resolve receipt whose status or reason is not in the contract', as
   await new Promise<void>((r) => server.close(() => r()));
   await base({ownerConnectionResolve: async () => ({...resolveReceipt, blockedReason: 'vibes'}) as never});
   expect((await post('resolve', RESOLVE_BODY)).status).toBe(500);
+});
+
+it('gives each writer failure its own HTTP status', async () => {
+  // The status table is the user-visible half of the error mapping: an upstream
+  // outage must not read as a Booking Lumin fault, and a malformed request must
+  // not read as either.
+  const cases: Array<[string, number]> = [
+    ['INVALID_REQUEST', 400],
+    ['PROVIDER_UNAVAILABLE', 503],
+    ['NOT_AVAILABLE', 404],
+    ['FORBIDDEN', 403],
+    ['CONFLICT', 409],
+    ['INTERNAL_ERROR', 500],
+  ];
+  for (const [code, status] of cases) {
+    await base({ownerConnectionBegin: async () => {throw new FlowError(code as never);}});
+    const res = await post('begin', BEGIN_BODY);
+    expect(res.status, code).toBe(status);
+    expect((await res.json()).code, code).toBe(code);
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
 });
 
 it('does not serve either route to a customer origin', async () => {

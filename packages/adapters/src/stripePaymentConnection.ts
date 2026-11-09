@@ -343,8 +343,12 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
       // The handoff id IS the account reference. Stripe has no separate handoff
       // object, and using the account id keeps this adapter stateless: nothing
       // has to be remembered between beginConnection and resolveConnection. It
-      // satisfies the ledger's own handoff_id shape, and it never reaches a
-      // browser -- the owner is sent to `url`, which carries Stripe's own token.
+      // satisfies the ledger's own handoff_id shape and stays header-safe
+      // because it DOES reach a browser: the begin receipt publishes it and
+      // resolve takes it back (see ConnectionHandoffId). It is an identifier,
+      // never a credential -- an account reference is useless without the
+      // platform secret, and the owner is sent to `url`, which carries
+      // Stripe's own token.
       handoffId: accountId,
       onboardingUrl: url,
       expiresAt: new Date(expires * 1000).toISOString(),

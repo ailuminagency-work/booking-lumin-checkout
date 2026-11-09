@@ -29,8 +29,28 @@ const URLS = {returnUrl: 'https://portal.example.test/r', refreshUrl: 'https://p
 type T = Awaited<ReturnType<ReturnType<typeof createOwnerPaymentConnectionsReader>>>['connections'][number];
 
 const provider = createMockPaymentConnectionProvider();
+
+/**
+ * Counting wrapper around the READ half.
+ *
+ * provider.listHandoffs() only records beginConnection, so it cannot observe a
+ * resolve at all: asserting it is unchanged after a refused resolve is an
+ * assertion that cannot fail. The refusals below need to see whether the
+ * provider was READ, so resolves are counted here.
+ */
+let providerReads = 0;
+const counting = {
+  providerName: provider.providerName,
+  beginConnection: provider.beginConnection.bind(provider),
+  async resolveConnection(id: string) {
+    providerReads += 1;
+    return provider.resolveConnection(id);
+  },
+  inspectConnection: provider.inspectConnection?.bind(provider),
+};
+
 const begin = createOwnerConnectionBeginWriter(pool, provider);
-const resolve = createOwnerConnectionResolveWriter(pool, provider);
+const resolve = createOwnerConnectionResolveWriter(pool, counting as never);
 const read = createOwnerPaymentConnectionsReader(pool);
 
 /**
@@ -87,10 +107,19 @@ try {
   assert.equal(only(beforeResolve).health, 'not_connected');
   assert.equal(only(beforeResolve).accountId, null);
 
+  // The expiry the owner is told is the LEDGER's, and it is a real instant.
+  assert.ok(!Number.isNaN(Date.parse(begun.expiresAt)), 'the expiry parses');
+  const ledgerExpiry = new Date((await pool.query(
+    'select expires_at from public.payment_connection_handoffs where handoff_id=$1', [begun.handoffId])).rows[0].expires_at);
+  assert.equal(Date.parse(begun.expiresAt), ledgerExpiry.getTime(), 'the receipt states the stored expiry');
+
   // ---- begin is idempotent, at the provider AND in the ledger ---------------
   const again = await begin(owner, tenant, {...URLS, idempotencyKey: 'conn-write-attempt-0001'});
   assert.equal(again.replayed, true, 'the same key replays');
   assert.equal(again.handoffId, begun.handoffId, 'and returns the ORIGINAL handoff id');
+  // begin_payment_connection never refreshes expires_at, and the receipt must
+  // not claim it did: record_payment_connection enforces the stored value.
+  assert.equal(again.expiresAt, begun.expiresAt, 'a replay does not extend the advertised window');
   assert.equal((await pool.query('select count(*)::int c from public.payment_connection_handoffs where tenant_id=$1', [tenant])).rows[0].c, 1,
     'a double-click leaves one handoff, not two');
 
@@ -101,10 +130,12 @@ try {
   assert.equal(early.status, 'not_connected', 'an unfinished handoff does not become a connection');
   assert.equal(early.blockedReason, 'onboarding_incomplete');
   assert.equal(early.health, 'not_connected');
+  assert.equal(early.replayed, false, 'the first recording of this handoff is not a replay');
 
   // ---- a PERSON finishes, then resolve binds a chargeable account ------------
   provider.completeHandoff(begun.handoffId);
   const live = await resolve(owner, tenant, {handoffId: begun.handoffId});
+  assert.equal(live.replayed, true, 'this handoff HAS been recorded before -- what the field means');
   assert.equal(live.status, 'connected');
   assert.equal(live.health, 'chargeable');
   assert.equal(live.chargesEnabled, true);
@@ -120,8 +151,8 @@ try {
   // The property the whole design rests on, proven end to end: a provider that
   // cannot answer must leave the recorded row exactly as it was.
   provider.armUnavailable();
-  await rejects(() => resolve(owner, tenant, {handoffId: begun.handoffId}), 'INTERNAL_ERROR',
-    'an inconclusive provider answer fails the request');
+  await rejects(() => resolve(owner, tenant, {handoffId: begun.handoffId}), 'PROVIDER_UNAVAILABLE',
+    'an inconclusive provider answer fails the request as an upstream outage, not a server fault');
   const afterOutage = await read(owner, tenant);
   assert.equal(only(afterOutage).status, 'connected', 'the row kept its status through the outage');
   assert.equal(only(afterOutage).health, 'chargeable');
@@ -134,6 +165,28 @@ try {
     'a live connection cannot be repointed to a different account');
   assert.equal(only(await read(owner, tenant)).accountId, live.accountId, 'the account did not move');
 
+  // ---- the recovery path 0093 relaxes write-once for ------------------------
+  // The provider disowns the account. Automation records that (status derives to
+  // 'revoked'), and the OWNER may then connect a different account -- which is
+  // the whole reason the write-once rule is lifted for a dead connection.
+  provider.providerWillReport(live.accountId, {chargesEnabled: false, blockedReason: 'credentials_invalid'});
+  const revoked = await resolve(owner, tenant, {handoffId: begun.handoffId});
+  assert.equal(revoked.status, 'revoked', 'a disowned account derives to revoked');
+  assert.equal(revoked.health, 'blocked');
+
+  const reconnect = await begin(owner, tenant, {...URLS, idempotencyKey: 'conn-write-reconnect-01'});
+  provider.completeHandoff(reconnect.handoffId);
+  const rebound = await resolve(owner, tenant, {handoffId: reconnect.handoffId});
+  assert.notEqual(rebound.accountId, live.accountId, 'the owner reconnected a DIFFERENT account');
+  assert.equal(rebound.status, 'connected', 'and the connection is alive again');
+  assert.equal(rebound.health, 'chargeable');
+  // THE POINT OF THIS BLOCK. The underlying RPC reports `replayed` as "the
+  // connection already had an account", which is true here and would describe
+  // the tenant's money moving to another merchant as "already recorded". The
+  // receipt reports the handoff's own history instead, so this reads false.
+  assert.equal(rebound.replayed, false, 'a brand-new handoff is not a replay, even on a rebind');
+  assert.equal(only(await read(owner, tenant)).accountId, rebound.accountId, 'the reader agrees the account moved');
+
   // ---- authority -------------------------------------------------------------
   // Staff may READ (proven above) but must not WRITE: connecting a merchant
   // account is owner authority.
@@ -144,15 +197,23 @@ try {
   // identical here, and against Stripe it would be a real Connect account
   // created for a business the caller has no authority over.
   const handoffsBefore = provider.listHandoffs().length;
+  const readsBefore = providerReads;
   const refusedWrites: Array<[string, () => Promise<unknown>]> = [
     ['staff cannot begin a handoff', () => begin(staff, tenant, {...URLS, idempotencyKey: 'conn-write-staff-00001'})],
     ['staff cannot resolve a handoff', () => resolve(staff, tenant, {handoffId: begun.handoffId})],
     ['a non-member cannot begin a handoff', () => begin(stranger, tenant, {...URLS, idempotencyKey: 'conn-write-stranger-001'})],
     ["another business's owner cannot begin a handoff here", () => begin(otherOwner, tenant, {...URLS, idempotencyKey: 'conn-write-foreign-0001'})],
+    ['a non-member cannot resolve a handoff', () => resolve(stranger, tenant, {handoffId: begun.handoffId})],
+    ["another business's owner cannot resolve this tenant's handoff", () => resolve(otherOwner, tenant, {handoffId: begun.handoffId})],
   ];
   for (const [label, attempt] of refusedWrites) {
     await rejects(attempt, 'FORBIDDEN', label);
-    assert.equal(provider.listHandoffs().length, handoffsBefore, `${label}: the provider was not touched`);
+    // BOTH halves, because neither counter can see the other: begin writes the
+    // handoff map and never reads, resolve reads and never writes the map. The
+    // resolve rows used to be checked against the handoff map alone, which they
+    // cannot change, so they asserted nothing.
+    assert.equal(provider.listHandoffs().length, handoffsBefore, `${label}: no handoff was begun`);
+    assert.equal(providerReads, readsBefore, `${label}: the provider was not read`);
   }
 
   // ---- a handoff of ANOTHER tenant is not resolvable, and never reaches the

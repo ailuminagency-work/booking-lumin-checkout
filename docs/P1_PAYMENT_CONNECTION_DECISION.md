@@ -187,6 +187,79 @@ The lesson worth carrying into steps 5–8: green CI did not test any of these,
 because the same author wrote the code and its tests. Every step from here
 should get an independent adversarial pass before it is called ready.
 
+**Step 5 took that pass, and it paid again.** Six independent lenses over code
+that was green on 6925 tests and 17 acceptance harnesses returned **twelve
+findings, eight of them confirmed by a second reader who re-derived each one
+from the code** (the other four were the first batch, already fixed by the time
+the second reader looked, and correctly reported as no longer present).
+
+The first four, found before the rest and fixed immediately:
+
+1. **P1 — `begin` contacted the payment provider before `lumin.flow_actor` ran.**
+   Shape checks are not authority, and the tenant id comes from the browser, so
+   any authenticated caller — staff, non-member, another business's owner — could
+   name any tenant and have an account minted for it, receiving 403 only
+   afterwards. Against the Stripe adapter of step 6 that is a real Connect
+   account on the platform with caller-chosen metadata and return URLs, orphaned
+   because the ledger write is refused. Fixed by authorizing first.
+2. **P2 — the test written to pin that ordering asserted nothing.** It sliced the
+   query log to its own length (the whole array) and compared nothing against the
+   moment the provider was entered, so it passed with the authority check moved
+   back after the provider call: vacuous in exactly the way it was written to
+   prevent.
+3. **P3 — the begin receipt published the adapter's expiry, not the ledger's.**
+   `record_payment_connection` enforces the ledger's `expires_at`, which
+   `begin_payment_connection` never refreshes on a replay. The receipt is the
+   only place an expiry is stated, and it stated a window longer than the one
+   that governs: finish inside it and the bind is refused as expired.
+4. **P3 — `replayed` did not mean what it was documented to mean.** The RPC
+   returns "the connection already had an account", not "this handoff was already
+   recorded". On the revoked-reconnect path this record argues for, a brand-new
+   handoff binding a *different* merchant account reported `replayed: true` — the
+   tenant's future charges moving to another account, announced as a no-op. Now
+   derived from the handoff's own `resolved_at`.
+
+The second eight, three in the code and five in the tests:
+
+5. **P2 — every adapter failure reached the browser as `500 INTERNAL_ERROR`.**
+   `mapError` reads PostgreSQL SQLSTATEs; a `PaymentError`'s code is a word, so
+   nothing matched and everything fell through. An owner mistyping a return URL,
+   an upstream Stripe outage, and a handoff the provider does not recognise were
+   one indistinguishable server fault — and indistinguishable from the genuinely
+   serious condition this writer raises `INTERNAL_ERROR` for. Fixed with a
+   separate adapter-domain mapper, and `PROVIDER_UNAVAILABLE` (503) added to
+   `FlowCode`: an upstream outage is retryable and nothing was written, which no
+   existing code could say.
+6. **P2 — `idempotencyKey` counted different units from the ledger.**
+   `z.string().min(16)` counts UTF-16 code units; `0093`'s column counts
+   characters. Eight astral characters are 16 units but 8 characters: accepted
+   here, refused by the column, and surfacing as a check violation. Now held to
+   an ASCII class that also sits inside the Stripe adapter's own.
+7. **P3 — the Stripe adapter still documented that the handoff id "never reaches
+   a browser".** This change publishes it in the begin receipt and takes it back
+   on resolve. The exposure is intended and harmless (an account reference is
+   useless without the platform secret) but the comment asserting otherwise was
+   something a later reader could have relied on.
+8–12. **Five tests that passed for the wrong reason.** A tautology that fed the
+   adapter the same id from both the ledger and the caller, so it could not tell
+   the substitution it forbids; two refusal checks that asserted against the
+   provider's handoff map, which `resolveConnection` never writes, so they could
+   not fail; a "neither receipt" credential scan that inspected only one of the
+   two; and — the worst — **nothing anywhere pinned `resolve`'s owner-only
+   authority**: flipping that one boolean to mere membership passed all 2392 unit
+   tests and the whole pg harness. The reviewer called this a path to staff
+   binding the account, which is wrong — `record_payment_connection` repeats
+   `flow_actor` with owner authority in SQL, so the write is refused regardless.
+   What it actually bought was a staff member making this service read the
+   provider about their business's merchant account, learning whether it can
+   charge, before that refusal. Smaller than reported, still a gate the API owes.
+
+Each of the twelve fixes was mutation-checked: the fix was reverted and a named
+test confirmed to fail. Seven of the twelve were failures of test design rather
+than of code — a worse ratio than the first review, in work written while
+specifically hunting that failure mode. "CI is green" remains no evidence at all
+about this class of defect.
+
 ## Open questions — business decisions, not engineering
 
 These gate step 7 and beyond, and are the owner's to answer:

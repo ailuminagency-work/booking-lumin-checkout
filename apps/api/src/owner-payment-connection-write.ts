@@ -11,6 +11,7 @@ import {
   ProviderAccountId,
   derivePaymentConnectionHealth,
 } from '@lumin/contracts';
+import {LuminError} from '@lumin/contracts';
 import {Uuid} from './contracts';
 import {FlowError} from './repository';
 
@@ -82,9 +83,17 @@ export const OwnerConnectionBeginInput = z.object({
   refreshUrl: z.string().min(1).max(2000),
   /**
    * Retries with the same key MUST NOT begin a second handoff, at the provider
-   * or in the ledger. Bounded to the ledger's own column constraint.
+   * or in the ledger.
+   *
+   * ASCII-only, so the bound counts the SAME units at every layer. `min(16)`
+   * counts UTF-16 code units while 0093's `length(idempotency_key) between 16
+   * and 200` counts characters, so eight astral characters are 16 units but 8
+   * characters: accepted here, refused by the column, surfacing as a check
+   * violation rather than a bad request. The class is also inside the Stripe
+   * adapter's own `[A-Za-z0-9_.:-]{8,200}`, which would otherwise refuse the
+   * key after this layer had passed it.
    */
-  idempotencyKey: z.string().min(16).max(200),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_.:-]{16,200}$/, 'idempotencyKey is not header-safe'),
 }).strict();
 export type OwnerConnectionBeginInput = z.infer<typeof OwnerConnectionBeginInput>;
 
@@ -101,7 +110,13 @@ export const OwnerConnectionBeginReceipt = z.object({
    * accepts `javascript:`. This receipt is the last gate before the browser.
    */
   onboardingUrl: OnboardingUrl,
-  expiresAt: z.string(),
+  /**
+   * The LEDGER's expiry, which is the one record_payment_connection enforces.
+   * `{offset: true}` because it arrives through jsonb as `+00:00`, not `Z` --
+   * and validating it at all is what stops an absent ledger value being
+   * published as an empty string.
+   */
+  expiresAt: z.string().datetime({offset: true}),
   /** True when the same idempotency key had already begun this handoff. */
   replayed: z.boolean(),
 }).strict();
@@ -160,6 +175,38 @@ function mapError(error: unknown): FlowError {
     code === '42883' ? 'UNSUPPORTED_CONFIG' :
     ['40001', '40P01', '55P03', '57014'].includes(String(code)) ? 'CONFLICT' : 'INTERNAL_ERROR',
   );
+}
+
+/**
+ * Adapter failures, mapped by their OWN vocabulary.
+ *
+ * mapError above reads PostgreSQL SQLSTATEs. A PaymentError's `code` is an
+ * ErrorCode word, so it matched no branch there and every adapter condition --
+ * a malformed return URL, an upstream outage, a handoff the provider does not
+ * know -- reached the browser as 500 INTERNAL_ERROR. That made an owner's typo
+ * indistinguishable from a server fault, and both indistinguishable from the
+ * genuinely serious case this file raises INTERNAL_ERROR for: an adapter
+ * breaking its idempotency contract.
+ *
+ * Kept separate from mapError rather than merged into it, because mixing a
+ * SQLSTATE table with an ErrorCode table is what hid this in the first place.
+ */
+function mapProviderError(error: unknown): FlowError {
+  if (error instanceof FlowError) return error;
+  if (error instanceof LuminError) {
+    switch (error.code) {
+      // The caller's own input, refused by the adapter.
+      case 'INVALID_REQUEST': return new FlowError('INVALID_REQUEST');
+      // Upstream could not answer: a 5xx, a 429, a timeout, a non-JSON body.
+      // Retryable, and 503 says so -- nothing was written either way.
+      case 'PROVIDER_UNAVAILABLE': return new FlowError('PROVIDER_UNAVAILABLE');
+      // The provider does not recognise the handoff the ledger holds. Begin a
+      // new one; retrying this will not help.
+      case 'CONNECTION_UNVERIFIED': return new FlowError('NOT_AVAILABLE');
+      default: return new FlowError('INTERNAL_ERROR');
+    }
+  }
+  return new FlowError('INTERNAL_ERROR');
 }
 
 /** One service_role transaction, READ COMMITTED, with the actor authorized. */
@@ -237,7 +284,7 @@ export function createOwnerConnectionBeginWriter(
         idempotencyKey: parsed.data.idempotencyKey,
       }));
     } catch (error) {
-      throw mapError(error);
+      throw mapProviderError(error);
     }
 
     const recorded = await inAuthorizedTransaction(pool, actor, tenant, true, async (client) => {
@@ -245,7 +292,7 @@ export function createOwnerConnectionBeginWriter(
         'select public.begin_payment_connection($1::uuid,$2::uuid,$3,$4,$5,$6::timestamptz) as receipt',
         [actor, tenant, provider.providerName, parsed.data.idempotencyKey, handoff.handoffId, handoff.expiresAt],
       );
-      return result.rows[0]?.receipt as {handoffId?: unknown; replayed?: unknown} | undefined;
+      return result.rows[0]?.receipt as {handoffId?: unknown; replayed?: unknown; expiresAt?: unknown} | undefined;
     });
 
     // THE LEDGER'S HANDOFF AND THE URL IN HAND MUST BE THE SAME HANDOFF.
@@ -274,7 +321,14 @@ export function createOwnerConnectionBeginWriter(
       // and the check above has established it is also the one the URL opens.
       handoffId: ledgerHandoffId,
       onboardingUrl: handoff.onboardingUrl,
-      expiresAt: handoff.expiresAt,
+      // THE LEDGER'S EXPIRY, not the adapter's. begin_payment_connection never
+      // refreshes expires_at on a replay, and record_payment_connection gates
+      // the bind on the LEDGER's value. Publishing the adapter's would advertise
+      // a window longer than the one that will be enforced: the owner finishes a
+      // fresh link inside the advertised window and resolve refuses it as
+      // expired. The receipt is the only place an expiry is stated, so it states
+      // the one that governs.
+      expiresAt: String(recorded?.expiresAt ?? ''),
       replayed: recorded?.replayed === true,
     });
     if (!receipt.success || receipt.data.tenantId !== tenant) throw new FlowError('INTERNAL_ERROR');
@@ -295,11 +349,11 @@ export function createOwnerConnectionResolveWriter(
     // touched. A handoff id the caller does not own never reaches the adapter.
     const ledger = await inAuthorizedTransaction(pool, actor, tenant, true, async (client) => {
       const result = await client.query(
-        `select handoff_id, provider from public.payment_connection_handoffs
+        `select handoff_id, provider, resolved_at from public.payment_connection_handoffs
           where handoff_id = $1 and tenant_id = $2::uuid`,
         [parsed.data.handoffId, tenant],
       );
-      return result.rows[0] as {handoff_id: string; provider: string} | undefined;
+      return result.rows[0] as {handoff_id: string; provider: string; resolved_at: Date | null} | undefined;
     });
     if (!ledger) throw new FlowError('NOT_AVAILABLE');
     if (ledger.provider !== provider.providerName) {
@@ -314,7 +368,7 @@ export function createOwnerConnectionResolveWriter(
     try {
       snapshot = await provider.resolveConnection(ledger.handoff_id);
     } catch (error) {
-      throw mapError(error);
+      throw mapProviderError(error);
     }
 
     // PHASE 3 -- record. The facts go in; the database derives the status.
@@ -352,7 +406,20 @@ export function createOwnerConnectionResolveWriter(
       payoutsEnabled: snapshot.payoutsEnabled,
       onboardingComplete: snapshot.onboardingComplete,
       blockedReason: snapshot.blockedReason,
-      replayed: recorded?.replayed === true,
+      // FROM THE HANDOFF, not from the RPC's own flag.
+      //
+      // record_payment_connection returns `row_before.account_id is not null` --
+      // a property of the CONNECTION, not of this handoff. On the reconnect path
+      // 0093 exists to allow (a provider disowned the old account, the owner
+      // completes a fresh handoff, a DIFFERENT account is bound) that flag is
+      // true, so the single most consequential event on this path -- the tenant's
+      // future charges moving to another merchant account -- would be published
+      // as "already recorded, nothing to see". A portal treating it as a no-op
+      // would silently swallow the change.
+      //
+      // The handoff's own resolved_at is the documented property: non-null
+      // exactly when THIS handoff has been recorded before.
+      replayed: Boolean(ledger.resolved_at),
     });
     if (!receipt.success || receipt.data.tenantId !== tenant) throw new FlowError('INTERNAL_ERROR');
     return receipt.data;

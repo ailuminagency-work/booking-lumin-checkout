@@ -78,7 +78,7 @@ import { z } from "zod";
 import { normalizeConfigurablePublication } from "@lumin/workflow";
 import { ConditionalCustomerFieldRequestInput,SavePaidConditionalCustomerFieldDraft,CustomerFieldRequestInput,PublishPaidOption,PaidSimpleDraftList,Uuid,PublishPaidSimpleDraft,SavePaidCustomerFieldDraft,SavePaidSimpleDraft,PublishPaidSimple,SaveConfigurableDraft,postgresV2Strings,SaveDraft,PublishDraft,RequestInput,RpcResults,OwnerBookingCancelInput,type FlowRpc } from "./contracts";
 import { FlowError,type FlowCode,type FlowRepository,type TenantProfileReader,type AvailabilityReader } from "./repository";
-const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429};
+const statuses:Record<FlowCode,number>={ROSTER_NOT_INITIALIZED:409,ROSTER_TOO_LARGE:422,ROSTER_UNSUPPORTED_TIME:422,INVALID_REQUEST:400,UNAUTHENTICATED:401,FORBIDDEN:403,CONFLICT:409,NOT_AVAILABLE:404,UNSUPPORTED_CONFIG:422,INTERNAL_ERROR:500,RATE_LIMITED:429,PROVIDER_UNAVAILABLE:503};
 export interface FlowHttpOptions{
  notificationAuthoring?:boolean;
  notificationPlannerConfig?:NotificationPlannerConfigApi;
