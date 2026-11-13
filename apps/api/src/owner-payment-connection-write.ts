@@ -271,7 +271,20 @@ export function createOwnerConnectionBeginWriter(
     // in its own short transaction. The ledger write below opens a second one
     // and checks again -- see the header on why two short transactions beat one
     // held across a network call.
-    await inAuthorizedTransaction(pool, actor, tenant, true, async () => undefined);
+    //
+    // THE PROVIDER LABEL IS CHECKED HERE TOO, BEFORE THE PROVIDER IS ASKED. The
+    // ledger write refuses an undeclared label (begin_payment_connection), but only
+    // after the provider has acted. On Stripe that is a real account created on a
+    // deployment that will then refuse to record it: a test-mode account minted on
+    // a production database. The same declaration, read here, refuses it first. The
+    // RPC keeps its own check, so this is an early refusal, not the authority.
+    await inAuthorizedTransaction(pool, actor, tenant, true, async (client) => {
+      const declared = await client.query(
+        'select provider from public.confirmable_payment_providers where provider = $1',
+        [provider.providerName],
+      );
+      if (declared.rows.length === 0) throw new FlowError('INVALID_REQUEST');
+    });
 
     // Now the provider, because the handoff id comes from it. See the header
     // for what that costs and why the idempotency key is the mitigation.

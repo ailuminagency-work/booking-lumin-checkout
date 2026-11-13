@@ -9,6 +9,7 @@
  *  - POST /v1/refunds                   (full/partial)
  *  - POST /v1/accounts                  (Connect Standard account creation)
  *  - GET  /v1/accounts/{id}             (retrieve; drives the health snapshot)
+ *  - GET  /v1/account                   (the PLATFORM's own account, for this key)
  *  - POST /v1/account_links             (onboarding link)
  *
  * It also OBSERVES and SCOPES BY the `Stripe-Account` header. That is not a
@@ -111,6 +112,12 @@ export interface FakeStripe {
   armRateLimit(times?: number): void;
   /** Make this account answer 403 account_invalid, the way a revoked one does. */
   disownAccount(accountId: string): void;
+  /**
+   * Which platform account GET /v1/account reports for this key. Changing it models
+   * a key that now belongs to a different platform: every account it is asked about
+   * is then refused, exactly as a foreign key's are.
+   */
+  setPlatformAccountId(accountId: string): void;
   /** The `Stripe-Account` header value of every request served, in order. */
   stripeAccountHeaders(): (string | null)[];
 }
@@ -119,6 +126,8 @@ export interface FakeStripeOptions {
   webhookSecret: string;
   /** Clock in unix SECONDS for webhook signing defaults. Default 1_760_000_000. */
   nowSeconds?: number;
+  /** The platform's own account id, what GET /v1/account reports. Default acct_fakeplatform01. */
+  platformAccountId?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -139,6 +148,8 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
   const nowSeconds = opts.nowSeconds ?? 1_760_000_000;
   const accounts = new Map<string, StoredAccount>();
   const disowned = new Set<string>();
+  // What GET /v1/account reports: the platform this key belongs to.
+  let platformAccountId = opts.platformAccountId ?? "acct_fakeplatform01";
   const seenAccountHeaders: (string | null)[] = [];
   let intentCounter = 0;
   let refundCounter = 0;
@@ -220,6 +231,11 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
       accounts.set(id, account);
       if (idemKey) byIdempotencyKey.set(idemKey, id);
       return json(account);
+    }
+
+    // ---- Connect: GET /v1/account -- the PLATFORM's own account, for this key ----
+    if (path === "/v1/account" && method === "GET") {
+      return json({ id: platformAccountId, object: "account", type: "standard" });
     }
 
     // ---- Connect: GET /v1/accounts/{id} ----
@@ -430,6 +446,9 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
     },
     disownAccount(accountId) {
       disowned.add(accountId);
+    },
+    setPlatformAccountId(accountId) {
+      platformAccountId = accountId;
     },
     stripeAccountHeaders() {
       return [...seenAccountHeaders];

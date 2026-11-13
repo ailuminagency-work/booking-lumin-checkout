@@ -48,6 +48,7 @@ const adapters: Array<[string, object]> = [
     "stripe connect",
     createStripeConnectProvider({
       secretKey: "sk_test_shape_only_no_request_is_made",
+      platformAccountId: "acct_shapeonlyplatform",
       fetchImpl: () => {
         throw new Error("no request may be made by a shape test");
       },

@@ -83,10 +83,10 @@ it('reports UNSAFE when a non-staging process can confirm simulated money', asyn
     .toEqual({status: 'unsafe', providers: ['fixture', 'staging_mock']});
 });
 
-it('asks about every simulated label migration 0088 can declare confirmable', () => {
-  // If 0088's disposable seed gains a provider and this list does not, the DB
-  // would confirm simulated money that the readiness guard never asks about.
-  expect([...SIMULATED_PROVIDERS].sort()).toEqual(['fixture', 'staging_mock']);
+it('asks about every label migrations 0088 and 0094 can declare confirmable on a disposable database', () => {
+  // If a disposable seed gains a provider and this list does not, the DB would
+  // confirm non-real money that the readiness guard never asks about.
+  expect([...SIMULATED_PROVIDERS].sort()).toEqual(['fixture', 'staging_mock', 'stripe_connect_test']);
 });
 
 it('reports UNKNOWN, never safe, when the question cannot be answered', async () => {

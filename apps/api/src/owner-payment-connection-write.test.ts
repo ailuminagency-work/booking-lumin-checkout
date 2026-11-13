@@ -21,6 +21,8 @@ function fakePool(opts: {
   ledgerRow?: unknown;
   recordReceipt?: unknown;
   forbid?: boolean;
+  /** This database does not declare the provider confirmable. */
+  undeclared?: boolean;
 } = {}) {
   const queries: string[] = [];
   const params: unknown[][] = [];
@@ -31,6 +33,9 @@ function fakePool(opts: {
       if (sql.includes('flow_actor')) {
         if (opts.forbid) throw Object.assign(new Error('forbidden'), {code: '42501'});
         return {rows: [{}]};
+      }
+      if (sql.includes('confirmable_payment_providers')) {
+        return {rows: opts.undeclared ? [] : [{provider: 'staging_mock'}]};
       }
       if (sql.includes('begin_payment_connection')) {
         // Echo the handoff id it was given, as the real RPC does on a fresh
@@ -378,6 +383,37 @@ it('begin authorizes before it calls the provider, not after', async () => {
   expect(beforeProvider.some((q) => q.includes('begin_payment_connection'))).toBe(false);
   // The ledger write happens after the provider answers.
   expect(queries.slice(atProvider).some((q) => q.includes('begin_payment_connection'))).toBe(true);
+});
+
+it('refuses a provider this database does not declare, BEFORE the provider is asked', async () => {
+  // A test-mode label on a production database. The ledger write would refuse it,
+  // but only after Stripe had created an account; this refusal is the one that
+  // comes first. The provider must not be entered at all.
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(), resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, queries} = fakePool({undeclared: true});
+  await expect(createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY}))
+    .rejects.toMatchObject({code: 'INVALID_REQUEST'});
+  expect(spy.beginConnection).not.toHaveBeenCalled();
+  expect(queries.some((q) => q.includes('begin_payment_connection'))).toBe(false);
+});
+
+it('a declared provider is asked, and its label is the one checked', async () => {
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(async () => ({
+      provider: 'stripe_connect_test', handoffId: 'acct_declared0001',
+      onboardingUrl: 'https://connect.stripe.com/setup/s/declared', expiresAt: '2026-11-13T12:00:00.000Z',
+    })),
+    resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, params} = fakePool();
+  await createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY});
+  expect(spy.beginConnection).toHaveBeenCalledTimes(1);
+  // The declaration was checked for the adapter's own label, not a hard-coded one.
+  expect(params.some((p) => p.includes('stripe_connect_test')), 'checked the adapter label').toBe(true);
 });
 
 it('refuses a malformed actor, tenant, key or handoff before any work', async () => {

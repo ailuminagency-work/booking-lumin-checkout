@@ -25,6 +25,10 @@
 #   - rental-confirmation, phase-a-http-golden, draft, reservation, confirmation
 #     and mock-payment (the last five were runnable under this same
 #     FLOW_TEST_DISPOSABLE contract all along, and were simply not listed)
+#   - owner-payment-connection-stripe (P1 step 6: the same owner flow through the
+#     REAL Stripe Connect adapter against an in-process Stripe stand-in: the account
+#     is bound to the business, a disowned merchant is revoked and can reconnect, and
+#     the flow makes only account and onboarding-link requests -- no money moves)
 #   - owner-payment-connection-write (the owner handoff/record flow of step 5,
 #     end to end against 0093: idempotent begin, the status the DATABASE derives,
 #     and that an inconclusive provider answer leaves the row untouched)
@@ -119,7 +123,8 @@ for harness in \
   src/mock-payment.integration.ts \
   src/owner-payment-reviews.integration.ts \
   src/owner-payment-connections.integration.ts \
-  src/owner-payment-connection-write.integration.ts
+  src/owner-payment-connection-write.integration.ts \
+  src/owner-payment-connection-stripe.integration.ts
 do
   n=$((n + 1))
   DB="lumin_r2a_$$_${n}"

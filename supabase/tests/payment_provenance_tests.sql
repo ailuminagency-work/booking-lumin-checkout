@@ -64,11 +64,17 @@ select pg_temp.assert(exists(select 1 from public.confirmable_payment_providers 
 -- The WHOLE allowlist is pinned, not just one row, so a provider added to the
 -- seed in either direction has to be declared here too. Two simulated labels
 -- exist: 'staging_mock' (the app's mock-payment writers and most suites) and
--- 'fixture' (hand-seeded rows in the confirmation integration harnesses).
+-- 'fixture' (hand-seeded rows in the confirmation integration harnesses). The
+-- test-mode Stripe label (0094) is confirmable on a disposable database only.
 select pg_temp.assert(
   (select string_agg(provider,',' order by provider) from public.confirmable_payment_providers)
-   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect' else 'stripe_connect' end),
+   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect,stripe_connect_test' else 'stripe_connect' end),
  'simulated providers are confirmable exactly on a disposable lumin_* database, and nothing else is seeded');
+-- A TEST-MODE connection is recorded under its own label, and a hosted database
+-- refuses it: declaring it is the disposable-database act, and nothing else.
+select pg_temp.assert(
+  exists(select 1 from public.confirmable_payment_providers where provider='stripe_connect_test') = (current_database() ~ '^lumin_'),
+ 'the test-mode Stripe label is confirmable exactly on a disposable lumin_* database');
 
 -- ---- Behaviour: the writer refuses an undeclared provider --------------------
 create function pg_temp.whole_rows() returns jsonb language sql as $$

@@ -137,7 +137,7 @@ capability-flag flip. **Only steps 6 and 7 need a human with Stripe dashboard ac
 | 3 | Connection view — `GET /api/payment-connections`, behind `BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY` | **done (#252)**; needs the flag set to be reachable |
 | 4 | Stripe Connect adapter + fake-Stripe extension (`/v1/accounts`, `/v1/account_links`, and the fake made to observe and scope by `Stripe-Account`) | **done (#251)** |
 | 5 | Write path behind a flag, pointed at the **mock** connection adapter — `POST /api/payment-connections/{begin,resolve}` behind `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE` | **done (#PR5)**; needs the flag set to be reachable |
-| 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **a human + Stripe test-mode credentials** |
+| 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **built, stacked on #253; the six-lens review's fifteen confirmed findings are resolved or recorded (see "Step 6" under the found-section below).** With the write flag on, `BOOKING_LUMIN_PAYMENT_CONNECTION_PROVIDER=stripe_connect` selects the Stripe adapter in TEST MODE: it needs a test-mode `STRIPE_PLATFORM_SECRET_KEY` and the platform's own `STRIPE_PLATFORM_ACCOUNT_ID`. Live keys are refused. **The first live connection still needs a human** on Render staging, by the runbook below. This sandbox cannot reach `api.stripe.com` (proxy 403 on CONNECT), so the live run cannot happen from here. |
 | 7 | Route the money behind a separate flag; `Stripe-Account` on charge creation, `event.account` attribution on the webhook | **a human** |
 | 8 | Reconciliation behind a flag | a flag flip |
 
@@ -259,6 +259,79 @@ test confirmed to fail. Seven of the twelve were failures of test design rather
 than of code — a worse ratio than the first review, in work written while
 specifically hunting that failure mode. "CI is green" remains no evidence at all
 about this class of defect.
+
+### Step 6: the six-lens review of the Stripe wiring
+
+Fifteen findings were confirmed, each re-derived by a reader that had not seen the
+others, and three were not reproducible. Decision 10 is refined by what follows: a
+TEST-MODE connection is recorded under its own label, `stripe_connect_test`, so the
+row says which mode produced it. The live label `stripe_connect` is unchanged.
+
+- **A test key recorded a connection indistinguishable from a live one (P2).** Fixed.
+  Migration 0094 declares the test label confirmable on a `lumin_*` database only, the
+  way 0088 declares the simulated labels. The writer also reads that declaration BEFORE
+  the provider is asked anything, so a production database refuses a test connection
+  without creating a Stripe account for it. The RPC keeps its own gate.
+- **A foreign platform's key read as a disowned merchant (P2).** Fixed. Stripe answers
+  `403 account_invalid` for every account a foreign key touches, the same answer it
+  gives a merchant who has left. Read as a verdict, it revoked a connected merchant.
+  A disown is now recorded only after `GET /v1/account` returns the pinned
+  `STRIPE_PLATFORM_ACCOUNT_ID`. Anything else is an outage, and records nothing.
+- **A keyed onboarding link (P3).** Fixed. A replayed link is expired, and Stripe saves
+  a keyed 500 for about a day, so the same-key retry after a failed link request kept
+  failing for the whole window. The link is now sent without a key. The account stays
+  keyed, so a retry still cannot mint a second merchant account. A retry now returns a
+  fresh link on the same account.
+- **Boot and operator claims wider than the code (seven findings, two rated P2).** Fixed in wording. The
+  provider and key are read only when `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE=1`. The
+  boot check is a shape check that contacts no one, so a well-formed key that Stripe
+  rejects boots cleanly and answers 503 on first use. render.yaml, main.ts and the
+  selector say so.
+- **A padded live key was not named as live (P3).** Fixed. The live check looks through
+  surrounding whitespace, and the value is still never echoed.
+- **Harness fidelity (four findings).** Fixed. The stand-in replays an account as it was
+  created, where it had returned the live object. A 500 on the link leg is exercised with
+  a path-scoped outage. The link is asserted to carry no key. A test-label refusal is
+  asserted to make zero requests.
+
+Known and NOT fixed in this change. Each is recorded here so it is not discovered later:
+
+- **A begin that reuses a ledgered key more than a day later** mints a second Stripe
+  account. The ledger does not bind that account, and the owner receives an internal
+  error. The fix is a ledger-first replay contract, and a longer ledger expiry for return
+  visits. Both change behaviour a person should decide, so this is a P3 open item. No
+  money moves. An unbound test account can be left behind.
+- **An operator sees a bare 503 for a rejected platform key.** The upstream status is in
+  the adapter's error message, but it is neither returned to the client nor logged. The
+  runbook below is the workaround.
+- **A foreign key is accepted at boot.** Boot makes no request to Stripe, so the pin is
+  checked on first use. A boot-time identity check would close that, at the cost of a
+  network call during boot.
+- **Nothing here has been seen against the real Stripe API.** The sandbox cannot reach
+  `api.stripe.com`. In particular, `GET /v1/account` returning the platform's own id
+  has not been confirmed live. The first staging run confirms it.
+
+### First live test-mode connection: the operator runbook
+
+A person does each step. None is automated, and none uses a live key.
+
+1. On Render staging, service `lumin-api`, set `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE=1`,
+   `BOOKING_LUMIN_PAYMENT_CONNECTION_PROVIDER=stripe_connect`, `STRIPE_PLATFORM_SECRET_KEY`
+   (the platform's own test-mode `sk_test_` key) and `STRIPE_PLATFORM_ACCOUNT_ID`.
+2. Read the platform id once, with the same test key: `GET https://api.stripe.com/v1/account`.
+   Put its `id` in `STRIPE_PLATFORM_ACCOUNT_ID`. A wrong id is the one mistake this pin
+   cannot catch on its own: every disown then becomes an outage, so a merchant who has
+   really left is never recorded as revoked. Check the id against that GET before the
+   first connection is read.
+3. Declare the test label on the hosted STAGING database, once: the bootstrap insert at the
+   foot of migration 0094. It is never run on production.
+4. Apply migration 0094 to the staging database, so its history matches the repository.
+   Apart from step 3 it changes nothing there.
+5. An owner begins and completes Stripe's test onboarding. Resolve should show `connected`
+   and `chargeable`, and the stored provider should read `stripe_connect_test`.
+6. If begin answers 503 on every attempt, the platform key is probably rejected. Check it
+   with `GET /v1/account`: a 401 means rejected. If the same idempotency key keeps failing,
+   use a new key, because Stripe saves a keyed failure for about a day.
 
 ## Open questions — business decisions, not engineering
 
