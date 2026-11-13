@@ -301,6 +301,12 @@ Known and NOT fixed in this change. Each is recorded here so it is not discovere
   error. The fix is a ledger-first replay contract, and a longer ledger expiry for return
   visits. Both change behaviour a person should decide, so this is a P3 open item. No
   money moves. An unbound test account can be left behind.
+- **A replayed begin can return a live link past the window it advertises.** A replay now
+  gets a fresh onboarding link, because the old link is expired. The receipt keeps the
+  LEDGER's expiry, which is deliberate: it is the window the bind is enforced against. So
+  a link can still open at Stripe after the receipt says the handoff has expired, and
+  resolve then refuses the bind. Clients should treat `expiresAt` as the bind window, not
+  as the link's life. The ledger-expiry refresh above is the fix.
 - **An operator sees a bare 503 for a rejected platform key.** The upstream status is in
   the adapter's error message, but it is neither returned to the client nor logged. The
   runbook below is the workaround.
