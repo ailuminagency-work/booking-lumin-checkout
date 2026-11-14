@@ -49,12 +49,15 @@ reset role;
 -- to serve outside staging when it comes back non-empty. Pin that service_role
 -- really reads through forced RLS with no policies: if it silently read nothing,
 -- the readiness guard would report a clean bill of health forever.
--- The array below must match SIMULATED_PROVIDERS in that module exactly.
+-- The array below must be SIMULATED_PROVIDERS in that module, exactly: the same three
+-- labels, the two 0088 seeds and the 0094 test-mode label. A label missing here is one
+-- whose visibility to the guard is never checked.
 set local role service_role;
 select pg_temp.assert(
   (select coalesce(string_agg(provider,',' order by provider),'')
-     from public.confirmable_payment_providers where provider = any(array['staging_mock','fixture']::text[]))
-   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock' else '' end),
+     from public.confirmable_payment_providers
+    where provider = any(array['staging_mock','fixture','stripe_connect_test']::text[]))
+   = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect_test' else '' end),
  'service_role sees the simulated-provider rows the readiness guard asks about');
 reset role;
 

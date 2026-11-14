@@ -92,7 +92,8 @@ interface StandInRequest {
 function standIn() {
   const accounts = new Map<string, Record<string, unknown>>();
   const disowned = new Set<string>();
-  const replays = new Map<string, unknown>();
+  // The answer kept for each keyed request, a 500 included, as Stripe keeps it.
+  const replays = new Map<string, {status: number; body: unknown}>();
   const requests: StandInRequest[] = [];
   const unexpected: string[] = [];
   /** What GET /v1/account reports for the key. Changed only to model a foreign key. */
@@ -114,13 +115,19 @@ function standIn() {
     requests.push({method, path: url.pathname, stripeAccount: headers.get('Stripe-Account'), idempotencyKey});
     if (armedFailures > 0 && (armedPath === null || url.pathname === armedPath)) {
       armedFailures -= 1;
-      return json({error: {type: 'api_error', message: 'stand-in outage'}}, 500);
+      const outage = {error: {type: 'api_error', message: 'stand-in outage'}};
+      // Stripe keeps the answer to a keyed request, a 500 included: the retry with that key gets it back.
+      if (idempotencyKey && method === 'POST' && (url.pathname === '/v1/accounts' || url.pathname === '/v1/account_links')) {
+        replays.set(`${url.pathname}:${idempotencyKey}`, {status: 500, body: outage});
+      }
+      return json(outage, 500);
     }
     const form = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
 
     if (method === 'POST' && url.pathname === '/v1/accounts') {
-      if (idempotencyKey && replays.has(`accounts:${idempotencyKey}`)) {
-        return json(replays.get(`accounts:${idempotencyKey}`));
+      if (idempotencyKey && replays.has(`/v1/accounts:${idempotencyKey}`)) {
+        const kept = replays.get(`/v1/accounts:${idempotencyKey}`)!;
+        return json(structuredClone(kept.body), kept.status);
       }
       seq += 1;
       const accountId = `acct_standin${String(seq).padStart(12, '0')}`;
@@ -138,15 +145,16 @@ function standIn() {
       accounts.set(accountId, account);
       // A replay is the account AS CREATED. Storing the live object would let a later
       // drive() rewrite what a replay returns, and Stripe does not do that.
-      if (idempotencyKey) replays.set(`accounts:${idempotencyKey}`, structuredClone(account));
+      if (idempotencyKey) replays.set(`/v1/accounts:${idempotencyKey}`, {status: 200, body: structuredClone(account)});
       return json(account);
     }
 
     if (method === 'POST' && url.pathname === '/v1/account_links') {
       const target = form.get('account') ?? '';
       if (!accounts.has(target)) return stripeError(404, 'resource_missing');
-      if (idempotencyKey && replays.has(`links:${idempotencyKey}`)) {
-        return json(replays.get(`links:${idempotencyKey}`));
+      if (idempotencyKey && replays.has(`/v1/account_links:${idempotencyKey}`)) {
+        const kept = replays.get(`/v1/account_links:${idempotencyKey}`)!;
+        return json(structuredClone(kept.body), kept.status);
       }
       seq += 1;
       const link = {
@@ -154,7 +162,7 @@ function standIn() {
         url: `https://connect.stripe.com/setup/s/standin${seq}`,
         expires_at: Math.floor(Date.now() / 1000) + 300,
       };
-      if (idempotencyKey) replays.set(`links:${idempotencyKey}`, link);
+      if (idempotencyKey) replays.set(`/v1/account_links:${idempotencyKey}`, {status: 200, body: link});
       return json(link);
     }
 
@@ -216,6 +224,8 @@ const provider = selectPaymentConnectionProvider(
     [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
     [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
     [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
+    // The test-mode provider is a staging capability; this harness stands in for staging.
+    BOOKING_LUMIN_ENV: 'staging',
   },
   {fetchImpl: stripe.fetchImpl},
 );
@@ -251,7 +261,9 @@ try {
 
   const ledger = (await pool.query(
     'select expires_at from public.payment_connection_handoffs where handoff_id=$1', [begun.handoffId])).rows[0];
-  assert.equal(Date.parse(begun.expiresAt), new Date(ledger.expires_at).getTime(), 'the receipt states the ledger expiry');
+  // The receipt states the ENFORCED bind deadline: the ledger's expiry plus the one-hour grace.
+  assert.equal(Date.parse(begun.expiresAt), new Date(ledger.expires_at).getTime() + 3_600_000,
+    'the receipt states the bind deadline the database enforces: the ledger expiry plus one hour');
 
   // ---- begin is idempotent at Stripe, and so in the ledger ------------------
   const again = await begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-attempt-0000001'});
@@ -297,6 +309,18 @@ try {
   assert.equal(afterOutage.status, 'connected', 'the recorded connection survived the outage');
   assert.equal(afterOutage.accountId, live.accountId);
 
+  // ---- the bind window closes; the account already held is still refreshed --------
+  // Two hours past its link expiry this handoff can no longer bind a NEW account. The
+  // account it holds is this owner's, so a refresh of it must still be recorded. The
+  // window that refused that was a defect this round repairs (0095).
+  await pool.query(
+    "update public.payment_connection_handoffs set expires_at = now() - interval '2 hours' where handoff_id = $1",
+    [begun.handoffId],
+  );
+  const refreshed = await resolve(owner, tenant, {handoffId: begun.handoffId});
+  assert.equal(refreshed.status, 'connected', 'a refresh of the bound account is accepted after its window');
+  assert.equal(refreshed.accountId, begun.handoffId);
+
   // ---- refusals happen before Stripe is asked anything ---------------------
   const beforeRefusals = stripe.requests.length;
   await rejects(() => begin(staff, tenant, {...URLS, idempotencyKey: 'stripe-staff-000001'}), 'FORBIDDEN',
@@ -316,6 +340,11 @@ try {
     'a 403 from a foreign key is an outage, not a verdict on the merchant');
   assert.equal(only(await read(owner, tenant)).status, 'connected',
     'nothing was recorded from the foreign key: the merchant is still connected');
+  // A foreign key is refused at BEGIN too, before any merchant account is created under it.
+  const accountsBeforeForeignBegin = stripe.accounts().length;
+  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-foreign-begin-1'}), 'PROVIDER_UNAVAILABLE',
+    'a foreign key is refused before a merchant account is created');
+  assert.equal(stripe.accounts().length, accountsBeforeForeignBegin, 'no merchant account was created under a foreign key');
   stripe.setPlatformAccount(PLATFORM);
 
   // ---- Stripe disowns the merchant: revoked, and the owner can reconnect ----
@@ -352,6 +381,19 @@ try {
   assert.match(retried.onboardingUrl, /^https:\/\/connect\.stripe\.com\//, 'the retry is sent a working link');
   assert.equal(stripe.accounts().length, 3, 'the retry made no second merchant account');
 
+  // ---- a keyed 500 on the account create is kept, as Stripe keeps it ----------
+  // The retry with the SAME key gets the same 500, so only a NEW key starts a new attempt.
+  stripe.armServerError(1, '/v1/accounts');
+  const outageKey = 'stripe-acctfail-0001';
+  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
+    'a 500 on the account create is an outage');
+  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
+    'the same key replays the keyed 500');
+  assert.equal(stripe.accounts().length, 3, 'the keyed 500 created no merchant account');
+  const fresh = await begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-acctfail-0002'});
+  assert.match(fresh.handoffId, /^acct_standin\d{12}$/, 'a new key is a new attempt');
+  assert.equal(stripe.accounts().length, 4, 'a new key creates the one account it needs');
+
   // ---- a database that does not declare the test label refuses it BEFORE Stripe ----
   // This is a production database. The label is seeded only where the name is lumin_*,
   // so the harness removes the declaration to stand in for one, and the begin must be
@@ -362,10 +404,64 @@ try {
   await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-undeclared-0001'}), 'INVALID_REQUEST',
     'an undeclared test label is refused');
   assert.equal(stripe.requests.length, beforeUndeclared, 'the undeclared label was refused before Stripe was asked anything');
+  // The same for a RESOLVE: a handoff begun while the label was declared is not read back
+  // on a database that no longer declares it, and Stripe is not asked either.
+  const beforeUndeclaredResolve = stripe.requests.length;
+  await rejects(() => resolve(owner, tenant, {handoffId: begun.handoffId}), 'UNSUPPORTED_CONFIG',
+    'an undeclared test label is refused on resolve');
+  assert.equal(stripe.requests.length, beforeUndeclaredResolve, 'the undeclared label was refused on resolve before Stripe was asked');
   await pool.query(
     "insert into public.confirmable_payment_providers (provider, note) values ($1, 'restored by the harness') on conflict (provider) do nothing",
     [STRIPE_TEST_PROVIDER_LABEL],
   );
+
+  // ---- an abandoned onboarding does not lock a business out ----------------------
+  // The owner returns from Stripe before finishing, so the account is bound as not
+  // connected. A second attempt that finishes must bind its own account. On 0093 that
+  // second bind was refused for ever. A business belongs to one owner (0092), so the
+  // second business has its own.
+  const second = id(11);
+  await pool.query(
+    "insert into public.tenants(id,name,slug,timezone,currency) values($1,'Stripe Co Two','stripe-connect-t2','UTC','USD')",
+    [second],
+  );
+  await pool.query(
+    "insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER')",
+    [second, stranger],
+  );
+  const abandoned = await begin(stranger, second, {...URLS, idempotencyKey: 'stripe-abandon-00001'});
+  const unfinished = await resolve(stranger, second, {handoffId: abandoned.handoffId});
+  assert.equal(unfinished.status, 'not_connected', 'the abandoned attempt is bound, and is not a connection');
+  const retry = await begin(stranger, second, {...URLS, idempotencyKey: 'stripe-abandon-00002'});
+  stripe.drive(retry.handoffId, {chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true});
+  const finished = await resolve(stranger, second, {handoffId: retry.handoffId});
+  assert.equal(finished.status, 'connected', 'a finished second attempt binds over the abandoned one');
+  assert.equal(finished.accountId, retry.handoffId, 'the business is bound to the account the second attempt made');
+  assert.equal(finished.replayed, false, 'the second attempt is a new handoff, not a replay');
+
+  // ---- two resolves of ONE handoff at once: exactly one is the first --------------
+  // Both read the ledger before the provider is asked, so a flag read there would tell
+  // both of them they were first. The record call locks the handoff, so one of them is.
+  const fourth = id(4), raceTenant = id(12);
+  await pool.query("insert into auth.users(id,email) values ($1,'stripe-4@example.test')", [fourth]);
+  await pool.query(
+    "insert into public.tenants(id,name,slug,timezone,currency) values($1,'Stripe Co Race','stripe-connect-t3','UTC','USD')",
+    [raceTenant],
+  );
+  await pool.query(
+    "insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER')",
+    [raceTenant, fourth],
+  );
+  const raced = await begin(fourth, raceTenant, {...URLS, idempotencyKey: 'stripe-race-000001'});
+  stripe.drive(raced.handoffId, {chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true});
+  const [raceA, raceB] = await Promise.all([
+    resolve(fourth, raceTenant, {handoffId: raced.handoffId}),
+    resolve(fourth, raceTenant, {handoffId: raced.handoffId}),
+  ]);
+  assert.deepEqual([raceA.replayed, raceB.replayed].sort(), [false, true],
+    'of two concurrent resolves of one handoff, exactly one is the first');
+  assert.equal(raceA.accountId, raced.handoffId);
+  assert.equal(raceB.accountId, raced.handoffId);
 
   // ---- zero money moved: the flow asked Stripe for exactly four things -----
   const paths = new Set(stripe.requests.map(

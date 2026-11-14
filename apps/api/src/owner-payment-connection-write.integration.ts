@@ -107,11 +107,13 @@ try {
   assert.equal(only(beforeResolve).health, 'not_connected');
   assert.equal(only(beforeResolve).accountId, null);
 
-  // The expiry the owner is told is the LEDGER's, and it is a real instant.
+  // The expiry the owner is told is the BIND DEADLINE the database enforces: the ledger's
+  // expiry plus the one-hour grace (0095). It is a real instant.
   assert.ok(!Number.isNaN(Date.parse(begun.expiresAt)), 'the expiry parses');
   const ledgerExpiry = new Date((await pool.query(
     'select expires_at from public.payment_connection_handoffs where handoff_id=$1', [begun.handoffId])).rows[0].expires_at);
-  assert.equal(Date.parse(begun.expiresAt), ledgerExpiry.getTime(), 'the receipt states the stored expiry');
+  assert.equal(Date.parse(begun.expiresAt), ledgerExpiry.getTime() + 3_600_000,
+    'the receipt states the bind deadline: the stored expiry plus one hour');
 
   // ---- begin is idempotent, at the provider AND in the ledger ---------------
   const again = await begin(owner, tenant, {...URLS, idempotencyKey: 'conn-write-attempt-0001'});

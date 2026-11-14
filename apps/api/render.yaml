@@ -111,16 +111,20 @@ services:
       # platform test key and account id below. With the write flag on, a misconfigured value
       # stops the service at boot. Those checks are SHAPE checks only: nothing is sent to Stripe
       # at boot, so a well-formed key that Stripe rejects is found on first use, as a 503.
+      # `stripe_connect` is also refused at boot unless BOOKING_LUMIN_ENV is `staging`: the test-mode
+      # provider is a staging capability. On first use, every operation confirms the pinned platform
+      # before it creates or reads anything, so a foreign key records nothing.
       - key: BOOKING_LUMIN_PAYMENT_CONNECTION_PROVIDER
         sync: false
       # The PLATFORM test-mode secret key (sk_test_...). Set in the Render dashboard, never in
       # this file and never in a chat. Read only when the write flag is 1 and the provider is
-      # stripe_connect; then a live key stops the service at boot.
+      # stripe_connect; then a live key stops the service at boot, and so does any other shape.
       - key: STRIPE_PLATFORM_SECRET_KEY
         sync: false
-      # The PLATFORM's own Stripe account id (acct_...), read once from GET /v1/account with the
-      # key above. Not a secret, but it must be set: it is how a foreign key is told apart from a
-      # merchant who has actually left. Read under the same conditions as the key.
+      # The PLATFORM's own Stripe account id (acct_...). Take it from the Stripe Dashboard of the
+      # platform account, not from an API response made with the key above: a foreign key answers
+      # with its own id. It is how a foreign key is told apart from a merchant who has actually
+      # left. Read under the same conditions as the key.
       - key: STRIPE_PLATFORM_ACCOUNT_ID
         sync: false
       - key: BOOKING_LUMIN_JOURNEY_AUTHORING

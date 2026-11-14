@@ -131,6 +131,7 @@ jobs:
             single_business_account_tests \
             payment_review_park_tests \
             payment_connection_authority_tests \
+            payment_connection_repair_tests \
             notification_planner_config_tests \
             mode_installations_tests \
             mode_flow_session_tests \

@@ -111,9 +111,10 @@ export const OwnerConnectionBeginReceipt = z.object({
    */
   onboardingUrl: OnboardingUrl,
   /**
-   * The LEDGER's expiry, which is the one record_payment_connection enforces.
-   * `{offset: true}` because it arrives through jsonb as `+00:00`, not `Z` --
-   * and validating it at all is what stops an absent ledger value being
+   * The last moment this handoff will bind a NEW account: the bind deadline the
+   * database enforces (the ledger's expiry plus one hour), not the provider link's own
+   * expiry, which is minutes. `{offset: true}` because it arrives through jsonb as
+   * `+00:00`, not `Z`, and validating it at all is what stops an absent value being
    * published as an empty string.
    */
   expiresAt: z.string().datetime({offset: true}),
@@ -305,7 +306,8 @@ export function createOwnerConnectionBeginWriter(
         'select public.begin_payment_connection($1::uuid,$2::uuid,$3,$4,$5,$6::timestamptz) as receipt',
         [actor, tenant, provider.providerName, parsed.data.idempotencyKey, handoff.handoffId, handoff.expiresAt],
       );
-      return result.rows[0]?.receipt as {handoffId?: unknown; replayed?: unknown; expiresAt?: unknown} | undefined;
+      return result.rows[0]?.receipt as
+        {handoffId?: unknown; replayed?: unknown; expiresAt?: unknown; bindDeadline?: unknown} | undefined;
     });
 
     // THE LEDGER'S HANDOFF AND THE URL IN HAND MUST BE THE SAME HANDOFF.
@@ -334,14 +336,14 @@ export function createOwnerConnectionBeginWriter(
       // and the check above has established it is also the one the URL opens.
       handoffId: ledgerHandoffId,
       onboardingUrl: handoff.onboardingUrl,
-      // THE LEDGER'S EXPIRY, not the adapter's. begin_payment_connection never
-      // refreshes expires_at on a replay, and record_payment_connection gates
-      // the bind on the LEDGER's value. Publishing the adapter's would advertise
-      // a window longer than the one that will be enforced: the owner finishes a
-      // fresh link inside the advertised window and resolve refuses it as
-      // expired. The receipt is the only place an expiry is stated, so it states
-      // the one that governs.
-      expiresAt: String(recorded?.expiresAt ?? ''),
+      // THE ENFORCED BIND DEADLINE, from the database. record_payment_connection refuses
+      // a NEW bind once the ledger's expiry plus one hour has passed, and
+      // begin_payment_connection states that instant as bindDeadline, from the same
+      // helper. The link's own expiry is minutes, and the owner returns from Stripe well
+      // after it: stating the link's expiry would advertise a window far shorter than the
+      // one the bind enforces. A replay states the LEDGER's deadline, not the fresh link's,
+      // which is the known replay gap recorded in the decision record.
+      expiresAt: String(recorded?.bindDeadline ?? ''),
       replayed: recorded?.replayed === true,
     });
     if (!receipt.success || receipt.data.tenantId !== tenant) throw new FlowError('INTERNAL_ERROR');
@@ -361,6 +363,14 @@ export function createOwnerConnectionResolveWriter(
     // PHASE 1 -- the ledger, scoped to this tenant, BEFORE the provider is
     // touched. A handoff id the caller does not own never reaches the adapter.
     const ledger = await inAuthorizedTransaction(pool, actor, tenant, true, async (client) => {
+      // THE LABEL IS CHECKED BEFORE THE PROVIDER IS ASKED, as begin checks it. A label
+      // this deployment no longer declares is refused here, with zero provider requests,
+      // even for a handoff begun while it was declared.
+      const declared = await client.query(
+        'select provider from public.confirmable_payment_providers where provider = $1',
+        [provider.providerName],
+      );
+      if (declared.rows.length === 0) throw new FlowError('UNSUPPORTED_CONFIG');
       const result = await client.query(
         `select handoff_id, provider, resolved_at from public.payment_connection_handoffs
           where handoff_id = $1 and tenant_id = $2::uuid`,
@@ -430,9 +440,10 @@ export function createOwnerConnectionResolveWriter(
       // as "already recorded, nothing to see". A portal treating it as a no-op
       // would silently swallow the change.
       //
-      // The handoff's own resolved_at is the documented property: non-null
-      // exactly when THIS handoff has been recorded before.
-      replayed: Boolean(ledger.resolved_at),
+      // THE DATABASE'S FLAG, read under the handoff's row lock by record_payment_connection.
+      // A flag read here, before the provider was asked, cannot see a concurrent resolve
+      // of the same handoff: both callers would report that they were first.
+      replayed: recorded?.replayed === true,
     });
     if (!receipt.success || receipt.data.tenantId !== tenant) throw new FlowError('INTERNAL_ERROR');
     return receipt.data;

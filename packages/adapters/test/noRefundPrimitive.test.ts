@@ -47,8 +47,9 @@ const adapters: Array<[string, object]> = [
     // would be doubly wrong. Asserted rather than assumed.
     "stripe connect",
     createStripeConnectProvider({
-      secretKey: "sk_test_shape_only_no_request_is_made",
+      secretKey: "sk_test_shapeonlynorequest",
       platformAccountId: "acct_shapeonlyplatform",
+      providerLabel: "stripe_connect_test",
       fetchImpl: () => {
         throw new Error("no request may be made by a shape test");
       },

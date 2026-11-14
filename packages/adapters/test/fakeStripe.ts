@@ -7,9 +7,12 @@
  *  - GET  /v1/payment_intents/{id}      (retrieve)
  *  - POST /v1/payment_intents/{id}/cancel
  *  - POST /v1/refunds                   (full/partial)
- *  - POST /v1/accounts                  (Connect Standard account creation)
+ *  - POST /v1/accounts                  (Connect Standard account creation; a keyed
+ *                                        request is answered from the ORIGINAL response)
  *  - GET  /v1/accounts/{id}             (retrieve; drives the health snapshot)
- *  - GET  /v1/account                   (the PLATFORM's own account, for this key)
+ *  - GET  /v1/account                   (the PLATFORM's own account for this key; with a
+ *                                        Stripe-Account header, that connected account,
+ *                                        as Stripe answers it)
  *  - POST /v1/account_links             (onboarding link)
  *
  * It also OBSERVES and SCOPES BY the `Stripe-Account` header. That is not a
@@ -113,20 +116,26 @@ export interface FakeStripe {
   /** Make this account answer 403 account_invalid, the way a revoked one does. */
   disownAccount(accountId: string): void;
   /**
-   * Which platform account GET /v1/account reports for this key. Changing it models
-   * a key that now belongs to a different platform: every account it is asked about
-   * is then refused, exactly as a foreign key's are.
+   * Which platform account GET /v1/account reports for this key. Changing it models a
+   * key that now belongs to a DIFFERENT platform: GET /v1/account then reports that
+   * platform, and every account this fake holds is answered 403 account_invalid, as a
+   * foreign key is answered for every merchant it does not own.
    */
   setPlatformAccountId(accountId: string): void;
   /** The `Stripe-Account` header value of every request served, in order. */
   stripeAccountHeaders(): (string | null)[];
+  /** Every request served, in order: method, path, and the headers that scope it. */
+  requests(): Array<{ method: string; path: string; stripeAccount: string | null; idempotencyKey: string | null }>;
 }
 
 export interface FakeStripeOptions {
   webhookSecret: string;
   /** Clock in unix SECONDS for webhook signing defaults. Default 1_760_000_000. */
   nowSeconds?: number;
-  /** The platform's own account id, what GET /v1/account reports. Default acct_fakeplatform01. */
+  /**
+   * The platform this fake's key belongs to: what GET /v1/account reports, and the
+   * platform whose accounts it holds. Default acct_fakeplatform01.
+   */
   platformAccountId?: string;
 }
 
@@ -148,9 +157,15 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
   const nowSeconds = opts.nowSeconds ?? 1_760_000_000;
   const accounts = new Map<string, StoredAccount>();
   const disowned = new Set<string>();
-  // What GET /v1/account reports: the platform this key belongs to.
-  let platformAccountId = opts.platformAccountId ?? "acct_fakeplatform01";
+  // The platform the accounts in this fake belong to, and the platform the key
+  // currently claims to belong to. They differ only after setPlatformAccountId.
+  const accountsOwner = opts.platformAccountId ?? "acct_fakeplatform01";
+  let platformAccountId = accountsOwner;
   const seenAccountHeaders: (string | null)[] = [];
+  const requestLog: Array<{ method: string; path: string; stripeAccount: string | null; idempotencyKey: string | null }> = [];
+  // Connect responses to keyed requests, as Stripe keeps them: the first answer for a
+  // key, a keyed 500 included, is the answer every later request with that key gets.
+  const connectReplies = new Map<string, { status: number; body: unknown }>();
   let intentCounter = 0;
   let refundCounter = 0;
   let accountCounter = 0;
@@ -181,15 +196,29 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
     // was aimed at the connected account and not at the platform.
     const onBehalfOf = headerValue(init, "Stripe-Account");
     seenAccountHeaders.push(onBehalfOf);
+    const idempotencyKey = headerValue(init, "Idempotency-Key");
+    requestLog.push({ method, path, stripeAccount: onBehalfOf, idempotencyKey });
     // The platform is "" -- NOT null -- so an unscoped request keeps working
     // exactly as it did before Connect existed.
     const acting = onBehalfOf ?? "";
+    // The Connect creations Stripe keeps a response for, by key, scoped to the endpoint.
+    const connectKeyed =
+      method === "POST" && (path === "/v1/accounts" || path === "/v1/account_links") && idempotencyKey !== null;
+    const replyScope = `${path}\n${idempotencyKey ?? ""}`;
+    if (connectKeyed && connectReplies.has(replyScope)) {
+      // Stripe replays the ORIGINAL response verbatim, whatever the account has become since.
+      const seen = connectReplies.get(replyScope)!;
+      return json(structuredClone(seen.body), seen.status);
+    }
 
     // Armed outages come first: an inconclusive answer must be indistinguishable
-    // from a real one at the transport level.
+    // from a real one at the transport level. A keyed 500 is kept, as Stripe keeps
+    // it, so the retry with the same key gets the same 500.
     if (armedServerErrors > 0) {
       armedServerErrors -= 1;
-      return json({ error: { type: "api_error", message: "stripe is having a bad day" } }, 500);
+      const outage = { error: { type: "api_error", message: "stripe is having a bad day" } };
+      if (connectKeyed) connectReplies.set(replyScope, { status: 500, body: structuredClone(outage) });
+      return json(outage, 500);
     }
     if (armedRateLimits > 0) {
       armedRateLimits -= 1;
@@ -198,12 +227,6 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
 
     // ---- Connect: POST /v1/accounts ----
     if (path === "/v1/accounts" && method === "POST") {
-      const idemKey = headerValue(init, "Idempotency-Key");
-      if (idemKey && byIdempotencyKey.has(idemKey)) {
-        const existing = accounts.get(byIdempotencyKey.get(idemKey)!);
-        if (existing) return json(existing);
-        return stripeError("Keys for idempotent requests can only be used with the same parameters", 400);
-      }
       if (params.get("type") !== "standard") {
         return stripeError("Only standard accounts are created by this platform");
       }
@@ -229,12 +252,22 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         requirements: { disabled_reason: "requirements.past_due", currently_due: ["external_account"], past_due: [] },
       };
       accounts.set(id, account);
-      if (idemKey) byIdempotencyKey.set(idemKey, id);
+      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(account) });
       return json(account);
     }
 
     // ---- Connect: GET /v1/account -- the PLATFORM's own account, for this key ----
     if (path === "/v1/account" && method === "GET") {
+      // Given a Stripe-Account header, Stripe answers for THAT connected account. The
+      // adapter never sends one on a platform call, so a stray header would read a
+      // merchant where the platform was meant, and the identity check refuses it.
+      if (onBehalfOf !== null) {
+        const connected = accounts.get(onBehalfOf);
+        return connected
+          ? json(structuredClone(connected))
+          : json({ error: { type: "invalid_request_error", code: "account_invalid",
+                             message: `The provided key does not have access to account ${onBehalfOf}` } }, 403);
+      }
       return json({ id: platformAccountId, object: "account", type: "standard" });
     }
 
@@ -242,6 +275,11 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
     const acctMatch = /^\/v1\/accounts\/([^/]+)$/.exec(path);
     if (acctMatch) {
       const id = decodeURIComponent(acctMatch[1]!);
+      // A key from another platform sees none of this platform's merchants.
+      if (platformAccountId !== accountsOwner) {
+        return json({ error: { type: "invalid_request_error", code: "account_invalid",
+                               message: `The provided key does not have access to account ${id}` } }, 403);
+      }
       if (disowned.has(id)) {
         return json({ error: { type: "invalid_request_error", code: "account_invalid",
                                message: `The provided key does not have access to account ${id}` } }, 403);
@@ -261,13 +299,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
 
     // ---- Connect: POST /v1/account_links ----
     if (path === "/v1/account_links" && method === "POST") {
-      const idemKey = headerValue(init, "Idempotency-Key");
       const account = params.get("account") ?? "";
-      if (idemKey && byIdempotencyKey.has(idemKey)) {
-        const seen = byIdempotencyKey.get(idemKey)!;
-        if (seen.startsWith("aclink_")) return json(JSON.parse(seen.slice("aclink_".length)));
-        return stripeError("Keys for idempotent requests can only be used with the same parameters", 400);
-      }
       if (!accounts.has(account)) return stripeError(`No such account: ${account}`, 404);
       if (params.get("type") !== "account_onboarding") return stripeError("Invalid account link type");
       for (const field of ["refresh_url", "return_url"]) {
@@ -280,7 +312,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         expires_at: nowSeconds + 300,
         url: `https://connect.stripe.com/setup/s/fake${linkCounter}`,
       };
-      if (idemKey) byIdempotencyKey.set(idemKey, `aclink_${JSON.stringify(link)}`);
+      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(link) });
       return json(link);
     }
 
@@ -452,6 +484,9 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
     },
     stripeAccountHeaders() {
       return [...seenAccountHeaders];
+    },
+    requests() {
+      return requestLog.map((r) => ({ ...r }));
     },
   };
 }

@@ -20,12 +20,12 @@ import type {PaymentConnectionProvider} from '@lumin/contracts';
  * key that Stripe rejects (rotated, mistyped, from another platform) boots cleanly,
  * and its first use answers 503 PROVIDER_UNAVAILABLE on begin and resolve.
  *
- * TEST MODE, DECIDED BY THE KEY. The platform secret must be a test-mode key. A
- * live key is refused by name, without echoing it, including one with surrounding
- * whitespace. Live credentials are an approval boundary, and this code must not
- * turn that boundary into a matter of configuration. Mode follows from the key
- * itself rather than from an environment name, which is the principle the
- * capability flags follow too.
+ * TEST MODE, DECIDED BY THE KEY, AND ONLY IN STAGING. The platform secret must be a
+ * test-mode key. A live key is refused by name, without echoing it, including one with
+ * surrounding whitespace. Live credentials are an approval boundary, and this code must
+ * not turn that boundary into a matter of configuration. The provider is also refused
+ * unless BOOKING_LUMIN_ENV is `staging`. The readiness guard is a second gate, but it
+ * reports `unknown` when its probe fails, so it cannot be the only one.
  *
  * A TEST CONNECTION IS RECORDED UNDER ITS OWN LABEL. A test-mode connection is
  * written as `stripe_connect_test`, not `stripe_connect`, so a stored row says which
@@ -84,6 +84,16 @@ export function selectPaymentConnectionProvider(
   if (choice !== 'stripe_connect') {
     throw new PaymentConnectionProviderConfigError(
       `${PAYMENT_CONNECTION_PROVIDER_ENV} must be 'mock' or 'stripe_connect'`,
+    );
+  }
+  // THE TEST-MODE PROVIDER IS A STAGING CAPABILITY, decided before any secret is read.
+  // Its label is declared confirmable on a disposable database only, and the readiness
+  // guard is the second gate on that. The guard reads 'unknown' when its probe fails, and
+  // 'unknown' keeps a process serving, so this check is the one that does not depend on a
+  // probe succeeding: a non-staging process cannot construct the test-mode provider at all.
+  if (env.BOOKING_LUMIN_ENV !== 'staging') {
+    throw new PaymentConnectionProviderConfigError(
+      `${PAYMENT_CONNECTION_PROVIDER_ENV} 'stripe_connect' is refused outside a staging deployment (BOOKING_LUMIN_ENV must be 'staging')`,
     );
   }
   const key = env[STRIPE_PLATFORM_KEY_ENV];

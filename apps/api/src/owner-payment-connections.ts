@@ -43,6 +43,12 @@ import {FlowError} from './repository';
  * Reading is not the hazard here, which was 0089's own reasoning for keeping
  * member_or_admin_select.
  *
+ * A CONNECTION UNDER AN UNDECLARED LABEL IS NOT SHOWN. The facts and the declaration are
+ * read in one repeatable-read snapshot, and a provider this database does not declare
+ * confirmable is hidden, so a test-mode row cannot read as chargeable on a database that
+ * refuses test-mode connections. It fails closed: the owner sees no connection, not a
+ * healthy one.
+ *
  * NO CREDENTIAL IS EXPOSED, because none exists. Under the Connect design a
  * connection is identified by an account REFERENCE -- an identifier, not a
  * bearer credential, useless without the platform secret that lives only in
@@ -138,12 +144,18 @@ export function createOwnerPaymentConnectionsReader(pool: Pool): OwnerPaymentCon
         'select public.payment_connection_facts($1::uuid,$2::uuid) as facts',
         [actor, tenant],
       );
+      // THE DECLARATION, in the same snapshot as the facts. A connection whose label this
+      // database does not declare confirmable is not shown at all. A test-mode row on a
+      // database that refuses test-mode connections would otherwise read as chargeable, and
+      // this view is the only place an owner or a member learns the state of a connection.
+      const declaredRows = await client.query('select provider from public.confirmable_payment_providers');
       await client.query('commit');
+      const declared = new Set(declaredRows.rows.map((row) => String(row.provider)));
 
       const facts = Facts.safeParse(result.rows[0]?.facts);
       if (!facts.success) throw new FlowError('INTERNAL_ERROR');
 
-      const connections = facts.data.connections.map((row) => {
+      const connections = facts.data.connections.filter((row) => declared.has(row.provider)).map((row) => {
         const status = PaymentConnectionStatus.safeParse(row.status);
         const reason = row.blockedReason === null
           ? {success: true as const, data: null}

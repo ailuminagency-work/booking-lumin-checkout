@@ -15,6 +15,10 @@ const TEST_KEY = ['sk', 'test', 'fixtureNotARealKey0000'].join('_');
 const RESTRICTED_KEY = ['rk', 'test', 'fixtureNotARealKey0000'].join('_');
 const PUBLISHABLE_KEY = ['pk', 'test', 'fixtureNotARealKey0000'].join('_');
 const PLATFORM = 'acct_platform000001';
+// A platform id no default in the code names: a test passes only when the value from
+// the environment is the one that reaches the adapter.
+const PINNED = 'acct_envpinned000001';
+const STAGING = {BOOKING_LUMIN_ENV: 'staging'};
 
 describe('the provider is named explicitly, and unset means step 5', () => {
   it('uses the mock when nothing is named', () => {
@@ -30,6 +34,7 @@ describe('the provider is named explicitly, and unset means step 5', () => {
 
   it('refuses a misspelled provider rather than guessing one', () => {
     expect(() => selectPaymentConnectionProvider({
+      ...STAGING,
       [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe-connect',
       [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
       [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
@@ -37,10 +42,31 @@ describe('the provider is named explicitly, and unset means step 5', () => {
   });
 });
 
+describe('the test-mode provider is a staging capability, decided before any secret is read', () => {
+  it('is refused outside a staging deployment, whatever key and platform are set', () => {
+    for (const env of [{}, {BOOKING_LUMIN_ENV: 'production'}, {BOOKING_LUMIN_ENV: 'development'}]) {
+      expect(() => selectPaymentConnectionProvider({
+        ...env,
+        [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
+        [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
+        [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
+      }), JSON.stringify(env)).toThrow(/outside a staging deployment/);
+    }
+  });
+
+  it('names the staging refusal before the key is examined, so a missing key is not reported first', () => {
+    expect(() => selectPaymentConnectionProvider({
+      [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
+      BOOKING_LUMIN_ENV: 'production',
+    })).toThrow(/outside a staging deployment/);
+  });
+});
+
 describe('stripe_connect needs a test-mode key and a pinned platform, and says so without echoing either', () => {
   // `null` means "not set". An `undefined` argument would take the default and
   // silently pin the platform, which is how this helper first hid a missing value.
   const stripe = (key: string | undefined, platform: string | null = PLATFORM) => ({
+    ...STAGING,
     [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
     ...(key === undefined ? {} : {[STRIPE_PLATFORM_KEY_ENV]: key}),
     ...(platform === null ? {} : {[STRIPE_PLATFORM_ACCOUNT_ENV]: platform}),
@@ -52,30 +78,31 @@ describe('stripe_connect needs a test-mode key and a pinned platform, and says s
   });
 
   it('refuses a live key, and says it is live, even when it was pasted with stray whitespace', () => {
-    for (const key of [LIVE_KEY, ` ${LIVE_KEY}`, `${LIVE_KEY}\n`]) {
-      expect(() => selectPaymentConnectionProvider(stripe(key)), JSON.stringify(key))
+    [LIVE_KEY, ` ${LIVE_KEY}`, `${LIVE_KEY}\n`].forEach((key, i) => {
+      expect(() => selectPaymentConnectionProvider(stripe(key)), `live-key variant ${i}`)
         .toThrow(/live-mode key/);
-    }
+    });
   });
 
   it('refuses restricted, publishable, malformed and whitespace-padded keys', () => {
-    for (const key of [RESTRICTED_KEY, PUBLISHABLE_KEY, `${TEST_KEY} `, ` ${TEST_KEY}`, 'sk_test_short']) {
-      expect(() => selectPaymentConnectionProvider(stripe(key)), JSON.stringify(key))
+    [RESTRICTED_KEY, PUBLISHABLE_KEY, `${TEST_KEY} `, ` ${TEST_KEY}`, 'sk_test_short'].forEach((key, i) => {
+      expect(() => selectPaymentConnectionProvider(stripe(key)), `refused key ${i}`)
         .toThrow(/test-mode secret key/);
-    }
+    });
   });
 
   it('never echoes the value it refused', () => {
-    for (const key of [LIVE_KEY, ` ${LIVE_KEY}`, `${LIVE_KEY}\n`, RESTRICTED_KEY, PUBLISHABLE_KEY, `${TEST_KEY} `, 'sk_test_short']) {
-      let message = '';
-      try {
-        selectPaymentConnectionProvider(stripe(key));
-      } catch (error) {
-        message = (error as Error).message;
-      }
-      expect(message.length, JSON.stringify(key)).toBeGreaterThan(0);
-      expect(message, JSON.stringify(key)).not.toContain(key.trim());
-    }
+    [LIVE_KEY, ` ${LIVE_KEY}`, `${LIVE_KEY}\n`, RESTRICTED_KEY, PUBLISHABLE_KEY, `${TEST_KEY} `, 'sk_test_short']
+      .forEach((key, i) => {
+        let message = '';
+        try {
+          selectPaymentConnectionProvider(stripe(key));
+        } catch (error) {
+          message = (error as Error).message;
+        }
+        expect(message.length, `refusal ${i}`).toBeGreaterThan(0);
+        expect(message, `refusal ${i}`).not.toContain(key.trim());
+      });
   });
 
   it('requires the platform account id, and refuses one that is not an account id without echoing it', () => {
@@ -83,29 +110,41 @@ describe('stripe_connect needs a test-mode key and a pinned platform, and says s
       .toThrow(/STRIPE_PLATFORM_ACCOUNT_ID is required/);
     expect(() => selectPaymentConnectionProvider(stripe(TEST_KEY, '')))
       .toThrow(/STRIPE_PLATFORM_ACCOUNT_ID is required/);
-    for (const bad of ['acct_short', 'pk_test_notaplatform', ` ${PLATFORM}`, 'mch_platform000001']) {
+    ['acct_short', 'pk_test_notaplatform', ` ${PLATFORM}`, 'mch_platform000001'].forEach((bad, i) => {
       let message = '';
       try {
         selectPaymentConnectionProvider(stripe(TEST_KEY, bad));
       } catch (error) {
         message = (error as Error).message;
       }
-      expect(message, JSON.stringify(bad)).toMatch(/must be the platform's own Stripe account id/);
-      expect(message, JSON.stringify(bad)).not.toContain(bad.trim());
-    }
+      expect(message, `bad platform ${i}`).toMatch(/must be the platform's own Stripe account id/);
+      expect(message, `bad platform ${i}`).not.toContain(bad.trim());
+    });
   });
 
-  it('accepts a test-mode key and a pinned platform, and records under the test label', () => {
+  it('accepts a test-mode key and a pinned platform in staging, and records under the test label', () => {
     expect(STRIPE_TEST_PROVIDER_LABEL).toBe('stripe_connect_test');
     expect(selectPaymentConnectionProvider(stripe(TEST_KEY)).providerName).toBe(STRIPE_TEST_PROVIDER_LABEL);
   });
 });
 
-describe('the pinned platform is the one a disown is judged against', () => {
-  // The env value must reach the adapter, not merely pass the shape check. Stripe
-  // answers 403 account_invalid for any account it is asked about with a foreign key.
-  const disowningWith = (platformAnswer: string) => {
-    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+describe('the pinned platform from the environment is the one a disown is judged against', () => {
+  // The value from the environment must reach the adapter. PINNED is named nowhere else,
+  // so a selector that pinned a fixed or default id refuses the verdict below.
+  const selectWith = (fetchImpl: typeof fetch) =>
+    selectPaymentConnectionProvider(
+      {
+        ...STAGING,
+        [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
+        [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
+        [STRIPE_PLATFORM_ACCOUNT_ENV]: PINNED,
+      },
+      {fetchImpl},
+    );
+
+  /** Answers GET /v1/account with `platformAnswer`, and answers every merchant 403 account_invalid. */
+  const disowningWith = (platformAnswer: string) =>
+    selectWith(vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/account')) {
         return new Response(JSON.stringify({object: 'account', id: platformAnswer}), {status: 200});
@@ -114,24 +153,20 @@ describe('the pinned platform is the one a disown is judged against', () => {
         JSON.stringify({error: {type: 'invalid_request_error', code: 'account_invalid'}}),
         {status: 403},
       );
-    }) as unknown as typeof fetch;
-    return selectPaymentConnectionProvider(
-      {
-        [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
-        [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
-        [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
-      },
-      {fetchImpl},
-    );
-  };
+    }) as unknown as typeof fetch);
 
   it('a disown is a verdict when the key is the pinned platform', async () => {
-    await expect(disowningWith(PLATFORM).resolveConnection('acct_merchant00001'))
+    await expect(disowningWith(PINNED).resolveConnection('acct_merchant00001'))
       .resolves.toMatchObject({blockedReason: 'credentials_invalid'});
   });
 
   it('a disown from a different platform is an outage, and nothing is recorded', async () => {
     await expect(disowningWith('acct_someoneelse01').resolveConnection('acct_merchant00001'))
+      .rejects.toMatchObject({code: 'PROVIDER_UNAVAILABLE'});
+  });
+
+  it('the fixture platform id is not the pin: a selector that hard-coded it would be refused here', async () => {
+    await expect(disowningWith(PLATFORM).resolveConnection('acct_merchant00001'))
       .rejects.toMatchObject({code: 'PROVIDER_UNAVAILABLE'});
   });
 });
@@ -145,6 +180,7 @@ describe('the environment cannot redirect the secret key', () => {
     }) as unknown as typeof fetch;
     const provider = selectPaymentConnectionProvider(
       {
+        ...STAGING,
         [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
         [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
         [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,

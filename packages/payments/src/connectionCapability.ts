@@ -63,9 +63,12 @@ export const PaymentConnectionCapability = z
     /** Whether the provider can be re-read for a fresh snapshot (health). */
     supportsAccountInspection: z.boolean(),
     /**
-     * Whether this provider represents simulated money. Mirrors migration
-     * 0088's disposable-only seed set and SIMULATED_PROVIDERS in
-     * apps/api/src/simulated-payment-readiness.ts.
+     * Whether this provider represents simulated money. The registry below lists the
+     * capabilities this build's adapters carry, not every label that can be declared: the
+     * disposable-only labels of migrations 0088 and 0094 that name simulated money are
+     * SIMULATED_PROVIDERS in apps/api/src/simulated-payment-readiness.ts. The test-mode
+     * Stripe label (0094) is also listed there, as non-real money, but it has no entry in
+     * this registry: it is a Stripe connection in test mode, recorded under its own label.
      */
     simulatedMoney: z.boolean(),
   })

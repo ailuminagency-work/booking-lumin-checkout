@@ -23,7 +23,7 @@ import { createFakeStripe } from "./fakeStripe";
 import { createStripePaymentProvider } from "../src/stripePayment";
 import { createStripeConnectProvider, mapStripeAccountReason } from "../src/stripePaymentConnection";
 
-const SECRET = "sk_test_connect_adapter_only";
+const SECRET = "sk_test_connectadapteronly";
 /** The platform account this deployment is pinned to. The fake's key belongs to it. */
 const PLATFORM = "acct_platform000001";
 const URLS = {
@@ -32,10 +32,20 @@ const URLS = {
 };
 const TENANT = "11111111-1111-4111-8111-111111111111";
 
+/**
+ * The adapter with the TEST-mode label filled in, as the selector builds it. A test
+ * that names its own label exercises that label instead, because the spread comes last.
+ */
+function connectFor(
+  opts: Omit<Parameters<typeof createStripeConnectProvider>[0], "providerLabel"> & { providerLabel?: string },
+) {
+  return createStripeConnectProvider({ providerLabel: "stripe_connect_test", ...opts });
+}
+
 function harness() {
   const fake = createFakeStripe({ webhookSecret: "whsec_connect", platformAccountId: PLATFORM });
   const spy = vi.fn(fake.fetchImpl);
-  const connect = createStripeConnectProvider({
+  const connect = connectFor({
     secretKey: SECRET,
     platformAccountId: PLATFORM,
     apiBase: "https://api.stripe.test",
@@ -68,13 +78,18 @@ function healthOf(s: { chargesEnabled: boolean; payoutsEnabled: boolean; blocked
 }
 
 describe("the provider label is the one the handoff records, and it is configurable", () => {
-  it("defaults to stripe_connect, the label migration 0088 seeds everywhere", () => {
-    expect(harness().connect.providerName).toBe("stripe_connect");
+  it("has no default: a label is required, and the live label is refused for a test key", () => {
+    // @ts-expect-error -- the label is required; the runtime refusal is what this proves
+    expect(() => createStripeConnectProvider({ secretKey: SECRET, platformAccountId: PLATFORM })).toThrow(/providerLabel/);
+    expect(() =>
+      createStripeConnectProvider({ secretKey: SECRET, platformAccountId: PLATFORM, providerLabel: "stripe_connect" }),
+    ).toThrow(/_test/);
+    expect(harness().connect.providerName).toBe("stripe_connect_test");
   });
 
   it("writes the label it is given on every handoff and snapshot, so a test-mode connection says so", async () => {
     const fake = createFakeStripe({ webhookSecret: "whsec_connect", platformAccountId: PLATFORM });
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       providerLabel: "stripe_connect_test",
@@ -89,16 +104,16 @@ describe("the provider label is the one the handoff records, and it is configura
     expect((await connect.inspectConnection(handoff.handoffId)).provider).toBe("stripe_connect_test");
   });
 
-  it("refuses a label the allowlist could not hold, and a platform id that is not an account, at construction", () => {
+  it("refuses a label outside the adapter's own shape, and a platform id that is not an account, at construction", () => {
     for (const providerLabel of ["Stripe_Connect", "x", "stripe-connect", "stripe_connect;drop", "a".repeat(61)]) {
       expect(
-        () => createStripeConnectProvider({ secretKey: SECRET, platformAccountId: PLATFORM, providerLabel }),
+        () => connectFor({ secretKey: SECRET, platformAccountId: PLATFORM, providerLabel }),
         providerLabel,
       ).toThrow(/providerLabel/);
     }
     for (const platformAccountId of ["", "acct_short", "pk_test_nope0001", " acct_platform000001", "mch_platform0001"]) {
       expect(
-        () => createStripeConnectProvider({ secretKey: SECRET, platformAccountId }),
+        () => connectFor({ secretKey: SECRET, platformAccountId }),
         JSON.stringify(platformAccountId),
       ).toThrow(/platformAccountId/);
     }
@@ -116,7 +131,7 @@ describe("beginning a handoff creates an account that can do nothing", () => {
     expect(account.metadata.tenantId).toBe(TENANT);
     expect(account.charges_enabled).toBe(false);
 
-    expect(handoff.provider).toBe("stripe_connect");
+    expect(handoff.provider).toBe("stripe_connect_test");
     // The handoff id IS the account reference; the adapter keeps no state.
     expect(handoff.handoffId).toBe(account.id);
     expect(handoff.onboardingUrl).toMatch(/^https:\/\/connect\.stripe\.com\/setup\//);
@@ -125,8 +140,11 @@ describe("beginning a handoff creates an account that can do nothing", () => {
     const snapshot = await connect.resolveConnection(handoff.handoffId);
     expect(snapshot.chargesEnabled).toBe(false);
     expect(snapshot.onboardingComplete).toBe(false);
-    expect(snapshot.blockedReason).toBe("requirements_past_due");
-    expect(healthOf(snapshot)).toBe("blocked");
+    // Stripe marks a brand-new account's disabled_reason as requirements.past_due, and
+    // the fake does too. That is an owner who has not finished, NOT a past-due merchant:
+    // read as requirements_past_due, the derivation would record this unfinished account
+    // as CONNECTED. The reason is onboarding_incomplete, which becomes not_connected.
+    expect(snapshot.blockedReason).toBe("onboarding_incomplete");
   });
 
   it("is idempotent: the same key never creates a second merchant account", async () => {
@@ -164,7 +182,7 @@ describe("beginning a handoff creates an account that can do nothing", () => {
     // its own key, so the retry lands on the same account, and no second is made.
     const fake = createFakeStripe({ webhookSecret: "whsec_connect", platformAccountId: PLATFORM });
     let failNextLink = true;
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -418,7 +436,7 @@ describe("an inconclusive answer changes nothing", () => {
   });
 
   it("a transport failure is inconclusive, never credentials_invalid", async () => {
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -430,7 +448,7 @@ describe("an inconclusive answer changes nothing", () => {
   });
 
   it("a non-JSON body is inconclusive", async () => {
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -446,7 +464,7 @@ describe("an inconclusive answer changes nothing", () => {
     // account" and recorded as credentials_invalid, which the database derives
     // to 'revoked'. A misconfigured apiBase or any intermediary answering 404
     // therefore took merchants offline.
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -458,7 +476,7 @@ describe("an inconclusive answer changes nothing", () => {
   });
 
   it("a 403 without Stripe's own error shape is inconclusive too", async () => {
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -473,7 +491,7 @@ describe("an inconclusive answer changes nothing", () => {
     // Every boolean is read with === true, so an unexpected 200 body produced
     // all-false facts and quietly moved a live connection to not_connected.
     for (const body of [{}, { object: "account" }, { object: "account", id: "acct_someoneelse01" }, { object: "customer", id: "acct_test00000001" }]) {
-      const connect = createStripeConnectProvider({
+      const connect = connectFor({
         secretKey: SECRET,
         platformAccountId: PLATFORM,
         apiBase: "https://api.stripe.test",
@@ -494,19 +512,24 @@ describe("an inconclusive answer changes nothing", () => {
     ];
     for (const link of cases) {
       let calls = 0;
-      const connect = createStripeConnectProvider({
+      const connect = connectFor({
         secretKey: SECRET,
         platformAccountId: PLATFORM,
         apiBase: "https://api.stripe.test",
         fetchImpl: (async (input: any) => {
           calls += 1;
-          return String(input).endsWith("/v1/accounts")
+          const url = String(input);
+          // The pin is confirmed first, then the account is created, then the link is
+          // asked for. The refusal must come from the LINK, so the platform answers as
+          // the pinned platform here.
+          if (url.endsWith("/v1/account")) return platformAnswer();
+          return url.endsWith("/v1/accounts")
             ? new Response(JSON.stringify({ object: "account", id: "acct_test00000001" }), { status: 200 })
             : new Response(JSON.stringify({ object: "account_link", ...link }), { status: 200 });
         }) as unknown as typeof fetch,
       });
       await expect(begin(connect, "link-shape-key-01")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
-      expect(calls).toBe(2);
+      expect(calls).toBe(3);
     }
   });
 
@@ -527,7 +550,7 @@ describe("an inconclusive answer changes nothing", () => {
       [503, { error: { type: "api_error" } }],
     ];
     for (const [status, body] of cases) {
-      const connect = createStripeConnectProvider({
+      const connect = connectFor({
         secretKey: SECRET,
         platformAccountId: PLATFORM,
         apiBase: "https://api.stripe.test",
@@ -547,7 +570,7 @@ describe("an inconclusive answer changes nothing", () => {
       [403, "account_invalid"],
       [404, "account_invalid"],
     ] as Array<[number, string]>) {
-      const connect = createStripeConnectProvider({
+      const connect = connectFor({
         secretKey: SECRET,
         platformAccountId: PLATFORM,
         apiBase: "https://api.stripe.test",
@@ -583,10 +606,11 @@ describe("Stripe disowning the account is DATA, not an outage", () => {
     expect(healthOf(snapshot)).toBe("blocked");
   });
 
-  it("a disown is confirmed by the pinned platform first, and only then recorded", async () => {
-    // Proves the extra read is made, and made with the key the disown came back on.
+  it("a read confirms the pinned platform FIRST, and a disown is recorded from that read", async () => {
+    // The platform is confirmed before the merchant is asked about, with the same key,
+    // so a disowning is only ever the pinned platform's own word.
     const calls: string[] = [];
-    const connect = createStripeConnectProvider({
+    const connect = connectFor({
       secretKey: SECRET,
       platformAccountId: PLATFORM,
       apiBase: "https://api.stripe.test",
@@ -600,7 +624,7 @@ describe("Stripe disowning the account is DATA, not an outage", () => {
     });
     const snapshot = await connect.inspectConnection("acct_test00000001");
     expect(snapshot.blockedReason).toBe("credentials_invalid");
-    expect(calls.map((u) => new URL(u).pathname)).toEqual(["/v1/accounts/acct_test00000001", "/v1/account"]);
+    expect(calls.map((u) => new URL(u).pathname)).toEqual(["/v1/account", "/v1/accounts/acct_test00000001"]);
   });
 
   it("a disown the pinned platform cannot confirm is an outage, and records nothing", async () => {
@@ -613,7 +637,7 @@ describe("Stripe disowning the account is DATA, not an outage", () => {
       ["the platform check is down", () => stripeJson({ error: { type: "api_error" } }, 500)],
     ];
     for (const [why, answer] of platformAnswers) {
-      const connect = createStripeConnectProvider({
+      const connect = connectFor({
         secretKey: SECRET,
         platformAccountId: PLATFORM,
         apiBase: "https://api.stripe.test",
@@ -645,14 +669,11 @@ describe("Stripe disowning the account is DATA, not an outage", () => {
     expect(snapshot.blockedReason).toBe("credentials_invalid");
   });
 
-  // NOTE, after review: this assertion cannot fail. disownedSnapshot passes seven
-  // hard-coded literals through a .strict() schema whose fields are three
-  // booleans, an enum, a regex-constrained id, a literal provider and an ISO
-  // datetime -- no mutation of disownsAccount, disownedSnapshot or read can put
-  // Stripe's body text into any of them, and .strict() rejects an added field.
-  // I7 is held STRUCTURALLY by the schema, not by this check. It is kept as
-  // documentation of the intent, labelled so nobody counts it as evidence.
-  it("the disowned snapshot carries no provider prose (held by the schema, not by this assertion)", async () => {
+  // The disowned snapshot is built from literals and parsed by a .strict() schema, whose
+  // blockedReason is a closed vocabulary. A mutation that put Stripe's body text into the
+  // snapshot would make that parse THROW, and this test fails with it. So this assertion
+  // can fail; the schema is the second guard, against a field or a value it does not know.
+  it("the disowned snapshot carries no provider prose (a mutation that adds it fails the parse)", async () => {
     const { fake, connect } = harness();
     const handoff = await begin(connect);
     fake.disownAccount(handoff.handoffId);
