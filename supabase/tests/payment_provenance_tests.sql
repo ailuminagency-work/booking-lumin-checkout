@@ -51,12 +51,19 @@ reset role;
 -- the readiness guard would report a clean bill of health forever.
 -- The array below must be SIMULATED_PROVIDERS in that module, exactly: the same three
 -- labels, the two 0088 seeds and the 0094 test-mode label. A label missing here is one
--- whose visibility to the guard is never checked.
+-- whose visibility to the guard is never checked. The marked array below is read by
+-- apps/api/src/simulated-providers-sql.test.ts, which fails when it and that module disagree.
 set local role service_role;
 select pg_temp.assert(
   (select coalesce(string_agg(provider,',' order by provider),'')
      from public.confirmable_payment_providers
-    where provider = any(array['staging_mock','fixture','stripe_connect_test']::text[]))
+    where provider = any(array[
+-- SIMULATED_PROVIDERS-BEGIN
+ 'staging_mock',
+ 'fixture',
+ 'stripe_connect_test'
+-- SIMULATED_PROVIDERS-END
+]::text[]))
    = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect_test' else '' end),
  'service_role sees the simulated-provider rows the readiness guard asks about');
 reset role;
@@ -65,10 +72,11 @@ reset role;
 -- confirmable ONLY where the database name marks it disposable.
 select pg_temp.assert(exists(select 1 from public.confirmable_payment_providers where provider='stripe_connect'),'stripe_connect seeded everywhere');
 -- The WHOLE allowlist is pinned, not just one row, so a provider added to the
--- seed in either direction has to be declared here too. Two simulated labels
--- exist: 'staging_mock' (the app's mock-payment writers and most suites) and
--- 'fixture' (hand-seeded rows in the confirmation integration harnesses). The
--- test-mode Stripe label (0094) is confirmable on a disposable database only.
+-- seed in either direction has to be declared here too. Three simulated labels
+-- exist: 'staging_mock' (the app's mock-payment writers and most suites), 'fixture'
+-- (hand-seeded rows in the confirmation integration harnesses) and
+-- 'stripe_connect_test' (the test-mode Stripe label, 0094). All three are
+-- confirmable on a disposable database only.
 select pg_temp.assert(
   (select string_agg(provider,',' order by provider) from public.confirmable_payment_providers)
    = (case when current_database() ~ '^lumin_' then 'fixture,staging_mock,stripe_connect,stripe_connect_test' else 'stripe_connect' end),

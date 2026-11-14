@@ -37,7 +37,7 @@ describe('the provider is named explicitly, and unset means step 5', () => {
       ...STAGING,
       [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe-connect',
       [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
-      [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
+      [STRIPE_PLATFORM_ACCOUNT_ENV]: PINNED,
     })).toThrow(PaymentConnectionProviderConfigError);
   });
 });
@@ -49,8 +49,27 @@ describe('the test-mode provider is a staging capability, decided before any sec
         ...env,
         [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
         [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
-        [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
+        [STRIPE_PLATFORM_ACCOUNT_ENV]: PINNED,
       }), JSON.stringify(env)).toThrow(/outside a staging deployment/);
+    }
+  });
+
+  it('compares BOOKING_LUMIN_ENV exactly: a padded, re-cased or prefixed spelling of staging is refused', () => {
+    // Each of these would pass a trimmed, case-folded or prefix comparison, so each must be refused.
+    for (const name of [' staging', 'Staging', 'staging ', 'stagingx']) {
+      let refusal: unknown = null;
+      try {
+        selectPaymentConnectionProvider({
+          BOOKING_LUMIN_ENV: name,
+          [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
+          [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
+          [STRIPE_PLATFORM_ACCOUNT_ENV]: PINNED,
+        });
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal, JSON.stringify(name)).toBeInstanceOf(PaymentConnectionProviderConfigError);
+      expect((refusal as Error).message, JSON.stringify(name)).toMatch(/outside a staging deployment/);
     }
   });
 
@@ -65,7 +84,7 @@ describe('the test-mode provider is a staging capability, decided before any sec
 describe('stripe_connect needs a test-mode key and a pinned platform, and says so without echoing either', () => {
   // `null` means "not set". An `undefined` argument would take the default and
   // silently pin the platform, which is how this helper first hid a missing value.
-  const stripe = (key: string | undefined, platform: string | null = PLATFORM) => ({
+  const stripe = (key: string | undefined, platform: string | null = PINNED) => ({
     ...STAGING,
     [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
     ...(key === undefined ? {} : {[STRIPE_PLATFORM_KEY_ENV]: key}),
@@ -101,7 +120,17 @@ describe('stripe_connect needs a test-mode key and a pinned platform, and says s
           message = (error as Error).message;
         }
         expect(message.length, `refusal ${i}`).toBeGreaterThan(0);
-        expect(message, `refusal ${i}`).not.toContain(key.trim());
+        // Asserted as a boolean: a failing `not.toContain` would print the message, which is the leak under test.
+        const leaked = message.includes(key.trim());
+        expect(leaked, `refusal ${i} echoes its key`).toBe(false);
+        // A PARTIAL echo leaks too: the first and last four characters of the key body (after its prefix) must
+        // not appear. The prefix itself is not checked, because the fixed hint sk_test_... is allowed. Four
+        // characters is the smallest run a leak can be, and the fixture bodies do not occur in any message.
+        const body = key.trim().replace(/^[a-z]{2}_(live|test)_/, '');
+        for (const piece of [body.slice(0, 4), body.slice(-4)]) {
+          if (piece.length === 0) continue;
+          expect(message.includes(piece), `refusal ${i} echoes part of its key`).toBe(false);
+        }
       });
   });
 
@@ -129,8 +158,14 @@ describe('stripe_connect needs a test-mode key and a pinned platform, and says s
 });
 
 describe('the pinned platform from the environment is the one a disown is judged against', () => {
-  // The value from the environment must reach the adapter. PINNED is named nowhere else,
-  // so a selector that pinned a fixed or default id refuses the verdict below.
+  // Every platform the selector tests pin from the environment is PINNED, and PINNED must differ
+  // from PLATFORM, the fixture's default id. If they were equal, a selector that hard-coded the
+  // fixture default would pass every verdict below. PINNED is named nowhere in the code, so only a
+  // selector that reads STRIPE_PLATFORM_ACCOUNT_ID from the environment can pass.
+  it('the environment pin is not the fixture default, so a hard-coded default cannot pass the verdicts', () => {
+    expect(PINNED).not.toBe(PLATFORM);
+  });
+
   const selectWith = (fetchImpl: typeof fetch) =>
     selectPaymentConnectionProvider(
       {
@@ -183,7 +218,7 @@ describe('the environment cannot redirect the secret key', () => {
         ...STAGING,
         [PAYMENT_CONNECTION_PROVIDER_ENV]: 'stripe_connect',
         [STRIPE_PLATFORM_KEY_ENV]: TEST_KEY,
-        [STRIPE_PLATFORM_ACCOUNT_ENV]: PLATFORM,
+        [STRIPE_PLATFORM_ACCOUNT_ENV]: PINNED,
         STRIPE_API_BASE: 'https://attacker.example',
         STRIPE_API_BASE_URL: 'https://attacker.example',
       },

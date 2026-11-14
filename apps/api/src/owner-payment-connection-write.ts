@@ -152,6 +152,17 @@ export const OwnerConnectionResolveReceipt = z.object({
 }).strict();
 export type OwnerConnectionResolveReceipt = z.infer<typeof OwnerConnectionResolveReceipt>;
 
+// What record_payment_connection STORED for the connection, after its write (or, for a stale answer, what was
+// already stored). The receipt is built from these, never from the provider's snapshot.
+const StoredConnectionFacts = z.object({
+  status: PaymentConnectionStatus,
+  accountId: z.string(),
+  chargesEnabled: z.boolean(),
+  payoutsEnabled: z.boolean(),
+  onboardingComplete: z.boolean(),
+  blockedReason: PaymentConnectionReason.nullable(),
+});
+
 export type OwnerConnectionBeginWriter = (
   actor: string,
   tenant: string,
@@ -279,12 +290,33 @@ export function createOwnerConnectionBeginWriter(
     // deployment that will then refuse to record it: a test-mode account minted on
     // a production database. The same declaration, read here, refuses it first. The
     // RPC keeps its own check, so this is an early refusal, not the authority.
+    //
+    // A CONNECTED TENANT STARTS NO NEW HANDOFF. A new idempotency key makes the provider create a
+    // second account, and record_payment_connection then refuses to bind it. So for a new key the
+    // refusal is made here, before the provider is asked. A replay of a key the ledger already
+    // holds is not refused: it returns the same handoff and the same account, which is what a
+    // retried request needs. The database refuses a new key on a connected tenant as well, so a
+    // race between this read and the insert is still refused, after the provider has acted.
+    //
+    // An UNDECLARED label is UNSUPPORTED_CONFIG (422), as the resolve path reports it. It is a
+    // deployment fact the owner cannot change, so it is not a malformed request (400).
     await inAuthorizedTransaction(pool, actor, tenant, true, async (client) => {
       const declared = await client.query(
         'select provider from public.confirmable_payment_providers where provider = $1',
         [provider.providerName],
       );
-      if (declared.rows.length === 0) throw new FlowError('INVALID_REQUEST');
+      if (declared.rows.length === 0) throw new FlowError('UNSUPPORTED_CONFIG');
+      const replay = await client.query(
+        'select 1 from public.payment_connection_handoffs where tenant_id = $1 and provider = $2 and idempotency_key = $3',
+        [tenant, provider.providerName, parsed.data.idempotencyKey],
+      );
+      if (replay.rows.length === 0) {
+        const connection = await client.query(
+          'select status from public.payment_connections where tenant_id = $1 and provider = $2',
+          [tenant, provider.providerName],
+        );
+        if (connection.rows[0]?.status === 'connected') throw new FlowError('CONFLICT');
+      }
     });
 
     // Now the provider, because the handoff id comes from it. See the header
@@ -405,44 +437,36 @@ export function createOwnerConnectionResolveWriter(
           snapshot.blockedReason, snapshot.observedAt,
         ],
       );
-      return result.rows[0]?.receipt as {status?: unknown; replayed?: unknown; accountId?: unknown} | undefined;
+      return result.rows[0]?.receipt as Record<string, unknown> | undefined;
     });
 
-    const status = PaymentConnectionStatus.safeParse(recorded?.status);
-    if (!status.success) throw new FlowError('INTERNAL_ERROR');
+    // THE RECEIPT STATES WHAT THE DATABASE STORED. A stale answer changes nothing, so the stored
+    // facts are the truth this receipt reports; the provider's snapshot is never paired with a
+    // status it did not produce.
+    const stored = StoredConnectionFacts.safeParse(recorded);
+    if (!stored.success) throw new FlowError('INTERNAL_ERROR');
 
     const receipt = OwnerConnectionResolveReceipt.safeParse({
       schemaVersion: 1,
       tenantId: tenant,
       provider: provider.providerName,
-      accountId: snapshot.accountId,
-      status: status.data,
-      // The ONE authority. Derived from the status the DATABASE returned, not
-      // from anything this writer decided.
+      accountId: stored.data.accountId,
+      status: stored.data.status,
+      // The ONE authority, derived from the stored facts the DATABASE returned.
       health: derivePaymentConnectionHealth({
-        status: status.data,
-        chargesEnabled: snapshot.chargesEnabled,
-        payoutsEnabled: snapshot.payoutsEnabled,
-        blockedReason: snapshot.blockedReason,
+        status: stored.data.status,
+        chargesEnabled: stored.data.chargesEnabled,
+        payoutsEnabled: stored.data.payoutsEnabled,
+        blockedReason: stored.data.blockedReason,
       }),
-      chargesEnabled: snapshot.chargesEnabled,
-      payoutsEnabled: snapshot.payoutsEnabled,
-      onboardingComplete: snapshot.onboardingComplete,
-      blockedReason: snapshot.blockedReason,
-      // FROM THE HANDOFF, not from the RPC's own flag.
-      //
-      // record_payment_connection returns `row_before.account_id is not null` --
-      // a property of the CONNECTION, not of this handoff. On the reconnect path
-      // 0093 exists to allow (a provider disowned the old account, the owner
-      // completes a fresh handoff, a DIFFERENT account is bound) that flag is
-      // true, so the single most consequential event on this path -- the tenant's
-      // future charges moving to another merchant account -- would be published
-      // as "already recorded, nothing to see". A portal treating it as a no-op
-      // would silently swallow the change.
-      //
-      // THE DATABASE'S FLAG, read under the handoff's row lock by record_payment_connection.
-      // A flag read here, before the provider was asked, cannot see a concurrent resolve
-      // of the same handoff: both callers would report that they were first.
+      chargesEnabled: stored.data.chargesEnabled,
+      payoutsEnabled: stored.data.payoutsEnabled,
+      onboardingComplete: stored.data.onboardingComplete,
+      blockedReason: stored.data.blockedReason,
+      // THIS HANDOFF'S OWN FLAG, read by record_payment_connection under the handoff's row lock. It
+      // answers "was this handoff already recorded?", so a reconnect that binds a different account
+      // is reported as a change, not as a replay. (0093 returned the connection's account flag
+      // instead; that made the reconnect look like a replay and was repaired in 0095.)
       replayed: recorded?.replayed === true,
     });
     if (!receipt.success || receipt.data.tenantId !== tenant) throw new FlowError('INTERNAL_ERROR');

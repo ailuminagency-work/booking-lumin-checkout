@@ -18,6 +18,17 @@ const LEDGER_EXPIRY = '2026-11-09T12:00:00+00:00';
 /** The ledger's expiry plus the one-hour bind grace the database enforces (0095). */
 const BIND_DEADLINE = '2026-11-09T13:00:00+00:00';
 
+/**
+ * What record_payment_connection returns after 0095: the facts it STORED for the connection (or, for a stale
+ * answer, the facts already stored). The writer builds the resolve receipt from these, never from the snapshot.
+ */
+function stored(over: Record<string, unknown> = {}) {
+  return {
+    status: 'connected', accountId: 'acct_mock_abcdef123456', chargesEnabled: true, payoutsEnabled: true,
+    onboardingComplete: true, blockedReason: null, replayed: false, ...over,
+  };
+}
+
 function fakePool(opts: {
   beginReceipt?: (givenHandoffId: string) => unknown;
   ledgerRow?: unknown;
@@ -25,6 +36,10 @@ function fakePool(opts: {
   forbid?: boolean;
   /** This database does not declare the provider confirmable. */
   undeclared?: boolean;
+  /** The tenant's connection status for this provider, as the database holds it (absent = no row). */
+  connectionStatus?: string;
+  /** The ledger already holds this idempotency key for this tenant and provider. */
+  replayKnown?: boolean;
   /** Each statement, in the order the database receives it, tagged for the test. */
   timeline?: string[];
 } = {}) {
@@ -44,6 +59,13 @@ function fakePool(opts: {
         opts.timeline?.push('declared');
         return {rows: opts.undeclared ? [] : [{provider: 'staging_mock'}]};
       }
+      // The begin pre-check's two reads, named exactly as the writer issues them.
+      if (sql.includes('select 1 from public.payment_connection_handoffs')) {
+        return {rows: opts.replayKnown ? [{}] : []};
+      }
+      if (sql.includes('select status from public.payment_connections')) {
+        return {rows: opts.connectionStatus === undefined ? [] : [{status: opts.connectionStatus}]};
+      }
       if (sql.includes('begin_payment_connection')) {
         // Echo the handoff id it was given, as the real RPC does on a fresh
         // insert (it returns `existing.handoff_id`, which IS p_handoff_id).
@@ -59,7 +81,7 @@ function fakePool(opts: {
         return {rows: opts.ledgerRow === null ? [] : [opts.ledgerRow ?? {handoff_id: 'mch_from_the_ledger', provider: 'staging_mock'}]};
       }
       if (sql.includes('record_payment_connection')) {
-        return {rows: [{receipt: opts.recordReceipt ?? {status: 'connected', replayed: false}}]};
+        return {rows: [{receipt: opts.recordReceipt ?? stored()}]};
       }
       return {rows: []};
     },
@@ -318,12 +340,52 @@ it('resolve takes the status FROM THE DATABASE and derives health from it', asyn
     })),
     inspectConnection: vi.fn(),
   };
-  const {pool} = fakePool({recordReceipt: {status: 'connected', replayed: false}});
+  const {pool} = fakePool({recordReceipt: stored({payoutsEnabled: false, blockedReason: 'payouts_disabled'})});
   const out = await createOwnerConnectionResolveWriter(pool, provider as never)(ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});
   expect(out.status).toBe('connected');
   // Charging but stranded: the state a boolean would erase.
   expect(out.health).toBe('degraded');
   expect(out.chargesEnabled).toBe(true);
+});
+
+it('a stale answer is reported as the STORED facts, never as the facts it carried', async () => {
+  // The provider's answer is older than the one the database holds for this account. record_payment_connection
+  // changes nothing and returns what it stored. The receipt must say what is stored (charging, healthy), not
+  // what the stale answer said (charges disabled): pairing the stored status with the stale facts told the owner
+  // about a connection that is not the one the database holds.
+  const provider = {
+    providerName: 'staging_mock',
+    beginConnection: vi.fn(),
+    resolveConnection: vi.fn(async () => ({
+      provider: 'staging_mock', accountId: 'acct_mock_abcdef123456',
+      chargesEnabled: false, payoutsEnabled: false, onboardingComplete: true,
+      blockedReason: 'charges_disabled' as const, observedAt: '2026-11-09T09:00:00.000Z',
+    })),
+    inspectConnection: vi.fn(),
+  };
+  const {pool} = fakePool({recordReceipt: stored({replayed: true})});
+  const out = await createOwnerConnectionResolveWriter(pool, provider as never)(ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});
+  expect(out.chargesEnabled, 'the stored fact, not the stale answer').toBe(true);
+  expect(out.blockedReason).toBeNull();
+  expect(out.health).toBe('chargeable');
+  expect(out.replayed).toBe(true);
+});
+
+it('a receipt the database does not complete is an internal fault, never a guessed one', async () => {
+  // A record that returns only a status (no stored facts) is not a receipt this build can state.
+  const provider = {
+    providerName: 'staging_mock',
+    beginConnection: vi.fn(),
+    resolveConnection: vi.fn(async () => ({
+      provider: 'staging_mock', accountId: 'acct_mock_abcdef123456',
+      chargesEnabled: true, payoutsEnabled: true, onboardingComplete: true,
+      blockedReason: null, observedAt: '2026-11-09T10:00:00.000Z',
+    })),
+    inspectConnection: vi.fn(),
+  };
+  const {pool} = fakePool({recordReceipt: {status: 'connected', replayed: false}});
+  await expect(createOwnerConnectionResolveWriter(pool, provider as never)(
+    ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'})).rejects.toMatchObject({code: 'INTERNAL_ERROR'});
 });
 
 it('resolve refuses a status the database returns that this build does not know', async () => {
@@ -337,7 +399,7 @@ it('resolve refuses a status the database returns that this build does not know'
     })),
     inspectConnection: vi.fn(),
   };
-  const {pool} = fakePool({recordReceipt: {status: 'suspended', replayed: false}});
+  const {pool} = fakePool({recordReceipt: stored({status: 'suspended'})});
   await expect(createOwnerConnectionResolveWriter(pool, provider as never)(
     ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'})).rejects.toMatchObject({code: 'INTERNAL_ERROR'});
 });
@@ -407,9 +469,40 @@ it('refuses a provider this database does not declare, BEFORE the provider is as
   };
   const {pool, queries} = fakePool({undeclared: true});
   await expect(createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY}))
-    .rejects.toMatchObject({code: 'INVALID_REQUEST'});
+    .rejects.toMatchObject({code: 'UNSUPPORTED_CONFIG'});
   expect(spy.beginConnection).not.toHaveBeenCalled();
   expect(queries.some((q) => q.includes('begin_payment_connection'))).toBe(false);
+});
+
+it('a connected tenant starts no NEW handoff: refused before the provider is asked', async () => {
+  // A second account for a tenant that is already connected is a real account at the
+  // provider, which the ledger would then refuse to bind. Refused here, first.
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(), resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, queries} = fakePool({connectionStatus: 'connected'});
+  await expect(createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY}))
+    .rejects.toMatchObject({code: 'CONFLICT'});
+  expect(spy.beginConnection).not.toHaveBeenCalled();
+  expect(queries.some((q) => q.includes('begin_payment_connection'))).toBe(false);
+});
+
+it('a connected tenant still has an EXISTING key answered: a retry gets its handoff, not a refusal', async () => {
+  // A retried request must receive the handoff it already has. The provider replays its keyed
+  // account, so this is an answer, and no second account is created.
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(async () => ({
+      provider: 'stripe_connect_test', handoffId: 'acct_replayed0001',
+      onboardingUrl: 'https://connect.stripe.com/setup/replayed', expiresAt: '2035-01-01T00:05:00.000Z',
+    })),
+    resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool} = fakePool({connectionStatus: 'connected', replayKnown: true});
+  const receipt = await createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY});
+  expect(receipt.handoffId).toBe('acct_replayed0001');
+  expect(spy.beginConnection).toHaveBeenCalledTimes(1);
 });
 
 it('a declared provider is asked, and the DECLARATION is checked for the adapter\'s own label, before it is asked', async () => {
@@ -469,7 +562,7 @@ it('resolve takes replayed from the DATABASE, not from a ledger read taken befor
   // lock, is the one that knows which call was first.
   const concurrentLoser = fakePool({
     ledgerRow: {handoff_id: 'mch_from_the_ledger', provider: 'staging_mock', resolved_at: null},
-    recordReceipt: {status: 'connected', replayed: true},
+    recordReceipt: stored({replayed: true}),
   });
   const loser = await createOwnerConnectionResolveWriter(concurrentLoser.pool, resolveSpy('staging_mock') as never)(
     ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});
@@ -478,7 +571,7 @@ it('resolve takes replayed from the DATABASE, not from a ledger read taken befor
   // call was the first. The flag follows the database, whichever way the ledger reads.
   const firstCall = fakePool({
     ledgerRow: {handoff_id: 'mch_from_the_ledger', provider: 'staging_mock', resolved_at: new Date()},
-    recordReceipt: {status: 'connected', replayed: false},
+    recordReceipt: stored({replayed: false}),
   });
   const first = await createOwnerConnectionResolveWriter(firstCall.pool, resolveSpy('staging_mock') as never)(
     ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});

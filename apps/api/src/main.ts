@@ -172,7 +172,7 @@ function main(): void {
   // a database that would confirm simulated money serves nothing at all.
   const simulatedPaymentGuard = createSimulatedPaymentGuard(pool, process.env.BOOKING_LUMIN_ENV, {
     onUnsafe: (reason, providers) => {
-      console.error(JSON.stringify({event: 'payment_provenance_mismatch', reason, providers, environment: process.env.BOOKING_LUMIN_ENV ?? null}));
+      console.error(JSON.stringify({event: 'payment_provenance_mismatch', reason, providers, environment: process.env.BOOKING_LUMIN_ENV === 'staging' ? 'STAGING' : process.env.BOOKING_LUMIN_ENV === 'demo' ? 'DEMO' : process.env.BOOKING_LUMIN_ENV === undefined ? 'UNSET' : 'OTHER'}));
     },
   });
 
@@ -194,7 +194,6 @@ function main(): void {
     // that check is a shape check only, with no request to Stripe. Test connections are recorded as
     // `stripe_connect_test`. The mock's label `staging_mock` is seeded only where current_database() ~
     // '^lumin_' (0088), so on a production database a mock connection is physically unrecordable.
-    // is physically unrecordable either way.
     ...(paymentConnectionWriteEnabled(process.env)?(()=>{const connectionProvider=selectPaymentConnectionProvider(process.env);return{ownerConnectionBegin:createOwnerConnectionBeginWriter(pool,connectionProvider),ownerConnectionResolve:createOwnerConnectionResolveWriter(pool,connectionProvider)};})():{}),
     tenantProfile: createTenantProfileReader(pool),
     ...(businessOnboardingEnabled(process.env)?{businessOnboarding:true,businessCreate:createBusinessApi(pool).create,businessProfile:createBusinessApi(pool).read,businessProfileInitialize:createBusinessProfileInitializer(pool)}:{}),

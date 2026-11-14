@@ -63,12 +63,13 @@ export const PaymentConnectionCapability = z
     /** Whether the provider can be re-read for a fresh snapshot (health). */
     supportsAccountInspection: z.boolean(),
     /**
-     * Whether this provider represents simulated money. The registry below lists the
-     * capabilities this build's adapters carry, not every label that can be declared: the
-     * disposable-only labels of migrations 0088 and 0094 that name simulated money are
-     * SIMULATED_PROVIDERS in apps/api/src/simulated-payment-readiness.ts. The test-mode
-     * Stripe label (0094) is also listed there, as non-real money, but it has no entry in
-     * this registry: it is a Stripe connection in test mode, recorded under its own label.
+     * Whether this provider represents simulated money: no real money moves. The registry
+     * below lists the labels this build can CONSTRUCT and record under. Test-mode Stripe
+     * (stripe_connect_test) is listed as simulated, because test mode moves no real money.
+     * The live label stripe_connect is not listed: this build refuses to construct it (the
+     * adapter requires a `_test` label), so it is answered by isSimulatedConnectionProvider's
+     * default. The disposable-only labels of migrations 0088 and 0094 are SIMULATED_PROVIDERS in
+     * apps/api/src/simulated-payment-readiness.ts, which is the readiness guard's own list.
      */
     simulatedMoney: z.boolean(),
   })
@@ -76,7 +77,8 @@ export const PaymentConnectionCapability = z
 export type PaymentConnectionCapability = z.infer<typeof PaymentConnectionCapability>;
 
 /**
- * The registry -- plain data, two entries, no provider assumed.
+ * The registry -- plain data, two entries: the labels this build constructs. No provider
+ * assumed. The live Stripe label is absent on purpose (see the flag comment above).
  *
  * Deliberately NOT recorded here: dispute and chargeback liability. With direct
  * charges on a Standard account, disputes land on the connected account; that is
@@ -85,12 +87,12 @@ export type PaymentConnectionCapability = z.infer<typeof PaymentConnectionCapabi
  */
 export const paymentConnectionCapabilities: PaymentConnectionCapability[] = [
   {
-    provider: "stripe_connect",
+    provider: "stripe_connect_test",
     model: "direct_charges",
     perTenantSecretRequired: false,
     requiresOwnerHandoff: true,
     supportsAccountInspection: true,
-    simulatedMoney: false,
+    simulatedMoney: true,
   },
   {
     provider: "staging_mock",

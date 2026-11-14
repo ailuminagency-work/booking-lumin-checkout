@@ -33,9 +33,11 @@ import type {PaymentConnectionProvider} from '@lumin/contracts';
  * database only; a hosted database refuses it until a person bootstraps it.
  *
  * THE PLATFORM IS PINNED. `STRIPE_PLATFORM_ACCOUNT_ID` is the platform's own account
- * id, read once from GET /v1/account. Stripe answers 403 for EVERY account when the
- * key belongs to another platform, and only the pin tells that apart from a merchant
- * who has actually left (see the adapter's confirmPlatform).
+ * id, taken from the platform's Stripe Dashboard. It is NOT read from GET /v1/account
+ * with the key being checked: a key from another platform answers with its OWN id, so
+ * the pin would then accept the wrong key. Stripe answers 403 for EVERY account when the
+ * key belongs to another platform, and only the pin tells that apart from a merchant who
+ * has actually left (see the adapter's confirmPlatform).
  *
  * THE HOST IS NOT CONFIGURABLE FROM THE ENVIRONMENT. A variable that could redirect
  * the secret key would turn a configuration mistake into credential disclosure, so

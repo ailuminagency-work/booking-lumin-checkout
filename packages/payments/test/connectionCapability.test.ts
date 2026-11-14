@@ -91,12 +91,22 @@ describe("the connection registry", () => {
     expect(new Set(labels).size).toBe(labels.length);
   });
 
-  it("registers the real provider as direct charges, not simulated", () => {
-    const stripe = connectionCapabilityFor("stripe_connect");
+  it("registers the test-mode Stripe provider as direct charges, simulated (no real money)", () => {
+    const stripe = connectionCapabilityFor("stripe_connect_test");
     expect(stripe).toBeDefined();
     expect(stripe!.model).toBe("direct_charges");
-    expect(stripe!.simulatedMoney).toBe(false);
+    expect(stripe!.simulatedMoney).toBe(true);
     expect(stripe!.requiresOwnerHandoff).toBe(true);
+    // The adapter refuses to construct any Stripe label that is not a test label.
+    expect(stripe!.provider.endsWith("_test")).toBe(true);
+  });
+
+  it("does not register the live Stripe label, which this build cannot construct", () => {
+    expect(connectionCapabilityFor("stripe_connect")).toBeUndefined();
+  });
+
+  it("lists exactly the labels this build constructs", () => {
+    expect(paymentConnectionCapabilities.map((c) => c.provider).sort()).toEqual(["staging_mock", "stripe_connect_test"]);
   });
 
   it("registers the mock as simulated money", () => {
@@ -126,8 +136,12 @@ describe("isSimulatedConnectionProvider is default-closed", () => {
   });
 
   it("answers the registered providers from the registry", () => {
-    expect(isSimulatedConnectionProvider("stripe_connect")).toBe(false);
+    expect(isSimulatedConnectionProvider("stripe_connect_test")).toBe(true);
     expect(isSimulatedConnectionProvider("staging_mock")).toBe(true);
+  });
+
+  it("answers the live Stripe label simulated, because it is unregistered (the dangerous direction is 'real')", () => {
+    expect(isSimulatedConnectionProvider("stripe_connect")).toBe(true);
   });
 
   it("is case-sensitive: a near-miss label is not quietly accepted as real", () => {
@@ -172,34 +186,51 @@ describe("the two registries stay separate", () => {
   });
 });
 
-describe("the registry labels agree with migration 0088", () => {
-  // 0088 seeds public.confirmable_payment_providers, which is reused as the
-  // connect-time gate. A registry label the migration never seeds would be a
-  // provider this deployment can describe but can never record.
-  // Comment lines are stripped FIRST. 0088's own prose names both provider
-  // labels, so matching the raw file would pass on the comment and say nothing
-  // about what the migration actually seeds.
-  const sql = readFileSync(
-    new URL("../../../supabase/migrations/0088_payment_provider_provenance.sql", import.meta.url),
-    "utf8",
-  )
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
-    .join("\n");
+describe("the registry labels agree with the confirmable-allowlist migrations", () => {
+  // public.confirmable_payment_providers is the connect-time gate. A registry label that no
+  // migration seeds would be a provider this build can describe but can never record.
+  // Comment lines are stripped FIRST: the migrations' own prose names the provider labels,
+  // so matching the raw file would pass on a comment and say nothing about what is seeded.
+  const seedSource = (path: string) =>
+    readFileSync(new URL(path, import.meta.url), "utf8")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+  const sql0088 = seedSource("../../../supabase/migrations/0088_payment_provider_provenance.sql");
+  const sql0094 = seedSource("../../../supabase/migrations/0094_stripe_connect_test_label.sql");
 
   for (const cap of paymentConnectionCapabilities) {
-    it(`0088 seeds ${cap.provider}`, () => {
-      expect(sql).toContain(`'${cap.provider}'`);
+    it(`a confirmable-allowlist migration seeds ${cap.provider}`, () => {
+      expect(sql0088.includes(`'${cap.provider}'`) || sql0094.includes(`'${cap.provider}'`)).toBe(true);
     });
   }
 
   it("the real provider is seeded unconditionally and the mock only on a disposable database", () => {
-    const guard = sql.indexOf("current_database() ~ '^lumin_'");
+    const guard = sql0088.indexOf("current_database() ~ '^lumin_'");
     expect(guard).toBeGreaterThan(-1);
-    // stripe_connect is seeded BEFORE the disposable-only guard block.
-    expect(sql.indexOf("'stripe_connect'")).toBeLessThan(guard);
+    // The SEED ROW must exist: a row written as ('stripe_connect', ...). A mention alone is not a seed, and a
+    // check on the first mention passes once the row is deleted and only a comment-free mention is left.
+    const seedRow = sql0088.search(/\(\s*'stripe_connect'\s*,/);
+    expect(seedRow, "0088 seeds the real provider as a row").toBeGreaterThan(-1);
+    // ... and that row is BEFORE the disposable-only guard block.
+    expect(seedRow, "the real provider is seeded before the disposable-only guard").toBeLessThan(guard);
     // staging_mock only after it, so a hosted database cannot record a mock
     // connection unless someone deliberately bootstrapped the row.
-    expect(sql.indexOf("'staging_mock'")).toBeGreaterThan(guard);
+    expect(sql0088.indexOf("'staging_mock'")).toBeGreaterThan(guard);
+  });
+
+  it("the test-mode label is seeded only by 0094, and only on a disposable database", () => {
+    expect(sql0088.includes("'stripe_connect_test'")).toBe(false);
+    const guard = sql0094.indexOf("current_database() ~ '^lumin_'");
+    expect(guard).toBeGreaterThan(-1);
+    // Every seed row, not the first mention: each must sit inside the guard, and every mention of the label
+    // must be one of those rows. A second, unguarded seed would otherwise pass a check on the first occurrence.
+    const seedRows = [...sql0094.matchAll(/\(\s*'stripe_connect_test'\s*,/g)].map((match) => match.index ?? -1);
+    const mentions = sql0094.match(/'stripe_connect_test'/g) ?? [];
+    expect(seedRows.length, "0094 seeds the label").toBeGreaterThan(0);
+    expect(mentions.length, "every mention of the label is a seed row").toBe(seedRows.length);
+    for (const at of seedRows) {
+      expect(at, "a seed row sits inside the disposable-only guard").toBeGreaterThan(guard);
+    }
   });
 });

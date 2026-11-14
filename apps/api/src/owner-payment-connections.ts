@@ -165,6 +165,9 @@ export function createOwnerPaymentConnectionsReader(pool: Pool): OwnerPaymentCon
         // answer: guessing a verdict for an unknown state is how a blocked
         // connection would read as fine.
         if (!status.success || !reason.success) throw new FlowError('INTERNAL_ERROR');
+        // The verdict is AS OF lastObservedAt, not now. No caller in this build refreshes a stored row (no observer
+        // is wired), so the verdict can outlive the facts that made it. Nothing may gate a charge on it until an
+        // observer and an age check exist: that is a step-7 prerequisite, recorded in the decision record.
         return {
           provider: row.provider,
           status: status.data,

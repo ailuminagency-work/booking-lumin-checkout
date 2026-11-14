@@ -8,7 +8,7 @@ Owner: Security Governor. These override delivery speed. A violating merge is bl
 | SI-2 | Payment and booking state are server-authoritative. | State machines in contracts; DB transition trigger; clients only render state. |
 | SI-3 | One successful payment creates at most one booking. | Unique `payments(provider, provider_intent_id)`; unique `bookings.payment_id`; idempotent create keyed `(tenant_id, idempotency_key)`. |
 | SI-4 | Cross-tenant access fails at the database layer. | RLS deny-by-default on every tenant table; membership-checked policies; RLS attack tests in `supabase/tests/`. |
-| SI-5 | Provider credentials never reach the browser. | Credentials live server-side in `payment_connections.credentials_encrypted`; only `clientToken` (non-secret) is exposed. |
+| SI-5 | Provider credentials never reach the browser. | Credentials live server-side in `payment_connection_secrets.credentials_encrypted`, a table with no client grant and no policy; only `clientToken` (non-secret) is exposed. |
 | SI-6 | Unknown legacy credentials are contamination, not assets. | `CONTAMINATION_LEDGER.md`; migration denylist in `MIGRATION_LEDGER.md`. |
 | SI-7 | Availability is authoritative before payment commitment. | `AvailabilityEngine` fail-closed contract; booking engine re-verifies at `pending_payment`. |
 | SI-8 | Integration credentials belong to one explicit tenant context. | `*_connections` tables keyed by `tenant_id`; adapters receive `tenantId` on every call. |

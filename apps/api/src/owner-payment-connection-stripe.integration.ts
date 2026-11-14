@@ -76,9 +76,11 @@ async function rejects(fn: () => Promise<unknown>, code: string, label: string):
  * An in-process stand-in for the Stripe REST calls the adapter makes.
  *
  * It serves four routes: POST /v1/accounts, POST /v1/account_links, GET /v1/accounts/{id}
- * and GET /v1/account (the platform's own account, read to confirm a disown). Each has
- * Stripe's documented behaviour, including that an Idempotency-Key replays the object as
- * it was CREATED, not as it is now, and that a keyed 500 is saved and replayed. Anything
+ * and GET /v1/account (the platform's own account, read to confirm a disown). It models the
+ * behaviour the adapter DEPENDS ON, which is an assumption about Stripe and is UNVERIFIED
+ * against live Stripe: an Idempotency-Key replays the object as it was CREATED, not as it is
+ * now, and a keyed 500 is saved and replayed. It does not honour a Stripe-Account header on
+ * GET /v1/account, because the adapter never sends one there (the unit fake does). Anything
  * else is recorded as unexpected and answered with a 500, so a request the flow did not
  * need fails the harness rather than being quietly served.
  */
@@ -302,7 +304,9 @@ try {
   assert.equal(replayed.charges_enabled, false, 'the replay shows the account as it was created, not as it is now');
 
   // ---- a 500 from Stripe is an outage, and changes nothing recorded --------
-  stripe.armServerError(1);
+  // Pathed to the MERCHANT read. Unpathed, the next request is the platform check, which the
+  // adapter makes first, and the test would never reach the merchant read it is named for.
+  stripe.armServerError(1, `/v1/accounts/${begun.handoffId}`);
   await rejects(() => resolve(owner, tenant, {handoffId: begun.handoffId}), 'PROVIDER_UNAVAILABLE',
     'a 500 from Stripe is an outage, not a verdict');
   const afterOutage = only(await read(owner, tenant));
@@ -340,11 +344,6 @@ try {
     'a 403 from a foreign key is an outage, not a verdict on the merchant');
   assert.equal(only(await read(owner, tenant)).status, 'connected',
     'nothing was recorded from the foreign key: the merchant is still connected');
-  // A foreign key is refused at BEGIN too, before any merchant account is created under it.
-  const accountsBeforeForeignBegin = stripe.accounts().length;
-  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-foreign-begin-1'}), 'PROVIDER_UNAVAILABLE',
-    'a foreign key is refused before a merchant account is created');
-  assert.equal(stripe.accounts().length, accountsBeforeForeignBegin, 'no merchant account was created under a foreign key');
   stripe.setPlatformAccount(PLATFORM);
 
   // ---- Stripe disowns the merchant: revoked, and the owner can reconnect ----
@@ -362,13 +361,36 @@ try {
   assert.equal(rebound.replayed, false, 'a brand-new handoff binding a different account is not a replay');
   assert.equal(only(await read(owner, tenant)).accountId, reconnect.handoffId, 'the account moved, and the reader says so');
 
+  // ---- the link-leg and account-create failures need a business that is NOT connected yet ----
+  // The business above is connected, and a connected business is refused a NEW handoff before
+  // Stripe is asked. So these cases run on a third business, with its own owner (0092).
+  const fifth = id(5), failTenant = id(13);
+  await pool.query("insert into auth.users(id,email) values ($1,'stripe-5@example.test')", [fifth]);
+  await pool.query(
+    "insert into public.tenants(id,name,slug,timezone,currency) values($1,'Stripe Co Three','stripe-connect-failures','UTC','USD')",
+    [failTenant],
+  );
+  await pool.query(
+    "insert into public.tenant_members(tenant_id,user_id,role) values($1,$2,'BUSINESS_OWNER')",
+    [failTenant, fifth],
+  );
+
+  // A foreign key is refused at BEGIN too, before any merchant account is created under it.
+  stripe.setPlatformAccount('acct_foreignplat01');
+  const accountsBeforeForeignBegin = stripe.accounts().length;
+  await rejects(() => begin(fifth, failTenant, {...URLS, idempotencyKey: 'stripe-foreign-begin-1'}), 'PROVIDER_UNAVAILABLE',
+    'a foreign key is refused before a merchant account is created');
+  assert.equal(stripe.accounts().length, accountsBeforeForeignBegin, 'no merchant account was created under a foreign key');
+  stripe.setPlatformAccount(PLATFORM);
+
   // ---- a 500 on the onboarding link: nothing is recorded, and the retry works ----
   // The account is minted before the link is asked for, so a failed link leaves an
   // account behind. The retry with the SAME key must land on that account, not mint a
   // second one, and must be sent a working link.
+  const accountsAtLinkStart = stripe.accounts().length;
   stripe.armServerError(1, '/v1/account_links');
   const linkKey = 'stripe-linkfail-0001';
-  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: linkKey}), 'PROVIDER_UNAVAILABLE',
+  await rejects(() => begin(fifth, failTenant, {...URLS, idempotencyKey: linkKey}), 'PROVIDER_UNAVAILABLE',
     'a 500 on the onboarding link is an outage, not a handoff');
   const minted = stripe.accounts().at(-1)!;
   assert.equal(
@@ -376,23 +398,24 @@ try {
     0,
     'nothing was ledgered for the failed attempt',
   );
-  const retried = await begin(owner, tenant, {...URLS, idempotencyKey: linkKey});
+  const retried = await begin(fifth, failTenant, {...URLS, idempotencyKey: linkKey});
   assert.equal(retried.handoffId, minted.id, 'the retry lands on the account the failed attempt minted');
   assert.match(retried.onboardingUrl, /^https:\/\/connect\.stripe\.com\//, 'the retry is sent a working link');
-  assert.equal(stripe.accounts().length, 3, 'the retry made no second merchant account');
+  assert.equal(stripe.accounts().length, accountsAtLinkStart + 1, 'the retry made no second merchant account');
 
   // ---- a keyed 500 on the account create is kept, as Stripe keeps it ----------
   // The retry with the SAME key gets the same 500, so only a NEW key starts a new attempt.
+  const accountsAtOutageStart = stripe.accounts().length;
   stripe.armServerError(1, '/v1/accounts');
   const outageKey = 'stripe-acctfail-0001';
-  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
+  await rejects(() => begin(fifth, failTenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
     'a 500 on the account create is an outage');
-  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
+  await rejects(() => begin(fifth, failTenant, {...URLS, idempotencyKey: outageKey}), 'PROVIDER_UNAVAILABLE',
     'the same key replays the keyed 500');
-  assert.equal(stripe.accounts().length, 3, 'the keyed 500 created no merchant account');
-  const fresh = await begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-acctfail-0002'});
+  assert.equal(stripe.accounts().length, accountsAtOutageStart, 'the keyed 500 created no merchant account');
+  const fresh = await begin(fifth, failTenant, {...URLS, idempotencyKey: 'stripe-acctfail-0002'});
   assert.match(fresh.handoffId, /^acct_standin\d{12}$/, 'a new key is a new attempt');
-  assert.equal(stripe.accounts().length, 4, 'a new key creates the one account it needs');
+  assert.equal(stripe.accounts().length, accountsAtOutageStart + 1, 'a new key creates the one account it needs');
 
   // ---- a database that does not declare the test label refuses it BEFORE Stripe ----
   // This is a production database. The label is seeded only where the name is lumin_*,
@@ -401,7 +424,7 @@ try {
   // on a database that will not record it.
   await pool.query("delete from public.confirmable_payment_providers where provider = $1", [STRIPE_TEST_PROVIDER_LABEL]);
   const beforeUndeclared = stripe.requests.length;
-  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-undeclared-0001'}), 'INVALID_REQUEST',
+  await rejects(() => begin(owner, tenant, {...URLS, idempotencyKey: 'stripe-undeclared-0001'}), 'UNSUPPORTED_CONFIG',
     'an undeclared test label is refused');
   assert.equal(stripe.requests.length, beforeUndeclared, 'the undeclared label was refused before Stripe was asked anything');
   // The same for a RESOLVE: a handoff begun while the label was declared is not read back

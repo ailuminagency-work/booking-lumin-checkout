@@ -134,6 +134,12 @@ describe("the platform is confirmed before every operation, not only before a di
       expect(ALLOWED.some(([m, p]) => r.method === m && p.test(r.path)), URL_KEY(r)).toBe(true);
       expect(r.stripeAccount, `${URL_KEY(r)} carries a Stripe-Account header`).toBeNull();
     }
+    // Over every request served, the platform's own calls included: none carries the header. The
+    // stand-in answers GET /v1/account for a connected account when that header is present. The
+    // adapter never sends it, so this flow never reaches that answer.
+    expect(fake.stripeAccountHeaders(), "no request in the flow may carry a Stripe-Account header").toEqual(
+      seen.map(() => null),
+    );
   });
 });
 

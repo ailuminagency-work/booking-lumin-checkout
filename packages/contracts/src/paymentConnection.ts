@@ -59,7 +59,9 @@ export type PaymentConnectionStatus = z.infer<typeof PaymentConnectionStatus>;
  *
  *  - onboarding_incomplete: the owner has not finished the provider's handoff.
  *      Legitimate ALONGSIDE charges_enabled: more information is due later.
- *  - charges_disabled:      the provider says this account may not charge.
+ *  - charges_disabled:      the provider says this account may not charge, or restricts it while it still
+ *                           charges. The charges flag says which; the closed vocabulary has no 'restricted'
+ *                           reason yet, and adding one is a reviewed decision.
  *  - payouts_disabled:      it may charge, but the money will strand. Charging
  *      into an account that cannot pay out is worse than not charging, yet it
  *      is NOT a hard block -- see derivePaymentConnectionHealth.
@@ -146,7 +148,11 @@ export const PaymentConnectionSnapshot = z
     payoutsEnabled: z.boolean(),
     onboardingComplete: z.boolean(),
     blockedReason: PaymentConnectionReason.nullable(),
-    /** When the provider was asked, ISO-8601. Not when the row was written. */
+    /**
+     * When the provider ANSWERED, ISO-8601. The adapter stamps the arrival of the answer, after its request
+     * returns, not the moment the request was sent. Not when the row was written. The database orders
+     * observations by this instant, so a reader that compares two of them compares arrivals.
+     */
     observedAt: z.string().datetime(),
   })
   .strict()
@@ -172,7 +178,9 @@ export interface PaymentConnectionFacts {
  * payoutsEnabled x reason combination. Pure: no clock, no IO, no throw.
  *
  * Order matters and is asserted by paymentConnection.test.ts:
- *  1. `not_connected` is exactly the absence of a connection, nothing else.
+ *  1. The verdict is `not_connected` exactly when the STATUS is `not_connected`. A
+ *     `not_connected` row can still hold a bound account whose onboarding never finished:
+ *     the verdict says nothing is connected yet, not that no row exists.
  *  2. `error` and `revoked` are blocked REGARDLESS of the flags, because the
  *     flags on such a row are stale by definition -- a revoked connection that
  *     still carries chargesEnabled must never read as chargeable.

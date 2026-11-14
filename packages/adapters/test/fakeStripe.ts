@@ -21,10 +21,12 @@
  * with no header belongs to the platform account, and a request carrying a
  * header only ever sees that account's own objects.
  *
- * Idempotency semantics MATCH Stripe: a create with a previously-seen
- * `Idempotency-Key` returns the ORIGINAL intent verbatim (never a second
- * charge), even if the retried request body differs (the altered amount is
- * ignored — this is the key defense tested by threat item 23).
+ * Idempotency: a create with a previously-seen `Idempotency-Key` gets a COPY of
+ * the response stored at creation, never a second charge, and a later drive or
+ * cancel does not change what a replay says. A PaymentIntent replay IGNORES a
+ * changed body on purpose (threat item 23 depends on it). Real Stripe does not do
+ * that: it answers a changed body with 400 idempotency_error, and the Connect
+ * creations below answer that way.
  *
  * Signed webhook payloads use the SAME real scheme as the adapter, produced via
  * `signStripeTestWebhook` in the test files (identical HMAC), so no signing
@@ -76,6 +78,25 @@ interface StoredRefund {
   payment_intent: string;
 }
 
+/** Which requests an armed outage applies to. An omitted field matches any value. */
+export interface OutageScope {
+  method?: "GET" | "POST";
+  path?: string;
+}
+
+interface ArmedOutage {
+  remaining: number;
+  scope: OutageScope | null;
+}
+
+/** Does an armed outage apply to this request? An unscoped one applies to every request. */
+function armedFor(slot: ArmedOutage, method: string, path: string): boolean {
+  if (slot.remaining <= 0) return false;
+  const scope = slot.scope;
+  if (scope === null) return true;
+  return (scope.method === undefined || scope.method === method) && (scope.path === undefined || scope.path === path);
+}
+
 export interface FakeStripe {
   /** Pass this to `createStripePaymentProvider({ fetchImpl })`. */
   readonly fetchImpl: typeof fetch;
@@ -109,10 +130,16 @@ export interface FakeStripe {
    * this system writing. How a restricted or payout-blocked merchant is staged.
    */
   driveAccount(accountId: string, facts: Partial<Omit<StoredAccount, "id" | "object" | "type">>): StoredAccount;
-  /** Make the next N responses a 500, to prove an outage changes nothing. */
-  armServerError(times?: number): void;
-  /** Make the next N responses a 429, which is equally inconclusive. */
-  armRateLimit(times?: number): void;
+  /**
+   * Make the next N matching responses a 500, to prove an outage changes nothing. A
+   * `scope` limits it to requests with that method and/or path (one merchant read, say).
+   * Requests outside the scope pass through and do not use the outage up.
+   */
+  armServerError(times?: number, scope?: OutageScope): void;
+  /** Make the next N matching responses a 429, which is equally inconclusive. Scoped as armServerError. */
+  armRateLimit(times?: number, scope?: OutageScope): void;
+  /** How many armed outages have answered so far. */
+  outagesServed(): number;
   /** Make this account answer 403 account_invalid, the way a revoked one does. */
   disownAccount(accountId: string): void;
   /**
@@ -152,7 +179,9 @@ function stripeError(message: string, status = 400): Response {
 
 export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
   const intents = new Map<string, StoredIntent>();
-  const byIdempotencyKey = new Map<string, string>(); // key → intentId
+  // key → the intent AS IT WAS CREATED, a copy. A replay answers this, never the live object,
+  // which drive() and cancel() keep changing.
+  const byIdempotencyKey = new Map<string, StoredIntent>();
   const refundsByIntent = new Map<string, StoredRefund[]>();
   const nowSeconds = opts.nowSeconds ?? 1_760_000_000;
   const accounts = new Map<string, StoredAccount>();
@@ -164,15 +193,17 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
   const seenAccountHeaders: (string | null)[] = [];
   const requestLog: Array<{ method: string; path: string; stripeAccount: string | null; idempotencyKey: string | null }> = [];
   // Connect responses to keyed requests, as Stripe keeps them: the first answer for a
-  // key, a keyed 500 included, is the answer every later request with that key gets.
-  const connectReplies = new Map<string, { status: number; body: unknown }>();
+  // key, a keyed 500 included, is the answer every later request with that key gets. A
+  // later request with the same key and DIFFERENT parameters is refused, as Stripe refuses it.
+  const connectReplies = new Map<string, { status: number; body: unknown; fingerprint: string }>();
   let intentCounter = 0;
   let refundCounter = 0;
   let accountCounter = 0;
   let linkCounter = 0;
   let createCallCount = 0;
-  let armedServerErrors = 0;
-  let armedRateLimits = 0;
+  let armedServerErrors: ArmedOutage = { remaining: 0, scope: null };
+  let armedRateLimits: ArmedOutage = { remaining: 0, scope: null };
+  let outagesServedCount = 0;
 
   function headerValue(init: RequestInit | undefined, name: string): string | null {
     const h = init?.headers;
@@ -205,23 +236,38 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
     const connectKeyed =
       method === "POST" && (path === "/v1/accounts" || path === "/v1/account_links") && idempotencyKey !== null;
     const replyScope = `${path}\n${idempotencyKey ?? ""}`;
+    // The request's parameters, canonically ordered: a keyed replay must carry the same ones.
+    const fingerprint = [...params.entries()].map(([k, v]) => `${k}=${v}`).sort().join("&");
     if (connectKeyed && connectReplies.has(replyScope)) {
-      // Stripe replays the ORIGINAL response verbatim, whatever the account has become since.
       const seen = connectReplies.get(replyScope)!;
+      if (seen.fingerprint !== fingerprint) {
+        return json(
+          {
+            error: {
+              type: "idempotency_error",
+              message: "Keys for idempotent requests can only be used with the same parameters they were first used with.",
+            },
+          },
+          400,
+        );
+      }
+      // Stripe replays the ORIGINAL response verbatim, whatever the account has become since.
       return json(structuredClone(seen.body), seen.status);
     }
 
     // Armed outages come first: an inconclusive answer must be indistinguishable
     // from a real one at the transport level. A keyed 500 is kept, as Stripe keeps
     // it, so the retry with the same key gets the same 500.
-    if (armedServerErrors > 0) {
-      armedServerErrors -= 1;
+    if (armedFor(armedServerErrors, method, path)) {
+      armedServerErrors.remaining -= 1;
+      outagesServedCount += 1;
       const outage = { error: { type: "api_error", message: "stripe is having a bad day" } };
-      if (connectKeyed) connectReplies.set(replyScope, { status: 500, body: structuredClone(outage) });
+      if (connectKeyed) connectReplies.set(replyScope, { status: 500, body: structuredClone(outage), fingerprint });
       return json(outage, 500);
     }
-    if (armedRateLimits > 0) {
-      armedRateLimits -= 1;
+    if (armedFor(armedRateLimits, method, path)) {
+      armedRateLimits.remaining -= 1;
+      outagesServedCount += 1;
       return json({ error: { type: "rate_limit_error", code: "rate_limit", message: "Too many requests" } }, 429);
     }
 
@@ -252,7 +298,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         requirements: { disabled_reason: "requirements.past_due", currently_due: ["external_account"], past_due: [] },
       };
       accounts.set(id, account);
-      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(account) });
+      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(account), fingerprint });
       return json(account);
     }
 
@@ -312,7 +358,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         expires_at: nowSeconds + 300,
         url: `https://connect.stripe.com/setup/s/fake${linkCounter}`,
       };
-      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(link) });
+      if (connectKeyed) connectReplies.set(replyScope, { status: 200, body: structuredClone(link), fingerprint });
       return json(link);
     }
 
@@ -321,11 +367,10 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
       createCallCount += 1;
       const idemKey = headerValue(init, "Idempotency-Key");
 
-      // Idempotency: replay the ORIGINAL intent for a seen key (Stripe-native).
-      // The current body (possibly tampered) is intentionally ignored.
+      // Idempotency: replay the intent AS IT WAS CREATED, for a seen key (Stripe-native).
+      // The current body (possibly tampered) is intentionally ignored: threat item 23 relies on it.
       if (idemKey && byIdempotencyKey.has(idemKey)) {
-        const existing = intents.get(byIdempotencyKey.get(idemKey)!)!;
-        return json(existing);
+        return json(structuredClone(byIdempotencyKey.get(idemKey)!));
       }
 
       const amount = Number(params.get("amount"));
@@ -357,7 +402,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         refunded: 0,
       };
       intents.set(id, intent);
-      if (idemKey) byIdempotencyKey.set(idemKey, id);
+      if (idemKey) byIdempotencyKey.set(idemKey, structuredClone(intent));
       return json(intent);
     }
 
@@ -470,11 +515,14 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
       if (facts.requirements) account.requirements = { ...account.requirements, ...facts.requirements };
       return account;
     },
-    armServerError(times = 1) {
-      armedServerErrors = times;
+    armServerError(times = 1, scope) {
+      armedServerErrors = { remaining: times, scope: scope ?? null };
     },
-    armRateLimit(times = 1) {
-      armedRateLimits = times;
+    armRateLimit(times = 1, scope) {
+      armedRateLimits = { remaining: times, scope: scope ?? null };
+    },
+    outagesServed() {
+      return outagesServedCount;
     },
     disownAccount(accountId) {
       disowned.add(accountId);
