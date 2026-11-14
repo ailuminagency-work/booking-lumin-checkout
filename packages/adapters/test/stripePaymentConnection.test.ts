@@ -140,10 +140,11 @@ describe("beginning a handoff creates an account that can do nothing", () => {
     const snapshot = await connect.resolveConnection(handoff.handoffId);
     expect(snapshot.chargesEnabled).toBe(false);
     expect(snapshot.onboardingComplete).toBe(false);
-    // Stripe marks a brand-new account's disabled_reason as requirements.past_due, and
-    // the fake does too. That is an owner who has not finished, NOT a past-due merchant:
-    // read as requirements_past_due, the derivation would record this unfinished account
-    // as CONNECTED. The reason is onboarding_incomplete, which becomes not_connected.
+    // The stand-in gives a brand-new account requirements.past_due as its disabled_reason,
+    // and an unfinished account can carry that in practice. It is an owner who has not
+    // finished, NOT a past-due merchant: read as requirements_past_due, the derivation would
+    // record this unfinished account as CONNECTED. The reason is onboarding_incomplete, which
+    // becomes not_connected.
     expect(snapshot.blockedReason).toBe("onboarding_incomplete");
   });
 

@@ -294,21 +294,21 @@ row says which mode produced it. The live label `stripe_connect` is unchanged.
   a path-scoped outage. The link is asserted to carry no key. A test-label refusal is
   asserted to make zero requests.
 
-**Repair round.** A second review of the same change (`cada81c..99fc081`) was run by six
-lens reviewers, and each of their findings was re-derived by two fresh agents: one trying
+**Repair round.** A second review, of the first round's fixes (`cada81c..99fc081`), was run
+by six lens reviewers, and each of their findings was re-derived by two fresh agents: one trying
 to refute it from the code, one trying to reproduce it. The defects they confirmed are
 fixed on this branch. Each fix has a check that fails when the fix is reverted, except the
 handoff lock: its race is covered by a concurrent integration case that passes on a correct
 implementation, but a revert only makes that case likelier to fail, not certain to.
 
-- **A foreign platform's key created merchant accounts (P2).** Begin asked the platform
-  only after Stripe had disowned a merchant, so `POST /v1/accounts` ran under whichever
-  platform the key belonged to. Begin now confirms the pin before it creates anything, and
-  every read and every fresh link confirms it first too.
-- **An unfinished owner was recorded as connected (P2).** Stripe lists a brand-new
-  account's `disabled_reason` as `requirements.past_due`. The adapter read that as a past-due
-  merchant, and the derivation records any reason other than `onboarding_incomplete` as
-  connected. The adapter now checks onboarding first.
+- **A foreign platform's key created merchant accounts (P2).** Begin never asked the
+  platform. The pin was checked only after Stripe disowned a merchant, so `POST /v1/accounts`
+  ran under whichever platform the key belonged to. Begin now confirms the pin before it
+  creates anything, and every read and every fresh link confirms it first too.
+- **An unfinished owner was recorded as connected (P2).** An account whose owner never
+  finished can carry a past-due requirement. The adapter read that as a past-due merchant,
+  and the derivation records any reason other than `onboarding_incomplete` as connected.
+  The adapter now checks onboarding first.
 - **A merchant could not be refreshed or revoked after the bind window (P2).** Migration
   0095 applies the one-hour window to a NEW bind only. A record for the account the
   connection already holds is a refresh, and a provider that has since disowned it is
