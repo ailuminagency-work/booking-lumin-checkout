@@ -34,13 +34,14 @@ import type {Pool, PoolClient} from 'pg';
 
 /**
  * Providers that represent simulated, non-real money. Must stay in step with the
- * disposable-only seed block in migration 0088: every provider that migration
- * will declare confirmable on a `lumin_*` database belongs here, so a database
+ * disposable-only seed blocks in migrations 0088 and 0094: every provider those
+ * migrations declare confirmable on a `lumin_*` database belongs here, so a database
  * willing to confirm any of them is a database this service refuses to serve
  * outside staging. 'staging_mock' is what the app's own mock-payment writers
- * record; 'fixture' is what the integration harnesses hand-seed.
+ * record; 'fixture' is what the integration harnesses hand-seed; 'stripe_connect_test'
+ * is a test-mode Stripe connection (0094), which is non-real money too.
  */
-export const SIMULATED_PROVIDERS = Object.freeze(['staging_mock', 'fixture'] as const);
+export const SIMULATED_PROVIDERS = Object.freeze(['staging_mock', 'fixture', 'stripe_connect_test'] as const);
 
 export type SimulatedPaymentVerdict =
   | {status: 'safe'}

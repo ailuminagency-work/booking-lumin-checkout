@@ -15,22 +15,34 @@ const URLS = {returnUrl: 'https://portal.example.test/r', refreshUrl: 'https://p
 const KEY = 'begin-attempt-000001';
 
 const LEDGER_EXPIRY = '2026-11-09T12:00:00+00:00';
+/** The ledger's expiry plus the one-hour bind grace the database enforces (0095). */
+const BIND_DEADLINE = '2026-11-09T13:00:00+00:00';
 
 function fakePool(opts: {
   beginReceipt?: (givenHandoffId: string) => unknown;
   ledgerRow?: unknown;
   recordReceipt?: unknown;
   forbid?: boolean;
+  /** This database does not declare the provider confirmable. */
+  undeclared?: boolean;
+  /** Each statement, in the order the database receives it, tagged for the test. */
+  timeline?: string[];
 } = {}) {
   const queries: string[] = [];
   const params: unknown[][] = [];
+  const calls: Array<{sql: string; values?: unknown[]}> = [];
   const client = {
     async query(sql: string, values?: unknown[]) {
       queries.push(sql);
       if (values) params.push(values);
+      calls.push({sql, values});
       if (sql.includes('flow_actor')) {
         if (opts.forbid) throw Object.assign(new Error('forbidden'), {code: '42501'});
         return {rows: [{}]};
+      }
+      if (sql.includes('confirmable_payment_providers')) {
+        opts.timeline?.push('declared');
+        return {rows: opts.undeclared ? [] : [{provider: 'staging_mock'}]};
       }
       if (sql.includes('begin_payment_connection')) {
         // Echo the handoff id it was given, as the real RPC does on a fresh
@@ -40,7 +52,7 @@ function fakePool(opts: {
         const given = String(values?.[4] ?? '');
         // The ledger's own expiry, in the shape jsonb gives it (+00:00, not Z),
         // and deliberately NOT the one the adapter just returned.
-        const base = {handoffId: given, replayed: false, expiresAt: LEDGER_EXPIRY};
+        const base = {handoffId: given, replayed: false, expiresAt: LEDGER_EXPIRY, bindDeadline: BIND_DEADLINE};
         return {rows: [{receipt: opts.beginReceipt ? opts.beginReceipt(given) : base}]};
       }
       if (sql.includes('payment_connection_handoffs')) {
@@ -53,7 +65,7 @@ function fakePool(opts: {
     },
     release() {},
   };
-  return {pool: {async connect() {return client;}} as unknown as Pool, queries, params};
+  return {pool: {async connect() {return client;}} as unknown as Pool, queries, params, calls};
 }
 
 it('begin calls the provider, then ledgers it, and returns the LEDGER\'s handoff id', async () => {
@@ -85,7 +97,7 @@ it('begin surfaces the ledger\'s replay rather than inventing one', async () => 
   // A second submit of the same key. An idempotent adapter hands back the same
   // handoff, so the ledger's id and the adapter's agree and the only difference
   // is the flag.
-  const {pool, params} = fakePool({beginReceipt: (given) => ({handoffId: given, replayed: true, expiresAt: LEDGER_EXPIRY})});
+  const {pool, params} = fakePool({beginReceipt: (given) => ({handoffId: given, replayed: true, expiresAt: LEDGER_EXPIRY, bindDeadline: BIND_DEADLINE})});
   const out = await createOwnerConnectionBeginWriter(pool, createMockPaymentConnectionProvider())(
     ACTOR, TENANT, {...URLS, idempotencyKey: KEY});
   expect(out.replayed).toBe(true);
@@ -98,25 +110,30 @@ it('begin refuses when the ledger\'s handoff is not the one the URL opens', asyn
   // Returning that pair would send the owner to finish account A while resolve
   // reads account B -- onboarding appears to work and checkout stays off. The
   // writer must refuse rather than hand back a receipt that cannot be completed.
-  const {pool} = fakePool({beginReceipt: () => ({handoffId: 'acct_an_earlier_one_0001', replayed: true, expiresAt: LEDGER_EXPIRY})});
+  const {pool} = fakePool({beginReceipt: () => ({handoffId: 'acct_an_earlier_one_0001', replayed: true, expiresAt: LEDGER_EXPIRY, bindDeadline: BIND_DEADLINE})});
   await expect(createOwnerConnectionBeginWriter(pool, createMockPaymentConnectionProvider())(
     ACTOR, TENANT, {...URLS, idempotencyKey: KEY})).rejects.toMatchObject({code: 'INTERNAL_ERROR'});
 });
 
-it('begin publishes the LEDGER\'s expiry, not the adapter\'s', async () => {
-  // record_payment_connection gates the bind on the ledger's expires_at, and
-  // begin_payment_connection never refreshes it on a replay. Publishing the
-  // adapter's fresh expiry would advertise a window longer than the one that
-  // will be enforced: the owner finishes inside the advertised window and
-  // resolve refuses it as expired.
+it('begin publishes the enforced bind deadline, not the link\'s expiry', async () => {
+  // record_payment_connection refuses a NEW bind once the ledger's expiry plus one hour
+  // has passed. The receipt must state that instant: the ledger's expiry is earlier than
+  // the window that is enforced, and the provider link's own expiry is minutes.
   const {pool} = fakePool();
   const provider = createMockPaymentConnectionProvider();
   const out = await createOwnerConnectionBeginWriter(pool, provider)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY});
-  expect(out.expiresAt).toBe(LEDGER_EXPIRY);
-  // The adapter's own answer is a different, later instant -- and is not what
-  // the owner is told.
+  expect(out.expiresAt).toBe(BIND_DEADLINE);
+  expect(out.expiresAt).not.toBe(LEDGER_EXPIRY);
   const adapterExpiry = (await provider.beginConnection({tenantId: TENANT, ...URLS, idempotencyKey: 'another-key-0000001'})).expiresAt;
   expect(out.expiresAt).not.toBe(adapterExpiry);
+});
+
+it('begin refuses a database that predates 0095, which states no bind deadline', async () => {
+  // Without bindDeadline the receipt would fall back to the ledger's expiry: the very
+  // mismatch this writer now refuses. An absent deadline is an internal fault.
+  const {pool} = fakePool({beginReceipt: (given) => ({handoffId: given, replayed: false, expiresAt: LEDGER_EXPIRY})});
+  await expect(createOwnerConnectionBeginWriter(pool, createMockPaymentConnectionProvider())(
+    ACTOR, TENANT, {...URLS, idempotencyKey: KEY})).rejects.toMatchObject({code: 'INTERNAL_ERROR'});
 });
 
 it('begin refuses an expiry the ledger did not supply', async () => {
@@ -126,7 +143,7 @@ it('begin refuses an expiry the ledger did not supply', async () => {
 });
 
 it('begin refuses when the ledger answers with no handoff at all', async () => {
-  const {pool} = fakePool({beginReceipt: () => ({replayed: false, expiresAt: LEDGER_EXPIRY})});
+  const {pool} = fakePool({beginReceipt: () => ({replayed: false, expiresAt: LEDGER_EXPIRY, bindDeadline: BIND_DEADLINE})});
   await expect(createOwnerConnectionBeginWriter(pool, createMockPaymentConnectionProvider())(
     ACTOR, TENANT, {...URLS, idempotencyKey: KEY})).rejects.toMatchObject({code: 'INTERNAL_ERROR'});
 });
@@ -378,6 +395,94 @@ it('begin authorizes before it calls the provider, not after', async () => {
   expect(beforeProvider.some((q) => q.includes('begin_payment_connection'))).toBe(false);
   // The ledger write happens after the provider answers.
   expect(queries.slice(atProvider).some((q) => q.includes('begin_payment_connection'))).toBe(true);
+});
+
+it('refuses a provider this database does not declare, BEFORE the provider is asked', async () => {
+  // A test-mode label on a production database. The ledger write would refuse it,
+  // but only after Stripe had created an account; this refusal is the one that
+  // comes first. The provider must not be entered at all.
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(), resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, queries} = fakePool({undeclared: true});
+  await expect(createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY}))
+    .rejects.toMatchObject({code: 'INVALID_REQUEST'});
+  expect(spy.beginConnection).not.toHaveBeenCalled();
+  expect(queries.some((q) => q.includes('begin_payment_connection'))).toBe(false);
+});
+
+it('a declared provider is asked, and the DECLARATION is checked for the adapter\'s own label, before it is asked', async () => {
+  const timeline: string[] = [];
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(async () => {
+      timeline.push('provider');
+      return {
+        provider: 'stripe_connect_test', handoffId: 'acct_declared0001',
+        onboardingUrl: 'https://connect.stripe.com/setup/s/declared', expiresAt: '2026-11-13T12:00:00.000Z',
+      };
+    }),
+    resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, calls} = fakePool({timeline});
+  await createOwnerConnectionBeginWriter(pool, spy as never)(ACTOR, TENANT, {...URLS, idempotencyKey: KEY});
+  expect(spy.beginConnection).toHaveBeenCalledTimes(1);
+  // The DECLARATION query carries the adapter's label as its own value. A check that
+  // only found the label in the begin RPC's parameters would not show this.
+  const declared = calls.find((c) => c.sql.includes('confirmable_payment_providers'));
+  expect(declared?.values).toEqual(['stripe_connect_test']);
+  expect(timeline.indexOf('declared')).toBeGreaterThanOrEqual(0);
+  expect(timeline.indexOf('declared')).toBeLessThan(timeline.indexOf('provider'));
+});
+
+/** A provider that answers as the adapter would, for a handoff that is in the ledger. */
+function resolveSpy(providerName: string) {
+  return {
+    providerName,
+    beginConnection: vi.fn(), inspectConnection: vi.fn(),
+    resolveConnection: vi.fn(async () => ({
+      provider: providerName, accountId: 'acct_from_the_ledger', chargesEnabled: true, payoutsEnabled: true,
+      onboardingComplete: true, blockedReason: null, observedAt: '2026-11-09T12:30:00.000Z',
+    })),
+  };
+}
+
+it('resolve refuses a label this database does not declare, with ZERO provider requests', async () => {
+  const spy = {
+    providerName: 'stripe_connect_test',
+    beginConnection: vi.fn(), resolveConnection: vi.fn(), inspectConnection: vi.fn(),
+  };
+  const {pool, calls} = fakePool({
+    undeclared: true,
+    ledgerRow: {handoff_id: 'acct_undeclared0001', provider: 'stripe_connect_test', resolved_at: null},
+  });
+  await expect(createOwnerConnectionResolveWriter(pool, spy as never)(ACTOR, TENANT, {handoffId: 'acct_undeclared0001'}))
+    .rejects.toMatchObject({code: 'UNSUPPORTED_CONFIG'});
+  expect(spy.resolveConnection).not.toHaveBeenCalled();
+  expect(calls.some((c) => c.sql.includes('record_payment_connection'))).toBe(false);
+});
+
+it('resolve takes replayed from the DATABASE, not from a ledger read taken before the provider was asked', async () => {
+  // This resolve read the ledger BEFORE a concurrent resolve of the same handoff committed,
+  // so its ledger row says the handoff is unresolved. The database, under the handoff's row
+  // lock, is the one that knows which call was first.
+  const concurrentLoser = fakePool({
+    ledgerRow: {handoff_id: 'mch_from_the_ledger', provider: 'staging_mock', resolved_at: null},
+    recordReceipt: {status: 'connected', replayed: true},
+  });
+  const loser = await createOwnerConnectionResolveWriter(concurrentLoser.pool, resolveSpy('staging_mock') as never)(
+    ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});
+  expect(loser.replayed).toBe(true);
+  // And the reverse: a ledger that already says resolved, against a database that says this
+  // call was the first. The flag follows the database, whichever way the ledger reads.
+  const firstCall = fakePool({
+    ledgerRow: {handoff_id: 'mch_from_the_ledger', provider: 'staging_mock', resolved_at: new Date()},
+    recordReceipt: {status: 'connected', replayed: false},
+  });
+  const first = await createOwnerConnectionResolveWriter(firstCall.pool, resolveSpy('staging_mock') as never)(
+    ACTOR, TENANT, {handoffId: 'mch_from_the_ledger'});
+  expect(first.replayed).toBe(false);
 });
 
 it('refuses a malformed actor, tenant, key or handoff before any work', async () => {

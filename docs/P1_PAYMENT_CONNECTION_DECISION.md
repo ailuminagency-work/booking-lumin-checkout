@@ -137,7 +137,7 @@ capability-flag flip. **Only steps 6 and 7 need a human with Stripe dashboard ac
 | 3 | Connection view — `GET /api/payment-connections`, behind `BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY` | **done (#252)**; needs the flag set to be reachable |
 | 4 | Stripe Connect adapter + fake-Stripe extension (`/v1/accounts`, `/v1/account_links`, and the fake made to observe and scope by `Stripe-Account`) | **done (#251)** |
 | 5 | Write path behind a flag, pointed at the **mock** connection adapter — `POST /api/payment-connections/{begin,resolve}` behind `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE` | **done (#PR5)**; needs the flag set to be reachable |
-| 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **a human + Stripe test-mode credentials** |
+| 6 | Swap in the Stripe adapter; first real connection. **Ends with a verified connection and zero money moved** | **built, stacked on #253; the six-lens review's findings and the repair round that followed them are resolved or recorded (see "Step 6" under the found-section below).** With the write flag on, `BOOKING_LUMIN_PAYMENT_CONNECTION_PROVIDER=stripe_connect` selects the Stripe adapter in TEST MODE, and only where `BOOKING_LUMIN_ENV=staging`: it needs a test-mode `STRIPE_PLATFORM_SECRET_KEY` and the platform's own `STRIPE_PLATFORM_ACCOUNT_ID`. Live keys are refused. **The first live connection still needs a human** on Render staging, by the runbook below. This sandbox cannot reach `api.stripe.com` (proxy 403 on CONNECT), so the live run cannot happen from here. |
 | 7 | Route the money behind a separate flag; `Stripe-Account` on charge creation, `event.account` attribution on the webhook | **a human** |
 | 8 | Reconciliation behind a flag | a flag flip |
 
@@ -259,6 +259,138 @@ test confirmed to fail. Seven of the twelve were failures of test design rather
 than of code — a worse ratio than the first review, in work written while
 specifically hunting that failure mode. "CI is green" remains no evidence at all
 about this class of defect.
+
+### Step 6: the six-lens review of the Stripe wiring
+
+Fifteen findings were confirmed, each re-derived by a reader that had not seen the
+others, and three were not reproducible. Decision 10 is refined by what follows: a
+TEST-MODE connection is recorded under its own label, `stripe_connect_test`, so the
+row says which mode produced it. The live label `stripe_connect` is unchanged.
+
+- **A test key recorded a connection indistinguishable from a live one (P2).** Fixed.
+  Migration 0094 declares the test label confirmable on a `lumin_*` database only, the
+  way 0088 declares the simulated labels. The writer also reads that declaration BEFORE
+  the provider is asked anything, so a production database refuses a test connection
+  without creating a Stripe account for it. The RPC keeps its own gate.
+- **A foreign platform's key read as a disowned merchant (P2).** Fixed. Stripe answers
+  `403 account_invalid` for every account a foreign key touches, the same answer it
+  gives a merchant who has left. Read as a verdict, it revoked a connected merchant.
+  A disown is now recorded only after `GET /v1/account` returns the pinned
+  `STRIPE_PLATFORM_ACCOUNT_ID`. Anything else is an outage, and records nothing.
+- **A keyed onboarding link (P3).** Fixed. A replayed link is expired, and Stripe saves
+  a keyed 500 for about a day, so the same-key retry after a failed link request kept
+  failing for the whole window. The link is now sent without a key. The account stays
+  keyed, so a retry still cannot mint a second merchant account. A retry now returns a
+  fresh link on the same account.
+- **Boot and operator claims wider than the code (seven findings, two rated P2).** Fixed in wording. The
+  provider and key are read only when `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE=1`. The
+  boot check is a shape check that contacts no one, so a well-formed key that Stripe
+  rejects boots cleanly and answers 503 on first use. render.yaml, main.ts and the
+  selector say so.
+- **A padded live key was not named as live (P3).** Fixed. The live check looks through
+  surrounding whitespace, and the value is still never echoed.
+- **Harness fidelity (four findings).** Fixed. The stand-in replays an account as it was
+  created, where it had returned the live object. A 500 on the link leg is exercised with
+  a path-scoped outage. The link is asserted to carry no key. A test-label refusal is
+  asserted to make zero requests.
+
+**Repair round.** A second review, of the first round's fixes (`cada81c..99fc081`), was run
+by six lens reviewers, and each of their findings was re-derived by two fresh agents: one trying
+to refute it from the code, one trying to reproduce it. The defects they confirmed are
+fixed on this branch. Each fix has a check that fails when the fix is reverted, except the
+handoff lock: its race is covered by a concurrent integration case that passes on a correct
+implementation, but a revert only makes that case likelier to fail, not certain to.
+
+- **A foreign platform's key created merchant accounts (P2).** Begin never asked the
+  platform. The pin was checked only after Stripe disowned a merchant, so `POST /v1/accounts`
+  ran under whichever platform the key belonged to. Begin now confirms the pin before it
+  creates anything, and every read and every fresh link confirms it first too.
+- **An unfinished owner was recorded as connected (P2).** An account whose owner never
+  finished can carry a past-due requirement. The adapter read that as a past-due merchant,
+  and the derivation records any reason other than `onboarding_incomplete` as connected.
+  The adapter now checks onboarding first.
+- **A merchant could not be refreshed or revoked after the bind window (P2).** Migration
+  0095 applies the one-hour window to a NEW bind only. A record for the account the
+  connection already holds is a refresh, and a provider that has since disowned it is
+  recorded as revoked, however old the handoff.
+- **An abandoned onboarding locked the business out (P2).** Migration 0095 lets a
+  `not_connected` connection take a different account. That status cannot charge, so no
+  money moves. Write-once still refuses every connection that is live.
+- **Resolve skipped the label declaration, and the reader showed undeclared labels (P2).**
+  Resolve checks the declaration before the provider is asked, and the reader hides any
+  connection whose label is not declared, in the same snapshot as its facts.
+- **The test-mode provider could start outside staging (P2).** The selector builds it only
+  when `BOOKING_LUMIN_ENV` is `staging`. The readiness guard alone was not a gate: it
+  reports `unknown` when its probe fails, and `unknown` keeps a process serving.
+- **The receipt stated the wrong deadline, and `replayed` was not a fact about the handoff
+  (P3).** Begin now returns `bindDeadline`, and the receipt states it. The record call locks
+  the handoff and reports whether THIS handoff had been recorded, so two concurrent resolves
+  of one handoff cannot both report that they were first.
+- **Tests that could not fail for the defect they named (P3).** Rewritten to assert what
+  matters: the declaration query's own label; the whole normalised 0094 seed block, not a
+  substring; the readiness list read from the migrations; the stand-in's keyed outages and
+  its `Stripe-Account` handling; and the selector's pin, which uses a value no default names.
+- **The runbook took the platform pin from the key under test (P2).** Step 2 now takes the
+  id from the Dashboard. Step 1 sets `BOOKING_LUMIN_ENV=staging`.
+
+Migration `0095_payment_connection_repair.sql` redefines `record_payment_connection` and
+`begin_payment_connection` with their signatures unchanged, and adds one helper,
+`lumin.payment_handoff_bind_deadline`, which is the single definition of the window. Its
+suite is `supabase/tests/payment_connection_repair_tests.sql`. Like 0094, this change does
+not apply it to hosted staging.
+
+Known and NOT fixed in this change. Each is recorded here so it is not discovered later:
+
+- **A begin that reuses a ledgered key more than a day later** mints a second Stripe
+  account. The ledger does not bind that account, and the owner receives an internal
+  error. The fix is a ledger-first replay contract, and a longer ledger expiry for return
+  visits. Both change behaviour a person should decide, so this is a P3 open item. No
+  money moves. An unbound test account can be left behind.
+- **A replayed begin can return a live link after the bind deadline it states.** A replay
+  gets a fresh onboarding link, because the old link has expired. The receipt's `expiresAt`
+  is the bind deadline the database enforces (the ledger's expiry plus one hour, see the
+  repair round), but a replay still states the LEDGER's deadline. So a replay made after
+  that deadline is handed a link that opens at Stripe and will not bind. Clients should
+  treat `expiresAt` as the last moment a bind is accepted, not as the link's life.
+  Refreshing the handoff's deadline on replay is the fix. It changes what a replay means,
+  so a person should decide it.
+- **An operator sees a bare 503 for a rejected platform key.** The upstream status is in
+  the adapter's error message, but it is neither returned to the client nor logged. The
+  runbook below is the workaround.
+- **Boot makes no request to Stripe, so a foreign key is refused on first use, not at boot.**
+  The first owner action confirms the pin before it creates or reads anything, and answers
+  503 with nothing recorded. A boot-time identity check would surface it earlier, at the
+  cost of a network call during boot.
+- **Nothing here has been seen against the real Stripe API.** The sandbox cannot reach
+  `api.stripe.com`. In particular, `GET /v1/account` returning the platform's own id
+  has not been confirmed live. The first staging run confirms it.
+
+### First live test-mode connection: the operator runbook
+
+A person does each step. None is automated, and none uses a live key.
+
+1. On Render staging, service `lumin-api`, set `BOOKING_LUMIN_ENV=staging`,
+   `BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE=1`, `BOOKING_LUMIN_PAYMENT_CONNECTION_PROVIDER=stripe_connect`,
+   `STRIPE_PLATFORM_SECRET_KEY` (the platform's own test-mode `sk_test_` key) and
+   `STRIPE_PLATFORM_ACCOUNT_ID`. The test-mode provider refuses to start unless the
+   environment is `staging`.
+2. Take the platform's account id (`acct_…`) from the Stripe Dashboard of the platform account
+   itself, in test mode, by a person signed in to that account. Do NOT take it from an API
+   response made with the key under test: a key from another platform answers with its own
+   id, and the pin would then protect nothing. Put that id in `STRIPE_PLATFORM_ACCOUNT_ID`.
+   The service then confirms, before every operation, that the key answers `GET /v1/account`
+   with that id. A mismatch is an outage, and nothing is recorded. Checking it by hand, with
+   the same key, `GET https://api.stripe.com/v1/account`, should return the same `id` before
+   the first connection is read.
+3. Declare the test label on the hosted STAGING database, once: the bootstrap insert at the
+   foot of migration 0094. It is never run on production.
+4. Apply migration 0094 to the staging database, so its history matches the repository.
+   Apart from step 3 it changes nothing there.
+5. An owner begins and completes Stripe's test onboarding. Resolve should show `connected`
+   and `chargeable`, and the stored provider should read `stripe_connect_test`.
+6. If begin answers 503 on every attempt, the platform key is probably rejected. Check it
+   with `GET /v1/account`: a 401 means rejected. If the same idempotency key keeps failing,
+   use a new key, because Stripe saves a keyed failure for about a day.
 
 ## Open questions — business decisions, not engineering
 

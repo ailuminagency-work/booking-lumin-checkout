@@ -1,5 +1,6 @@
 import {afterEach, it, expect, vi} from 'vitest';
 import type {Pool} from 'pg';
+import {readFileSync} from 'node:fs';
 import {
   SIMULATED_PROVIDERS,
   createSimulatedPaymentGuard,
@@ -7,6 +8,27 @@ import {
 } from './simulated-payment-readiness';
 
 afterEach(() => {vi.useRealTimers();});
+
+/**
+ * The labels the disposable-database seeds declare confirmable, read from the migrations
+ * themselves: the text between each file's `if current_database() ~ '^lumin_' then` and the
+ * `end if;` that closes it. A label added there without a matching entry in
+ * SIMULATED_PROVIDERS is then a failing test, not a readiness guard that never asks.
+ */
+function disposableSeedLabels(): string[] {
+  const labels = new Set<string>();
+  for (const file of ['0088_payment_provider_provenance.sql', '0094_stripe_connect_test_label.sql']) {
+    const text = readFileSync(new URL(`../../../supabase/migrations/${file}`, import.meta.url), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const start = text.indexOf("if current_database() ~ '^lumin_' then");
+    expect(start, `${file} has a disposable-database guard`).toBeGreaterThan(-1);
+    const block = text.slice(start, text.indexOf('end if;', start));
+    for (const match of block.matchAll(/\(\s*'([a-z][a-z0-9_]*)'\s*,\s*'/g)) labels.add(match[1]!);
+  }
+  return [...labels];
+}
 
 interface Recorder {
   pool: Pool;
@@ -83,10 +105,13 @@ it('reports UNSAFE when a non-staging process can confirm simulated money', asyn
     .toEqual({status: 'unsafe', providers: ['fixture', 'staging_mock']});
 });
 
-it('asks about every simulated label migration 0088 can declare confirmable', () => {
-  // If 0088's disposable seed gains a provider and this list does not, the DB
-  // would confirm simulated money that the readiness guard never asks about.
-  expect([...SIMULATED_PROVIDERS].sort()).toEqual(['fixture', 'staging_mock']);
+it('asks about every label migrations 0088 and 0094 declare confirmable on a disposable database', () => {
+  // If a disposable seed gains a provider and this list does not, the DB would confirm
+  // non-real money that the readiness guard never asks about. The expectation is read
+  // from the migrations, not written out here, so it cannot drift from them silently.
+  const declared = disposableSeedLabels().sort();
+  expect(declared).toEqual(['fixture', 'staging_mock', 'stripe_connect_test']);
+  expect([...SIMULATED_PROVIDERS].sort()).toEqual(declared);
 });
 
 it('reports UNKNOWN, never safe, when the question cannot be answered', async () => {

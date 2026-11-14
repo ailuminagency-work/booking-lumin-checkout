@@ -34,16 +34,44 @@ import {
  * failure or a non-JSON body throws PROVIDER_UNAVAILABLE, and the caller then
  * never reaches the RPC, so the stored row keeps its status. Only Stripe
  * explicitly disowning the account -- 403 `account_invalid`, or 404 -- becomes a
- * snapshot, as `credentials_invalid`. This asymmetry is the whole reason a
- * transient Stripe blip cannot take a tenant's checkout down.
+ * snapshot, as `credentials_invalid`. A different platform's key receives the same
+ * 403 for every account, so a disowning is believed only from the PINNED platform.
+ * THAT IS CONFIRMED BEFORE EVERY OPERATION, not only before a disowning is recorded
+ * (see confirmPlatform): a foreign key can create an account under its own platform,
+ * and can read one it happens to own, so a successful answer is no evidence either.
+ * This asymmetry is the whole reason a transient Stripe blip cannot take a tenant's
+ * checkout down.
  *
  * No `stripe` npm SDK: the REST API is called directly with urlencoded bodies
  * through an injected `fetchImpl`, the same choice stripePayment.ts made.
  */
 
 export interface StripeConnectProviderOptions {
-  /** PLATFORM Stripe secret key (sk_test_… in test mode). SERVER-ONLY (SI-5). */
+  /**
+   * PLATFORM Stripe TEST-mode secret key (sk_test_…). SERVER-ONLY (SI-5). This build
+   * accepts test keys only: a live key, or any other shape, is refused at construction
+   * before anything can be requested.
+   */
   secretKey: string;
+  /**
+   * The PLATFORM's own account id (`acct_…`): what GET /v1/account returns for
+   * `secretKey`, read once by an operator and pinned in configuration. REQUIRED,
+   * because it is the only way a 403 `account_invalid` can be told apart. That
+   * answer means "this merchant is no longer connected to us" when the key is our
+   * platform, and it means the same thing for EVERY account when the key belongs to
+   * some other platform. Without the pin, a wrong key would disown all merchants.
+   */
+  platformAccountId: string;
+  /**
+   * The provider label written on every handoff and snapshot. REQUIRED, with no
+   * default, and it must be declared in public.confirmable_payment_providers. A
+   * default would be the live label 'stripe_connect' (0088 seeds it everywhere), and a
+   * test key recorded under it would be a test connection that reads as a live one.
+   * So a test key takes a label ending in `_test`: the selector passes
+   * 'stripe_connect_test', which migration 0094 declares confirmable on a disposable
+   * database only.
+   */
+  providerLabel: string;
   /** API base; defaults to Stripe's host (test mode is key-scoped). */
   apiBase?: string;
   /** Injected fetch (default global fetch). Tests inject the fake Stripe. */
@@ -60,6 +88,16 @@ export interface StripeConnectProviderOptions {
  * floor. An adapter may narrow and may never widen.
  */
 const STRIPE_ACCOUNT_ID = /^acct_[A-Za-z0-9]{8,64}$/;
+
+/** The shape of a provider label, as public.confirmable_payment_providers stores it. */
+const PROVIDER_LABEL = /^[a-z][a-z0-9_]{2,59}$/;
+
+/**
+ * A Stripe TEST-mode secret key, the only kind this build accepts. Alphanumeric after
+ * the prefix, as Stripe issues them; the selector checks the same shape. Restricted
+ * (rk_) and publishable (pk_) keys do not match.
+ */
+const TEST_SECRET_KEY = /^sk_test_[A-Za-z0-9]{8,200}$/;
 
 /** The subset of a Stripe Account this adapter depends on. */
 interface StripeAccount {
@@ -103,8 +141,11 @@ export function mapStripeAccountReason(account: StripeAccount): PaymentConnectio
   if (!charges) {
     // `rejected.fraud`, `rejected.terms_of_service`, `rejected.other`, …
     if (disabled.startsWith("rejected")) return "account_rejected";
-    if (pastDue || disabled === "requirements.past_due") return "requirements_past_due";
+    // An owner who never finished is not yet connected, whatever Stripe lists as past
+    // due. The derivation turns onboarding_incomplete into not_connected but any other
+    // reason into a CONNECTED row, so this order decides the status: checked first.
     if (!submitted) return "onboarding_incomplete";
+    if (pastDue || disabled === "requirements.past_due") return "requirements_past_due";
     return "charges_disabled";
   }
   // Charging, but not cleanly. Payouts first: that is the state where money
@@ -150,6 +191,29 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
   const apiBase = (opts.apiBase ?? "https://api.stripe.com").replace(/\/$/, "");
   const doFetch = opts.fetchImpl ?? fetch;
   const country = opts.country ?? "US";
+  const label = opts.providerLabel;
+  const platformAccountId = opts.platformAccountId;
+  // Configuration errors, refused before anything can be requested. No message
+  // echoes a value: a misconfigured secret-adjacent setting must not reach a log.
+  if (typeof label !== "string" || !PROVIDER_LABEL.test(label)) {
+    throw new Error("providerLabel must be a declared provider label (lowercase letters, digits, underscores)");
+  }
+  if (typeof platformAccountId !== "string" || !STRIPE_ACCOUNT_ID.test(platformAccountId)) {
+    throw new Error("platformAccountId must be the platform's own Stripe account id (acct_...)");
+  }
+  // This build is TEST MODE ONLY, and the mode the key is in must be the mode the
+  // stored row says. A live key is refused by name, with surrounding whitespace too,
+  // because a live key used by mistake is the one error this adapter must not
+  // survive. A test key may not be recorded under the live label.
+  if (typeof opts.secretKey !== "string" || opts.secretKey.trim().startsWith("sk_live_")) {
+    throw new Error("secretKey must be a Stripe test-mode secret key; live keys are not accepted by this adapter");
+  }
+  if (!TEST_SECRET_KEY.test(opts.secretKey)) {
+    throw new Error("secretKey must be a Stripe test-mode secret key (sk_test_...), with no surrounding whitespace");
+  }
+  if (!label.endsWith("_test")) {
+    throw new Error("a test-mode secret key must be recorded under a test provider label (ending in _test)");
+  }
 
   function authHeaders(extra?: Record<string, string>): Record<string, string> {
     // `extra` FIRST and the credential pinned LAST, so a caller-supplied header
@@ -255,10 +319,6 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
   }
 
   /**
-   * Is this response Stripe saying "I do not recognise this account"? Only then
-   * is a failure DATA rather than an outage.
-   */
-  /**
    * Is this response Stripe ITSELF saying "I do not recognise this account"?
    * Only then is a failure DATA rather than an outage.
    *
@@ -283,10 +343,31 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     return false;
   }
 
+  /**
+   * Is the key that was just refused the platform this deployment is pinned to?
+   *
+   * Only then does a 403 `account_invalid` mean the merchant has left us. GET
+   * /v1/account, with no Stripe-Account header, reads the platform's own account.
+   * Any other answer -- a different platform's id, a refused key, an outage -- is
+   * inconclusive, so nothing is recorded. The harness shows the defect this closes:
+   * with a foreign key, the same 403 came back for a merchant that was still
+   * connected, and the row became `revoked`.
+   */
+  async function confirmPlatform(): Promise<void> {
+    const me = await call("/v1/account", { method: "GET" });
+    if (!me.ok) {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe platform identity could not be confirmed");
+    }
+    const body = me.body as { object?: unknown; id?: unknown } | undefined;
+    if (body?.object !== "account" || body?.id !== platformAccountId) {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe key is not the platform this deployment is pinned to");
+    }
+  }
+
   function snapshot(accountId: string, account: StripeAccount, observedAt: string): PaymentConnectionSnapshot {
     const chargesEnabled = boolOf(account.charges_enabled);
     return PaymentConnectionSnapshot.parse({
-      provider: "stripe_connect",
+      provider: label,
       accountId,
       chargesEnabled,
       payoutsEnabled: boolOf(account.payouts_enabled),
@@ -296,10 +377,10 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     });
   }
 
-  /** The snapshot for an account Stripe disowns. */
+  /** The snapshot for an account the PINNED platform has been disowned from. */
   function disownedSnapshot(accountId: string, observedAt: string): PaymentConnectionSnapshot {
     return PaymentConnectionSnapshot.parse({
-      provider: "stripe_connect",
+      provider: label,
       accountId,
       chargesEnabled: false,
       payoutsEnabled: false,
@@ -309,14 +390,23 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
     });
   }
 
+  /**
+   * An onboarding link, sent WITHOUT an idempotency key, deliberately.
+   *
+   * A link is single-use and expires within minutes, so a replayed one is dead on
+   * arrival: keying it would hand a retry the same expired URL. And Stripe saves
+   * the status and body of a keyed request, a 500 included, for about 24 hours.
+   * Keyed, a retry after one failed link request would replay that 500 and fail
+   * for the rest of the window. Unkeyed, the retry asks for a fresh link on the
+   * same account, which creates no account and is inert, and it succeeds. The
+   * account itself stays keyed, so a retry still cannot mint a second merchant.
+   */
   async function accountLink(
     accountId: string,
     urls: { returnUrl: string; refreshUrl: string },
-    idempotencyKey?: string,
   ): Promise<ConnectionHandoff> {
     const link = await call("/v1/account_links", {
       method: "POST",
-      idempotencyKey,
       body: new URLSearchParams({
         account: accountId,
         refresh_url: absoluteUrl(urls.refreshUrl, "refreshUrl"),
@@ -339,7 +429,7 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
       throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe onboarding link is not https");
     }
     return ConnectionHandoff.parse({
-      provider: "stripe_connect",
+      provider: label,
       // The handoff id IS the account reference. Stripe has no separate handoff
       // object, and using the account id keeps this adapter stateless: nothing
       // has to be remembered between beginConnection and resolveConnection. It
@@ -356,6 +446,10 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
   }
 
   async function read(accountId: string, observedAt: string): Promise<PaymentConnectionSnapshot> {
+    // FIRST, before the merchant is asked about. A key from another platform can read
+    // an account it happens to own, and that answer is not a fact about this platform's
+    // merchant. The pin is therefore established on every read, not only on a disowning.
+    await confirmPlatform();
     const got = await call(`/v1/accounts/${encodeURIComponent(accountId)}`, { method: "GET" });
     if (got.ok) {
       // A 200 is not on its own evidence about this account. Every boolean below
@@ -368,18 +462,28 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
       }
       return snapshot(accountId, body, observedAt);
     }
-    if (disownsAccount(got.status, got.body)) return disownedSnapshot(accountId, observedAt);
+    if (disownsAccount(got.status, got.body)) {
+      // Disowned by Stripe. The pin was confirmed above, so this disowning is the
+      // pinned platform's own word about one of its merchants.
+      return disownedSnapshot(accountId, observedAt);
+    }
     throw new PaymentError("PROVIDER_UNAVAILABLE", `stripe account read failed (${got.status})`);
   }
 
   return {
-    providerName: "stripe_connect",
+    providerName: label,
 
     async beginConnection(input: BeginConnectionInput): Promise<ConnectionHandoff> {
       const idempotencyKey = headerSafeKey(input.idempotencyKey ?? "");
       // Validated before any request: Stripe hands these to a browser.
       const returnUrl = absoluteUrl(input.returnUrl, "returnUrl");
       const refreshUrl = absoluteUrl(input.refreshUrl, "refreshUrl");
+
+      // The pin is confirmed BEFORE an account is created. An account is created under
+      // whichever platform the key belongs to, so a foreign key would hand the owner's
+      // identity to another platform's merchant record, and the first check would then
+      // come too late to matter.
+      await confirmPlatform();
 
       const created = await call("/v1/accounts", {
         method: "POST",
@@ -397,9 +501,8 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
       }
       const accountId = stripeAccountId(created.body?.id);
 
-      // A DIFFERENT key, because Stripe scopes idempotency by key alone and
-      // reusing one across two endpoints is an error, not a replay.
-      return accountLink(accountId, { returnUrl, refreshUrl }, `${idempotencyKey}:link`);
+      // Unkeyed on purpose: see accountLink.
+      return accountLink(accountId, { returnUrl, refreshUrl });
     },
 
     async linkExistingAccount(
@@ -407,8 +510,11 @@ export function createStripeConnectProvider(opts: StripeConnectProviderOptions):
       urls: { returnUrl: string; refreshUrl: string },
     ): Promise<ConnectionHandoff> {
       // No idempotency key: a fresh link is the POINT of this call, and
-      // replaying an expired one is what it exists to avoid.
-      return accountLink(stripeAccountId(accountId), urls);
+      // replaying an expired one is what it exists to avoid. The reference is checked
+      // and the pin confirmed before any link is requested.
+      const id = stripeAccountId(accountId);
+      await confirmPlatform();
+      return accountLink(id, urls);
     },
 
     async resolveConnection(handoffId: string): Promise<PaymentConnectionSnapshot> {
