@@ -85,11 +85,13 @@ values
 update public.bookings set payment_id = 'a0000000-0000-0000-0000-00000000d001'
   where id = 'a0000000-0000-0000-0000-00000000b001';
 
+-- The connection rows use a label this database DECLARES (0088 seeds staging_mock on
+-- lumin_* databases). A member reads a connection only for a declared provider (0095).
 insert into public.payment_connections (id, tenant_id, provider, status, config) values
   ('a0000000-0000-0000-0000-00000000e001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-   'mock', 'connected', '{"label":"A mock"}'),
+   'staging_mock', 'connected', '{"label":"A mock"}'),
   ('b0000000-0000-0000-0000-00000000e001', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-   'mock', 'connected', '{"label":"B mock"}');
+   'staging_mock', 'connected', '{"label":"B mock"}');
 
 insert into public.payment_connection_secrets (connection_id, tenant_id, credentials_encrypted) values
   ('a0000000-0000-0000-0000-00000000e001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '\x6465616462656566'),
@@ -471,6 +473,12 @@ reset role;
 -- could declare them would have a path to point money at an unverified account.
 -- Reading stays allowed; the portal must still be able to show the status.
 -- ============================================================================
+-- An ADDITIONAL row under a label this database does not declare. 0095 hides it from
+-- the member, exactly as the reader RPC does. It is removed again below.
+reset role;
+insert into public.payment_connections (id, tenant_id, provider, status, config) values
+  ('a0000000-0000-0000-0000-00000000e002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'retired_label_5g', 'connected', '{"label":"undeclared"}');
 select set_config('request.jwt.claims',
   '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
 set local role authenticated;
@@ -480,7 +488,13 @@ declare
 begin
   select count(*) into n from public.payment_connections
    where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  if n <> 1 then raise exception 'FAIL 5g-read: owner sees % own connection row(s)', n; end if;
+  -- Exactly the DECLARED row: the undeclared one is not readable by a member.
+  if n <> 1 then raise exception 'FAIL 5g-read: owner sees % own connection row(s), expected the declared one only', n; end if;
+  -- WHICH row, not only how many: showing the undeclared row instead of the declared one keeps the count at one.
+  if (select min(provider) from public.payment_connections
+       where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') <> 'staging_mock' then
+    raise exception 'FAIL 5g-visible: the owner sees a connection other than its declared one';
+  end if;
 
   begin
     insert into public.payment_connections (tenant_id, provider, status, config)
@@ -516,6 +530,7 @@ end;
 $t$;
 
 reset role;
+delete from public.payment_connections where id = 'a0000000-0000-0000-0000-00000000e002';
 
 -- ============================================================================
 -- ATTACK 6 — illegal booking state transition confirmed → draft. The trigger
@@ -980,6 +995,10 @@ $t$;
 
 reset role;
 
+-- A connection row for the suspended tenant, so the member read below has something to refuse. Removed again.
+reset role;
+insert into public.payment_connections (id, tenant_id, provider, status, config) values
+  ('c0000000-0000-0000-0000-00000000e001', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'staging_mock', 'connected', '{"label":"C mock"}');
 -- Active-tenant GATE (hybrid): the SUSPENDED tenant C's own OWNER is a bona-fide
 -- member, yet must read ZERO raw payments / refunds / per-tenant audit rows.
 -- This is the lever codex's financial-minimization added on top of RISK-4:
@@ -1007,6 +1026,11 @@ begin
     where tenant_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
   if n <> 0 then raise exception 'FAIL 14l: suspended-tenant member read % raw refund row(s)', n; end if;
 
+  -- The same for the connection facts: a suspended tenant's member reads none of its connection rows.
+  select count(*) into n from public.payment_connections
+    where tenant_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  if n <> 0 then raise exception 'FAIL 14m: suspended-tenant member read % connection row(s)', n; end if;
+
   -- The owner branch of the audit policy is also active-gated, so the suspended
   -- tenant's per-tenant audit rows are invisible to its own owner.
   select count(*) into n from public.audit_events
@@ -1025,6 +1049,7 @@ end;
 $t$;
 
 reset role;
+delete from public.payment_connections where id = 'c0000000-0000-0000-0000-00000000e001';
 
 -- ============================================================================
 -- ATTACK 15 — the handoff ledger and the connection facts are out of reach.

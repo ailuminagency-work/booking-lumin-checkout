@@ -201,6 +201,10 @@ reset role;
 
 -- ---- 4. Binding an account is write-once -----------------------------------
 set local role service_role;
+-- A second handoff, begun while the connection is still unbound, so it stays UNRECORDED
+-- until the write-once check below. A connected tenant can no longer begin a new handoff.
+select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
+ 'connect-attempt-a-0010','mch_conn_suite_a2','2035-01-01T00:05:00Z');
 select pg_temp.assert(
  (select public.record_payment_connection(pg_temp.id(1),pg_temp.id(10),'mch_conn_suite_a1',
    'acct_conn_suite_a1',true,true,true,null,'2035-01-01T00:02:00Z')->>'status')='connected',
@@ -211,9 +215,12 @@ select pg_temp.assert(
    'acct_conn_suite_a1',true,true,true,null,'2035-01-01T00:03:00Z')->>'replayed')='true',
  'rebinding the same account is a harmless replay');
 -- Repointing is refused. Rebinding to a DIFFERENT account would silently move a
--- tenant's money to somewhere else.
+-- tenant's money to somewhere else. A handoff ALREADY recorded is refused as superseded
+-- (the connection has moved on); an UNRECORDED handoff is refused by write-once.
 select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
- '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a1','acct_somewhere_else',true,true,true,null,'2035-01-01T00:04:00Z')$$,'42501','PAYMENT_CONNECTION_ALREADY_BOUND');
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a1','acct_somewhere_else',true,true,true,null,'2035-01-01T00:04:00Z')$$,'23505','PAYMENT_CONNECTION_HANDOFF_SUPERSEDED');
+select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a2','acct_somewhere_else',true,true,true,null,'2035-01-01T00:04:00Z')$$,'23505','PAYMENT_CONNECTION_ALREADY_BOUND');
 -- Tenant B begins its own handoff FIRST, so that the cross-tenant attempt below
 -- can only be refused by the handoff's tenant scoping -- not by B happening to
 -- have no connection row yet, which would make the assertion say nothing.
@@ -319,8 +326,12 @@ select pg_temp.assert(
    true,true,true,null,'2035-02-01T00:00:00Z')->>'status')='revoked',
  'automation cannot heal a revoked connection, however healthy the provider reports it');
 -- An owner with a FRESH handoff can, and binds the new account the handoff produced.
+-- Two are begun while the connection is revoked: a3 is recorded now, and a4 stays
+-- unrecorded so the write-once check below can refuse it.
 select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
  'connect-attempt-a-0003','mch_conn_suite_a3','2035-02-01T00:05:00Z');
+select public.begin_payment_connection(pg_temp.id(1),pg_temp.id(10),'conn_suite',
+ 'connect-attempt-a-0004','mch_conn_suite_a4','2035-02-01T00:05:00Z');
 select pg_temp.assert(
  (select public.record_payment_connection(pg_temp.id(1),pg_temp.id(10),'mch_conn_suite_a3',
    'acct_conn_suite_a2',true,true,true,null,'2035-02-01T00:02:00Z')->>'status')='connected',
@@ -331,10 +342,13 @@ select pg_temp.assert((select status='connected' and charges_enabled and account
   where tenant_id=pg_temp.id(10) and provider='conn_suite'),
  'the recovered row is coherent: connected, charging, bound to the new account');
 
--- While the connection is LIVE, write-once still refuses a different account.
+-- While the connection is LIVE, write-once still refuses a different account. The handoff
+-- that was recorded is superseded; the unrecorded one is refused by write-once.
 set local role service_role;
 select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
- '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a3','acct_somewhere_else_2',true,true,true,null,'2035-02-01T00:03:00Z')$$,'42501','PAYMENT_CONNECTION_ALREADY_BOUND');
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a3','acct_somewhere_else_2',true,true,true,null,'2035-02-01T00:03:00Z')$$,'23505','PAYMENT_CONNECTION_HANDOFF_SUPERSEDED');
+select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,
+ '93000000-0000-4000-8000-000000000010'::uuid,'mch_conn_suite_a4','acct_somewhere_else_2',true,true,true,null,'2035-02-01T00:03:00Z')$$,'23505','PAYMENT_CONNECTION_ALREADY_BOUND');
 -- A bind must NAME an account. `account_id <> NULL` is NULL rather than true, so
 -- a NULL argument used to slip past the write-once guard and unbind the row.
 select pg_temp.reject($$select public.record_payment_connection('93000000-0000-4000-8000-000000000001'::uuid,

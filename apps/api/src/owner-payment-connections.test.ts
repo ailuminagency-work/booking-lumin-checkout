@@ -21,7 +21,11 @@ function conn(over: Record<string, unknown> = {}) {
   };
 }
 
-function fakePool(opts: {connections?: unknown[]; facts?: unknown; forbid?: boolean; missingRpc?: boolean} = {}) {
+function fakePool(opts: {
+  connections?: unknown[]; facts?: unknown; forbid?: boolean; missingRpc?: boolean;
+  /** The labels this database declares confirmable. The live label is declared everywhere. */
+  declared?: string[];
+} = {}) {
   const queries: string[] = [];
   const params: unknown[][] = [];
   const client = {
@@ -33,6 +37,9 @@ function fakePool(opts: {connections?: unknown[]; facts?: unknown; forbid?: bool
         if (opts.missingRpc) throw Object.assign(new Error('no such function'), {code: '42883'});
         return {rows: [{facts: opts.facts !== undefined ? opts.facts
           : {schemaVersion: 1, connections: opts.connections ?? []}}]};
+      }
+      if (sql.includes('confirmable_payment_providers')) {
+        return {rows: (opts.declared ?? ['stripe_connect']).map((provider) => ({provider}))};
       }
       return {rows: []};
     },
@@ -52,6 +59,31 @@ it('authorizes through the RPC and returns the tenant\'s connections', async () 
   expect(out.tenantId).toBe(TENANT);
   expect(out.connections).toHaveLength(1);
   expect(out.connections[0]!.health).toBe('chargeable');
+});
+
+it('hides a connection under a label this database does not declare, and reads the declaration in the same snapshot', async () => {
+  // A test-mode row on a database that refuses test-mode connections must not read as
+  // chargeable. It is not shown at all: the owner sees no connection, not a healthy one.
+  const {pool, queries} = fakePool({
+    connections: [conn({provider: 'stripe_connect_test'}), conn()],
+    declared: ['stripe_connect'],
+  });
+  const out = await createOwnerPaymentConnectionsReader(pool)(ACTOR, TENANT);
+  expect(out.connections.map((c) => c.provider)).toEqual(['stripe_connect']);
+  // The declaration is read between the facts and the commit, inside one transaction.
+  const begin = queries.findIndex((q) => q.includes('begin isolation level repeatable read'));
+  const facts = queries.findIndex((q) => q.includes('payment_connection_facts'));
+  const declared = queries.findIndex((q) => q.includes('confirmable_payment_providers'));
+  const commit = queries.indexOf('commit');
+  expect(begin).toBeLessThan(facts);
+  expect(facts).toBeLessThan(declared);
+  expect(declared).toBeLessThan(commit);
+});
+
+it('shows nothing when this database declares no label that a connection holds', async () => {
+  const {pool} = fakePool({connections: [conn({provider: 'stripe_connect_test'})], declared: []});
+  const out = await createOwnerPaymentConnectionsReader(pool)(ACTOR, TENANT);
+  expect(out.connections).toEqual([]);
 });
 
 it('derives each of the four health verdicts from the stored facts', async () => {

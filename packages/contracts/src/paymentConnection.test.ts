@@ -97,7 +97,7 @@ describe("derivePaymentConnectionHealth is total", () => {
 });
 
 describe("derivePaymentConnectionHealth invariants", () => {
-  it("not_connected is EXACTLY the absence of a connection", () => {
+  it("the verdict is not_connected EXACTLY when the status is not_connected, for every flag and reason", () => {
     for (const facts of ALL) {
       const isNotConnected = derivePaymentConnectionHealth(facts) === "not_connected";
       expect(isNotConnected, describeFacts(facts)).toBe(facts.status === "not_connected");
