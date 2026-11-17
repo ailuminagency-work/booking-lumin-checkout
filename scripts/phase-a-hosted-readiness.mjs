@@ -9,6 +9,7 @@ const EDGE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const BEARER_TOKEN = /^[A-Za-z0-9._~-]{16,4096}$/;
 const MAX_BODY = 65_536;
 const DEFAULT_EDGE_FUNCTIONS = ['stripe-webhook', 'create-payment-intent'];
+const MIGRATION_ATTESTATION_EVIDENCE = 'core_schema_contract';
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -85,14 +86,14 @@ async function migrationAttestation(fetchImpl, api, token, expectedMigration, ti
   } catch {
     throw new Error('FAIL migration attestation: MIGRATION_ATTESTATION_UNAVAILABLE');
   }
-  if (!object(attestation) || attestation.schemaVersion !== 1 || typeof attestation.migrationHead !== 'string') {
+  if (!object(attestation) || attestation.schemaVersion !== 1 || typeof attestation.migrationHead !== 'string' || attestation.evidence !== MIGRATION_ATTESTATION_EVIDENCE) {
     throw new Error('FAIL migration attestation: MIGRATION_ATTESTATION_UNAVAILABLE');
   }
   if (attestation.migrationHead !== expectedMigration) {
     throw new Error('FAIL migration attestation: MIGRATION_ATTESTATION_DRIFT');
   }
-  log('PASS authenticated database migration attestation');
-  return Object.freeze({ schemaVersion: 1, migrationHead: attestation.migrationHead });
+  log('PASS authenticated database migration sentinel + core schema contract (full chain replay remains separate)');
+  return Object.freeze({ schemaVersion: 1, migrationHead: attestation.migrationHead, evidence: attestation.evidence });
 }
 
 /**
@@ -145,6 +146,7 @@ export async function runHostedReadiness(env = process.env, {
 async function selfTest() {
   const sha = '0123456789abcdef0123456789abcdef01234567';
   const migrationHead = '0099_migration_attestation';
+  const evidence = MIGRATION_ATTESTATION_EVIDENCE;
   const env = {
     BOOKING_LUMIN_READINESS: '1',
     BOOKING_LUMIN_API_BASE_URL: 'https://api.example.test',
@@ -156,14 +158,14 @@ async function selfTest() {
   const fake = async (url, options) => {
     seen.push({ path: url.pathname, options });
     if (url.pathname === '/version') return Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } });
-    if (url.pathname === '/api/staging/readiness/migration') return Response.json({ schemaVersion: 1, migrationHead }, { headers: { 'content-type': 'application/json' } });
+    if (url.pathname === '/api/staging/readiness/migration') return Response.json({ schemaVersion: 1, migrationHead, evidence }, { headers: { 'content-type': 'application/json' } });
     return new Response('', { status: url.pathname.endsWith('stripe-webhook') ? 405 : 401 });
   };
   const logs = [];
   const result = await runHostedReadiness(env, { fetchImpl: fake, log: value => logs.push(value) });
   assert.equal(result.releaseSha, sha);
   assert.equal(result.migrationHead, migrationHead);
-  assert.deepEqual(result.migrationAttestation, { schemaVersion: 1, migrationHead });
+  assert.deepEqual(result.migrationAttestation, { schemaVersion: 1, migrationHead, evidence });
   assert.deepEqual(result.edgeFunctions.map(item => item.name), DEFAULT_EDGE_FUNCTIONS);
   assert.equal(seen.length, 4);
   assert.ok(logs.every(value => !String(value).includes('project.supabase.co')));
@@ -174,24 +176,26 @@ async function selfTest() {
     if (url.pathname === '/api/staging/readiness/migration') return attestationBody === undefined ? new Response('', { status: 503 }) : Response.json(attestationBody, { headers: { 'content-type': 'application/json' } });
     return new Response('', { status: url.pathname.endsWith('stripe-webhook') ? edgeStatus : 405 });
   };
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead }, 404) }), /EDGE_FUNCTION_MISSING/);
-  await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_EDGE_FUNCTIONS: 'create-payment-intent' }, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead }, 404) }), /EDGE_FUNCTION_MISSING/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead }, 200) }), /EDGE_FUNCTION_UNVERIFIED/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha }, { schemaVersion: 1, migrationHead }) }), /MIGRATION_METADATA_UNAVAILABLE/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead: '0098_refund_event_shape_authority' }, { schemaVersion: 1, migrationHead }) }), /MIGRATION_METADATA_DRIFT/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead: '0098_refund_event_shape_authority' }) }), /MIGRATION_ATTESTATION_DRIFT/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead, evidence }, 404) }), /EDGE_FUNCTION_MISSING/);
+  await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_EDGE_FUNCTIONS: 'create-payment-intent' }, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead, evidence }, 404) }), /EDGE_FUNCTION_MISSING/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead, evidence }, 200) }), /EDGE_FUNCTION_UNVERIFIED/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha }, { schemaVersion: 1, migrationHead, evidence }) }), /MIGRATION_METADATA_UNAVAILABLE/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead: '0098_refund_event_shape_authority' }, { schemaVersion: 1, migrationHead, evidence }) }), /MIGRATION_METADATA_DRIFT/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead: '0098_refund_event_shape_authority', evidence }) }), /MIGRATION_ATTESTATION_DRIFT/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { schemaVersion: 1, migrationHead, evidence: 'full_chain' }) }), /MIGRATION_ATTESTATION_UNAVAILABLE/);
   await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, undefined) }), /MIGRATION_ATTESTATION_UNAVAILABLE/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: 'fedcba98765432100123456789abcdef01234567', migrationHead }, { schemaVersion: 1, migrationHead }) }), /RELEASE_MISMATCH/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: fixture({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: 'fedcba98765432100123456789abcdef01234567', migrationHead }, { schemaVersion: 1, migrationHead, evidence }) }), /RELEASE_MISMATCH/);
   await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_MIGRATION_ATTESTATION_TOKEN: undefined }, { fetchImpl: () => { throw new Error('must not fetch'); } }), /CONFIG/);
-  console.log('PASS hosted-readiness self-test: opt-in, release binding, authenticated migration attestation, migration drift, missing Edge Function, bounded responses, no secret logging');
+  console.log('PASS hosted-readiness self-test: opt-in, release binding, authenticated migration sentinel/core contract, migration drift, forged evidence, missing Edge Function, bounded responses, no secret logging');
 }
 
 const help = `Usage: npm run readiness:phase-a
 Requires BOOKING_LUMIN_READINESS=1, BOOKING_LUMIN_API_BASE_URL,
 BOOKING_LUMIN_SUPABASE_URL and BOOKING_LUMIN_MIGRATION_ATTESTATION_TOKEN.
 It is read-only and fails closed unless public release metadata and the
-authenticated database attestation match the checked-in migration head; it
-also rejects missing required staging Edge Functions. Use --self-test for
+  authenticated database sentinel/core-schema contract match the checked-in
+  migration head; this does not claim full historical-chain proof. It also
+  rejects missing required staging Edge Functions. Use --self-test for
 offline fixtures.`;
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
