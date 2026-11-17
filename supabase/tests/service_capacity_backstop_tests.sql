@@ -32,12 +32,13 @@ insert into public.tenants (id, name, slug, timezone, currency, status)
 values ('c2000000-0000-4000-8000-000000000001', 'Capacity backstop',
         'service-capacity-backstop', 'UTC', 'USD', 'active');
 
-insert into public.services (id, tenant_id, archetype, name, currency, base_price, duration_minutes)
+insert into public.services
+  (id, tenant_id, archetype, name, currency, base_price, duration_minutes, rental)
 values
   ('c2000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001',
-   'simple', 'Scheduled service', 'USD', 1000, 60),
+   'simple', 'Scheduled service', 'USD', 1000, 60, null),
   ('c2000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000001',
-   'simple', 'Unscheduled service', 'USD', 1000, 60),
+   'simple', 'Unscheduled service', 'USD', 1000, 60, null),
   ('c2000000-0000-4000-8000-000000000004', 'c2000000-0000-4000-8000-000000000001',
    'rental', 'Rental service', 'USD', 1000, 60,
    '{"periodMinutes":60,"pricePerPeriod":1000,"minPeriods":1,"maxPeriods":2,"depositAmount":0}');
