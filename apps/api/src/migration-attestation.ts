@@ -2,14 +2,17 @@ import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Pool} from 'pg';
 
 export const MIGRATION_ATTESTATION_HEAD='0099_migration_attestation' as const;
-export type MigrationAttestation=Readonly<{schemaVersion:1;migrationHead:typeof MIGRATION_ATTESTATION_HEAD}>;
+export const MIGRATION_ATTESTATION_EVIDENCE='core_schema_contract' as const;
+export type MigrationAttestation=Readonly<{schemaVersion:1;migrationHead:typeof MIGRATION_ATTESTATION_HEAD;evidence:typeof MIGRATION_ATTESTATION_EVIDENCE}>;
 type IdentityVerifier=(token:string)=>Promise<{userId:string}|null>;
 
 /**
- * Reads the attestation row through the server-side service role. The checked-in
- * migration creates the row only after the full chain reaches 0099, so a missing
- * table/row or stale value fails closed. No tenant, timestamp, or database detail
- * is returned to the HTTP boundary.
+ * Reads the attestation row and a small core-schema contract through the
+ * server-side service role. This proves the 0099 sentinel and the listed
+ * booking/payment objects are present; it deliberately does NOT claim that
+ * every historical migration is present or unmodified. Full-chain replay
+ * remains a separate disposable-Postgres/CI evidence gate. No tenant,
+ * timestamp, or database detail is returned to the HTTP boundary.
  */
 export function createMigrationAttestationReader(pool:Pool):()=>Promise<MigrationAttestation>{
  return async()=>{
@@ -17,15 +20,41 @@ export function createMigrationAttestationReader(pool:Pool):()=>Promise<Migratio
   try{
    await client.query('begin');
    await client.query('set local role service_role');
-   const result=await client.query<{migrationHead:string}>(
+   const result=await client.query<{
+     migrationHead:string;
+     evidence:string;
+    tenants:boolean;
+    services:boolean;
+    bookings:boolean;
+    payments:boolean;
+    availabilityRules:boolean;
+    availabilityOverrides:boolean;
+    capacityHolds:boolean;
+    resources:boolean;
+    resourceReservations:boolean;
+    confirmationAuthority:boolean;
+   }>(
     `select migration_head as "migrationHead"
+          ,evidence
+          ,to_regclass('public.tenants') is not null as "tenants"
+          ,to_regclass('public.services') is not null as "services"
+          ,to_regclass('public.bookings') is not null as "bookings"
+          ,to_regclass('public.payments') is not null as "payments"
+          ,to_regclass('public.availability_rules') is not null as "availabilityRules"
+          ,to_regclass('public.availability_overrides') is not null as "availabilityOverrides"
+          ,to_regclass('public.capacity_holds') is not null as "capacityHolds"
+          ,to_regclass('public.resources') is not null as "resources"
+          ,to_regclass('public.resource_reservations') is not null as "resourceReservations"
+          ,to_regprocedure('public.confirm_succeeded_payment(uuid)') is not null as "confirmationAuthority"
        from public.booking_lumin_schema_attestation
       where id=true`,
    );
    const row=result.rows[0];
-   if(row?.migrationHead!==MIGRATION_ATTESTATION_HEAD)throw new Error('MIGRATION_ATTESTATION_MISMATCH');
+   if(row?.migrationHead!==MIGRATION_ATTESTATION_HEAD||row.evidence!==MIGRATION_ATTESTATION_EVIDENCE)throw new Error('MIGRATION_ATTESTATION_MISMATCH');
+   const coreSchema=[row.tenants,row.services,row.bookings,row.payments,row.availabilityRules,row.availabilityOverrides,row.capacityHolds,row.resources,row.resourceReservations,row.confirmationAuthority];
+   if(coreSchema.some(value=>value!==true))throw new Error('MIGRATION_ATTESTATION_SCHEMA_MISMATCH');
    await client.query('commit');
-   return Object.freeze({schemaVersion:1 as const,migrationHead:MIGRATION_ATTESTATION_HEAD});
+   return Object.freeze({schemaVersion:1 as const,migrationHead:MIGRATION_ATTESTATION_HEAD,evidence:MIGRATION_ATTESTATION_EVIDENCE});
   }catch(error){
    await client.query('rollback').catch(()=>{});
    throw error;
