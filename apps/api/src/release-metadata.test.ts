@@ -16,7 +16,7 @@ describe('safe optional release metadata',()=>{
  it.each([undefined,'',sha.toUpperCase(),sha.slice(1),sha+'0',' '+sha,sha+'\n','g'.repeat(40),'private credential'])('does not echo invalid SHA %j',RENDER_GIT_COMMIT=>{
   expect(readReleaseMetadata({RENDER_GIT_COMMIT}).releaseSha).toBeNull();
  });
- it.each([undefined,'','0098','0098 bad','0098_Refund_Event','0098_refund-event','0098_refund_event\n','private credential'])('does not echo invalid migration head %j',BOOKING_LUMIN_MIGRATION_HEAD=>{
+ it.each([undefined,'','0098','0098 bad','1234_foo','0098_','0098_Refund_Event','0098_refund-event','0098_refund_event\n','private credential'])('does not echo invalid migration head %j',BOOKING_LUMIN_MIGRATION_HEAD=>{
   expect(readReleaseMetadata({BOOKING_LUMIN_MIGRATION_HEAD}).migrationHead).toBeNull();
  });
  it('never spreads raw environment or derives identity from other variables',()=>{
