@@ -7,6 +7,8 @@
   "scripts": {
     "smoke:phase-a": "node scripts/phase-a-staging-smoke.mjs",
     "golden:phase-a": "node scripts/phase-a-staging-golden.mjs",
+    "readiness:phase-a": "node scripts/phase-a-hosted-readiness.mjs",
+    "readiness:phase-a:self-test": "node scripts/phase-a-hosted-readiness.mjs --self-test",
     "migrate:phase-a": "node scripts/phase-a-local-migrate.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
@@ -14,3 +16,4 @@
   },
   "engines": { "node": ">=20" }
 }
+

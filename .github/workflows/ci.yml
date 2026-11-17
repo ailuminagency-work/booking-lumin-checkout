@@ -26,6 +26,8 @@ jobs:
         run: |
           node scripts/validate-staging-frontend-config.test.mjs
           node scripts/validate-staging-frontend-config.mjs --self-test
+      - name: Hosted readiness preflight safety regressions
+        run: npm run readiness:phase-a:self-test
       - name: Mock-only staging observability verifier regressions
         run: |
           node scripts/phase-a-staging-observability.mjs --selftest
@@ -1104,3 +1106,4 @@ jobs:
         # than stopping at the first failure -- so one red harness still reports the
         # others. It exits non-zero if any failed.
         run: bash apps/api/scripts/run-integration.sh
+
