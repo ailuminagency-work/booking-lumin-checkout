@@ -67,6 +67,9 @@ jobs:
           printf 'typechecking %d file(s):\n' "${#files[@]}"
           printf '  %s\n' "${files[@]}"
           deno check "${files[@]}"
+      - name: Payment failure ordering regression tests
+        working-directory: supabase/functions
+        run: deno test _shared/stripe.test.ts
 
   database:
     name: database (migrations + RLS attack suite)

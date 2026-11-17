@@ -287,9 +287,11 @@ function intOrNull(v: unknown): number | null {
  * (and mirrored in supabase/functions/_shared/stripe.ts) so the partial-vs-full
  * and dedupe-key behavior is unit-tested offline.
  *
- *  - `refundedTotal` — cumulative amount refunded so far (minor units). A Charge
- *    object carries `amount_refunded`; a bare Refund object carries only its own
- *    `amount` (best-effort cumulative).
+ *  - `refundedTotal` — the event's refund amount (minor units). A Charge object
+ *    carries the cumulative `amount_refunded`; a bare Refund object carries
+ *    only its own individual `amount`.
+ *  - `isCumulative` — whether the event amount is a provider cumulative total
+ *    (Charge) or an individual refund amount (bare Refund).
  *  - `isFullyRefunded` — true ONLY when refundedTotal ≥ the server amount. A
  *    PARTIAL refund is NOT full, so the booking must NOT be driven to `refunded`
  *    (payments.state → partially_refunded; the booking stays confirmed/completed).
@@ -301,13 +303,15 @@ export interface RefundOutcome {
   refundId: string | null;
   refundedTotal: number | null;
   isFullyRefunded: boolean;
+  isCumulative: boolean;
 }
 
 export function interpretRefundEvent(raw: unknown, serverAmount: number): RefundOutcome {
   const ev = raw as { data?: { object?: Record<string, unknown> } };
   const obj = (ev?.data?.object ?? {}) as Record<string, unknown>;
 
-  let refundedTotal = intOrNull(obj.amount_refunded);
+  let refundedTotal: number | null = null;
+  let isCumulative = false;
   let refundId: string | null = null;
 
   const refunds = (obj.refunds as { data?: unknown } | undefined)?.data;
@@ -317,11 +321,17 @@ export function interpretRefundEvent(raw: unknown, serverAmount: number): Refund
   }
   if (obj.object === "refund") {
     if (typeof obj.id === "string") refundId = obj.id;
-    if (refundedTotal === null) refundedTotal = intOrNull(obj.amount);
+    // A bare Stripe Refund carries this refund's amount, not a cumulative
+    // amount_refunded total. The database authority accumulates the deltas.
+    refundedTotal = intOrNull(obj.amount);
+  } else {
+    // Charge objects carry Stripe's cumulative amount_refunded value.
+    refundedTotal = intOrNull(obj.amount_refunded);
+    isCumulative = refundedTotal !== null;
   }
 
   const isFullyRefunded = refundedTotal !== null && refundedTotal >= serverAmount;
-  return { refundId, refundedTotal, isFullyRefunded };
+  return { refundId, refundedTotal, isFullyRefunded, isCumulative };
 }
 
 /** metadata[key]=value form fields from an optional metadata bag. */

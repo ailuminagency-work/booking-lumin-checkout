@@ -175,14 +175,14 @@ begin
     'c0000000-0000-0000-0000-0000000000b3', 1, interval '15 minutes');
   if r.result <> 'NO_CAPACITY' then raise exception 'FAIL C4a: b3 got % while b2 active', r.result; end if;
 
-  -- Confirm b2 exactly as the runtime does: advance the booking state machine
-  -- to confirmed AND consume the hold. Capacity is now carried by the confirmed
-  -- booking (its hold consumed, no longer active).
+  -- Confirm b2 exactly as the runtime does: advance the booking to
+  -- pending_payment, consume the hold, then enter confirmed. The R1b
+  -- service-capacity backstop requires the consumed hold before confirmation.
   update public.bookings set state = 'pending_payment' where id = 'c0000000-0000-0000-0000-0000000000b2';
-  update public.bookings set state = 'confirmed'       where id = 'c0000000-0000-0000-0000-0000000000b2';
   if not lumin.consume_hold('c0000000-0000-0000-0000-0000000000b2') then
     raise exception 'FAIL C4b: consume_hold(b2) did not consume an active hold';
   end if;
+  update public.bookings set state = 'confirmed'       where id = 'c0000000-0000-0000-0000-0000000000b2';
   select * into r from lumin.reserve_capacity(
     'cccccccc-cccc-cccc-cccc-cccccccccccc', 'c0000000-0000-0000-0000-000000000001',
     timestamptz '2026-01-05 16:00:00+00', timestamptz '2026-01-05 18:00:00+00',
@@ -229,10 +229,10 @@ end;
 $t$;
 
 -- ============================================================================
--- ATTACK C6 — a confirmed booking with NO hold row still consumes capacity
--- (defense against an expired/lost hold silently opening an oversell). Insert a
--- confirmed booking on a fresh slot with no hold; a reservation on that slot is
--- refused.
+-- ATTACK C6 — a capacity-limited service cannot be directly confirmed without
+-- a hold. After the direct-write attempt is rejected, the same booking follows
+-- the legitimate reserve -> consume -> confirm path, and a second reservation
+-- on that slot is refused.
 -- ============================================================================
 do $t$
 declare
@@ -246,9 +246,27 @@ begin
      timestamptz '2026-01-06 16:00:00+00', timestamptz '2026-01-06 18:00:00+00',
      'c0000000-0000-0000-0000-0000000000c1', 'idem-cap-booking-0009');
   update public.bookings set state = 'pending_payment' where id = 'c0000000-0000-0000-0000-0000000000b9';
-  update public.bookings set state = 'confirmed'       where id = 'c0000000-0000-0000-0000-0000000000b9';
+  begin
+    update public.bookings set state = 'confirmed'
+     where id = 'c0000000-0000-0000-0000-0000000000b9';
+    raise exception 'FAIL C6a: direct confirmation without a hold was accepted';
+  exception when sqlstate '40001' then
+    raise notice 'PASS C6a: direct confirmation without a hold was rejected';
+  end;
 
-  -- New draft booking on the SAME fresh slot, no hold exists for b9.
+  select * into r from lumin.reserve_capacity(
+    'cccccccc-cccc-cccc-cccc-cccccccccccc', 'c0000000-0000-0000-0000-000000000001',
+    timestamptz '2026-01-06 16:00:00+00', timestamptz '2026-01-06 18:00:00+00',
+    'c0000000-0000-0000-0000-0000000000b9', 1, interval '15 minutes');
+  if r.result <> 'GRANTED' then raise exception 'FAIL C6b: b9 got % while creating its authoritative hold', r.result; end if;
+  if not lumin.consume_hold('c0000000-0000-0000-0000-0000000000b9') then
+    raise exception 'FAIL C6c: consume_hold(b9) did not consume an active hold';
+  end if;
+  update public.bookings set state = 'confirmed'
+   where id = 'c0000000-0000-0000-0000-0000000000b9';
+
+  -- New draft booking on the SAME fresh slot; b9 now carries the consumed
+  -- authority and must keep the slot unavailable.
   insert into public.bookings
     (id, tenant_id, reference, state, selection, pricing, slot_start, slot_end, customer_id, idempotency_key)
   values
@@ -261,9 +279,9 @@ begin
     timestamptz '2026-01-06 16:00:00+00', timestamptz '2026-01-06 18:00:00+00',
     'c0000000-0000-0000-0000-0000000000ba', 1, interval '15 minutes');
   if r.result <> 'NO_CAPACITY' then
-    raise exception 'FAIL C6: reserve over a hold-less CONFIRMED booking got % (expected NO_CAPACITY)', r.result;
+    raise exception 'FAIL C6: reserve over a confirmed booking with consumed authority got % (expected NO_CAPACITY)', r.result;
   end if;
-  raise notice 'PASS C6: a confirmed booking with no active hold still consumes capacity';
+  raise notice 'PASS C6: direct confirmation is backstopped and the consumed hold keeps capacity locked';
 end;
 $t$;
 
@@ -325,3 +343,4 @@ end;
 $t$;
 
 rollback;
+
