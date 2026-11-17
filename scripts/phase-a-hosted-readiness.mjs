@@ -145,7 +145,7 @@ export async function runHostedReadiness(env = process.env, {
 
 async function selfTest() {
   const sha = '0123456789abcdef0123456789abcdef01234567';
-  const migrationHead = '0099_migration_attestation';
+  const migrationHead = '0100_security_advisor_hardening';
   const evidence = MIGRATION_ATTESTATION_EVIDENCE;
   const env = {
     BOOKING_LUMIN_READINESS: '1',
