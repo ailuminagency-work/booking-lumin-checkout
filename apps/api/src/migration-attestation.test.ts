@@ -1,6 +1,21 @@
 import {describe,expect,it,vi} from 'vitest';
 import type {IncomingMessage,ServerResponse} from 'node:http';
-import {createMigrationAttestationHandler,createMigrationAttestationReader,MIGRATION_ATTESTATION_HEAD} from './migration-attestation';
+import {createMigrationAttestationHandler,createMigrationAttestationReader,MIGRATION_ATTESTATION_EVIDENCE,MIGRATION_ATTESTATION_HEAD} from './migration-attestation';
+
+const completeRow={
+ migrationHead:MIGRATION_ATTESTATION_HEAD,
+ evidence:MIGRATION_ATTESTATION_EVIDENCE,
+ tenants:true,
+ services:true,
+ bookings:true,
+ payments:true,
+ availabilityRules:true,
+ availabilityOverrides:true,
+ capacityHolds:true,
+ resources:true,
+ resourceReservations:true,
+ confirmationAuthority:true,
+};
 
 function poolFor(rows:unknown[],failure?:Error){
  const query=vi.fn(async(sql:string)=>{
@@ -31,19 +46,27 @@ function response(){
 
 describe('server-side migration attestation',()=>{
  it('reads only the fixed row through service_role and returns no database detail',async()=>{
-  const fixture=poolFor([{migrationHead:MIGRATION_ATTESTATION_HEAD}]);
-  await expect(createMigrationAttestationReader(fixture.pool)()).resolves.toEqual({schemaVersion:1,migrationHead:MIGRATION_ATTESTATION_HEAD});
+  const fixture=poolFor([completeRow]);
+  await expect(createMigrationAttestationReader(fixture.pool)()).resolves.toEqual({schemaVersion:1,migrationHead:MIGRATION_ATTESTATION_HEAD,evidence:MIGRATION_ATTESTATION_EVIDENCE});
   expect(fixture.query).toHaveBeenNthCalledWith(2,'set local role service_role');
   expect(fixture.query).toHaveBeenNthCalledWith(3,expect.stringContaining('booking_lumin_schema_attestation'));
   expect(fixture.query).toHaveBeenCalledWith('commit');
   expect(fixture.release).toHaveBeenCalledOnce();
  });
- const malformedRows:unknown[][]=[[],[{migrationHead:'0098_refund_event_shape_authority'}],[{migrationHead:'private credential'}]];
+ const malformedRows:unknown[][]=[[],[{...completeRow,migrationHead:'0098_refund_event_shape_authority'}],[{...completeRow,migrationHead:'private credential'}],[{...completeRow,evidence:'full_chain'}]];
  it.each(malformedRows.map(rows=>({rows})))('fails closed for missing or stale/forged row %j',async({rows})=>{
   const fixture=poolFor(rows);
   await expect(createMigrationAttestationReader(fixture.pool)()).rejects.toThrow('MIGRATION_ATTESTATION_MISMATCH');
   expect(fixture.query).toHaveBeenCalledWith('rollback');
   expect(fixture.release).toHaveBeenCalledOnce();
+ });
+ it('fails closed when a core object or confirmation authority is missing despite the current sentinel',async()=>{
+  for(const missing of ['services','confirmationAuthority'] as const){
+   const fixture=poolFor([{...completeRow,[missing]:false}]);
+   await expect(createMigrationAttestationReader(fixture.pool)()).rejects.toThrow('MIGRATION_ATTESTATION_SCHEMA_MISMATCH');
+   expect(fixture.query).toHaveBeenCalledWith('rollback');
+   expect(fixture.release).toHaveBeenCalledOnce();
+  }
  });
  it('propagates a failure for the HTTP boundary to redact',async()=>{
   const fixture=poolFor([],new Error('database unavailable')); 
@@ -55,7 +78,7 @@ describe('server-side migration attestation',()=>{
 describe('authenticated staging migration attestation boundary',()=>{
  const token='staging-token-123456';
  const path='/api/staging/readiness/migration';
- const attestation={schemaVersion:1 as const,migrationHead:MIGRATION_ATTESTATION_HEAD};
+ const attestation={schemaVersion:1 as const,migrationHead:MIGRATION_ATTESTATION_HEAD,evidence:MIGRATION_ATTESTATION_EVIDENCE};
 
  it('returns the fixed attestation only after bearer verification',async()=>{
   const verifyIdentity=vi.fn(async(received:string)=>({userId:'owner-1',sessionId:'session-1',expiresAt:'2099-01-01T00:00:00.000Z'}));
