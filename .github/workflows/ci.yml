@@ -111,6 +111,7 @@ jobs:
           for s in \
             platform_financial_minimization_tests \
             capacity_tests \
+            service_capacity_backstop_tests \
             resource_rls_tests \
             resource_tenant_integrity_tests \
             resource_quantity_tests \
