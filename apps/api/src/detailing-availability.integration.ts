@@ -27,10 +27,14 @@ try{
  const issued=await req(`/api/detailing-installations/${receipt.installationId}/sessions`,{},'',origin);assert.equal(issued.status,200);const token=issued.json.data.sessionToken;
  const url='/api/detailing-flow-sessions/availability?'+new URLSearchParams({from,to}),availability=()=>req(url,undefined,token,origin);
  const empty=await availability();assert.equal(empty.status,200,JSON.stringify(empty));assert.equal(empty.json.data.versionId,receipt.versionId);assert.equal(empty.json.data.installationId,receipt.installationId);assert.equal(empty.json.data.expiresAt,issued.json.data.expiresAt);assert.equal(empty.json.data.serviceId,service);assert.equal(empty.json.data.durationMinutes,60);assert.equal(empty.json.data.timezone,'UTC');assert.equal(empty.json.data.slots.length,15);assert.equal(empty.json.data.slots[0].start,from.replace('00:00:00','09:00:00'));assert.ok(empty.json.data.slots.every((s:{remainingCapacity:number})=>s.remainingCapacity===1));assert.ok(!JSON.stringify(empty).includes(tenant));assert.ok(!JSON.stringify(empty).includes(actor));assert.ok(!JSON.stringify(empty).includes('15000'));
- // Explicit local fixture consumers, not a new customer hold/confirmation writer.
+ // Explicit local fixture consumer, not a new customer hold/confirmation writer.
+ // Seed the consumed hold before entering confirmed so migration 0095 sees the
+ // same authoritative capacity proof as the hosted confirmation path.
  const start=empty.json.data.slots[0].start,end=empty.json.data.slots[0].end;
- await pool.query('insert into public.bookings(id,tenant_id,reference,state,selection,slot_start,slot_end,idempotency_key) values($1,$2,$3,$4,$5::jsonb,$6,$7,$8)',[id(30),tenant,'LMN-DETAIL-AVAIL-FIXTURE','confirmed',JSON.stringify({serviceId:service}),start,end,'detailing-availability-fixture-0001']);
+ await pool.query('insert into public.bookings(id,tenant_id,reference,state,selection,slot_start,slot_end,idempotency_key) values($1,$2,$3,$4,$5::jsonb,$6,$7,$8)',[id(30),tenant,'LMN-DETAIL-AVAIL-FIXTURE','draft',JSON.stringify({serviceId:service}),start,end,'detailing-availability-fixture-0001']);
  await pool.query("insert into public.capacity_holds(id,tenant_id,service_id,slot_start,slot_end,booking_id,hold_key,status,expires_at) values($1,$2,$3,$4,$5,$6,$7,'consumed',clock_timestamp()-interval '1 minute')",[id(31),tenant,service,start,end,id(30),'detailing-availability-consumed-0001']);
+ await pool.query('update public.bookings set state=$2 where id=$1',[id(30),'pending_payment']);
+ await pool.query('update public.bookings set state=$2 where id=$1',[id(30),'confirmed']);
  const before=await fingerprint(),occupied=await availability();assert.equal(occupied.status,200,JSON.stringify(occupied));assert.equal(occupied.json.data.slots.length,13);assert.equal(occupied.json.data.slots[0].start,from.replace('00:00:00','10:00:00'));assert.deepEqual(await availability(),occupied);
  for(const suffix of ['&tenantId='+foreignTenant,'&serviceId='+service,'&price=1','&from='+from])assert.equal((await req(url+suffix,undefined,token,origin)).status,400);
  assert.equal((await req(url,undefined,token,ownerOrigin)).status,403);assert.equal((await req(url,undefined,'bad',origin)).status,401);
@@ -57,3 +61,4 @@ try{
  assert.deepEqual(await fingerprint(),before);
  console.log('PASS actual HTTP schema7 canonical slots, pinned60minute capacity1, consumed confirmed-booking exclusion, horizon, foreign/role/currency/catalog/schedule/alias/revoked/expiry denial, readonly catalog/publication/financial fingerprints');
 }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await pool.end();}
+
