@@ -22,3 +22,6 @@ export {
   pressureWashing,
   landscaping,
 } from "./templates";
+
+export {getBusinessTemplateDefaults} from "./business-defaults";
+export type {BusinessTemplateDefaults} from "./business-defaults";

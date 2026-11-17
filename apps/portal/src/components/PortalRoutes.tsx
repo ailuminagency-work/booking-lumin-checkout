@@ -1,40 +1,28 @@
-import type { ReactNode } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AvailabilityPage } from "../pages/Availability";
-import { BookingsPage } from "../pages/Bookings";
-import { CheckoutConfigPage } from "../pages/CheckoutConfig";
-import { CustomersPage } from "../pages/Customers";
-import { DashboardPage } from "../pages/Dashboard";
-import { IntegrationsPage } from "../pages/Integrations";
-import { MediaLibraryPage } from "../pages/MediaLibrary";
-import { ResourcesPage } from "../pages/Resources";
-import { ServiceDetailPage, ServicesPage } from "../pages/Services";
-import { SettingsPage } from "../pages/Settings";
-
-const LEGACY: Readonly<Record<string, string>> = {
-  "/availability": "/calendar/availability",
-  "/resources": "/services/resources",
-  "/checkout": "/embed",
-};
-
-/** Kept outside mode-specific content so login/error paths also honor old links. */
-export function LegacyRedirects() {
-  const location = useLocation();
-  const destination = LEGACY[location.pathname.replace(/\/$/, "")];
-  return destination ? <Navigate replace to={{ pathname: destination, search: location.search, hash: location.hash }} /> : null;
-}
+import { lazy, Suspense, type ReactNode } from "react";
+import { Link, Route, Routes } from "react-router-dom";
+const AvailabilityPage = lazy(() => import("../pages/Availability").then(module => ({ default: module.AvailabilityPage })));
+const BookingsPage = lazy(() => import("../pages/Bookings").then(module => ({ default: module.BookingsPage })));
+const CheckoutConfigPage = lazy(() => import("../pages/CheckoutConfig").then(module => ({ default: module.CheckoutConfigPage })));
+const CustomersPage = lazy(() => import("../pages/Customers").then(module => ({ default: module.CustomersPage })));
+const DashboardPage = lazy(() => import("../pages/Dashboard").then(module => ({ default: module.DashboardPage })));
+const IntegrationsPage = lazy(() => import("../pages/Integrations").then(module => ({ default: module.IntegrationsPage })));
+const MediaLibraryPage = lazy(() => import("../pages/MediaLibrary").then(module => ({ default: module.MediaLibraryPage })));
+const ResourcesPage = lazy(() => import("../pages/Resources").then(module => ({ default: module.ResourcesPage })));
+const ServiceDetailPage = lazy(() => import("../pages/Services").then(module => ({ default: module.ServiceDetailPage })));
+const ServicesPage = lazy(() => import("../pages/Services").then(module => ({ default: module.ServicesPage })));
+const SettingsPage = lazy(() => import("../pages/Settings").then(module => ({ default: module.SettingsPage })));
 
 export function UnavailablePage({ title, children }: { title: string; children?: ReactNode }) {
   return <section><h1>{title}</h1><p role="status">This section is not available yet.</p><p>No changes can be made here. Existing bookings and settings are unchanged.</p>{children}</section>;
 }
 
-export function PortalRoutes({ mode, bookings, services, embed, workers }: { mode: "demo" | "connected"; bookings?: ReactNode; services?: ReactNode; embed?: ReactNode; workers?: ReactNode }) {
+export function PortalRoutes({ mode, bookings, bookingDetail, services, embed, workers, settings }: { mode: "demo" | "connected"; bookings?: ReactNode; bookingDetail?: ReactNode; services?: ReactNode; embed?: ReactNode; workers?: ReactNode; settings?: ReactNode }) {
   const demo = mode === "demo";
   const page = (title: string, content: ReactNode) => demo ? content : <UnavailablePage title={title} />;
-  return <Routes>
-    <Route index element={demo ? <DashboardPage /> : <section><h1>Dashboard</h1><p>Use Bookings to review unconfirmed requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View requests</Link> · <Link to="/services">View services</Link></p></section>} />
+  return <Suspense fallback={<p role="status" aria-live="polite">Loading page…</p>}><Routes>
+    <Route index element={demo ? <DashboardPage /> : <section><h1>Dashboard</h1><p>Use Bookings to review bookings and requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View bookings</Link> · <Link to="/services">View services</Link></p></section>} />
     <Route path="bookings" element={demo ? <BookingsPage /> : bookings} />
-    <Route path="bookings/:bookingId" element={<UnavailablePage title="Booking detail" />} />
+    <Route path="bookings/:bookingId" element={!demo&&bookingDetail?bookingDetail:<UnavailablePage title="Booking detail" />} />
     <Route path="calendar" element={<UnavailablePage title="Calendar">{demo && <p><Link to="/calendar/availability">View demo availability settings</Link></p>}</UnavailablePage>} />
     <Route path="calendar/availability" element={page("Availability settings", <AvailabilityPage />)} />
     <Route path="calendar/*" element={<UnavailablePage title="Calendar" />} />
@@ -54,9 +42,9 @@ export function PortalRoutes({ mode, bookings, services, embed, workers }: { mod
     <Route path="media" element={page("Media", <MediaLibraryPage />)} />
     <Route path="integrations" element={page("Integrations", <IntegrationsPage />)} />
     <Route path="integrations/*" element={<UnavailablePage title="Integrations" />} />
-    <Route path="settings" element={page("Settings", <SettingsPage />)} />
-    <Route path="settings/business" element={page("Business settings", <SettingsPage />)} />
-    <Route path="settings/*" element={<UnavailablePage title="Settings" />} />
+    <Route path="settings" element={demo?<SettingsPage />:settings??<UnavailablePage title="Settings" />} />
+    <Route path="settings/business" element={demo?<SettingsPage />:settings??<UnavailablePage title="Business settings" />} />
+    <Route path="settings/*" element={!demo&&settings?settings:<UnavailablePage title="Settings" />} />
     <Route path="*" element={<section><h1>Page not found</h1><Link to="/">Return to Dashboard</Link></section>} />
-  </Routes>;
+  </Routes></Suspense>;
 }

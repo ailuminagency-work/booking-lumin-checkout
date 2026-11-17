@@ -15,9 +15,9 @@ export class ErrorBoundary extends Component<Props, State> {
     return { error };
   }
 
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Dev aid only; messages shown to customers stay generic.
-    console.error("Checkout crashed", error, info);
+  override componentDidCatch(_error: Error, _info: ErrorInfo): void {
+    // Keep exception messages and component details out of customer diagnostics.
+    console.error("Checkout crashed", { code: "CHECKOUT_RENDER_FAILED" });
   }
 
   override render(): ReactNode {
@@ -25,7 +25,8 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-fallback" role="alert">
           <h2>Something went wrong</h2>
-          <p>Sorry — the checkout hit an unexpected error. Nothing has been charged.</p>
+          <p>Booking and payment status could not be verified. Check your booking or contact the business before trying another booking.</p>
+          <p>Reloading this page does not cancel a booking or payment.</p>
           <button
             type="button"
             className="btn primary"

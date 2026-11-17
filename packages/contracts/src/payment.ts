@@ -56,7 +56,24 @@ export interface PaymentProvider {
   createIntent(input: CreateIntentInput): Promise<PaymentIntentRef>;
   getIntent(intentId: string): Promise<PaymentIntentRef | null>;
   cancelIntent(intentId: string): Promise<void>;
-  refund(intentId: string, amount: Money): Promise<{ refundId: string }>;
+  /**
+   * There is deliberately NO refund operation on this contract.
+   *
+   * Booking Lumin never issues a refund. Not automatically, not on a schedule,
+   * not as compensation for a failed hold or an amount mismatch, and not behind
+   * an owner-facing button. Money leaves a merchant's account only when a
+   * person decides it should, in the provider's own dashboard, under that
+   * merchant's own credentials.
+   *
+   * What this system does instead is RECONCILE: a refund issued out there
+   * arrives here as a verified `refund_completed` webhook (see parseWebhook) and
+   * is recorded against the payment. Observing is allowed; initiating is not.
+   *
+   * An adapter MUST NOT add a refund method back. scripts/no-auto-refund-check.sh
+   * fails CI on any call to a provider refund endpoint, and the
+   * noRefundPrimitive tests in packages/adapters and packages/payments fail on
+   * any adapter that exposes one.
+   */
   /**
    * Verify authenticity and normalize a webhook delivery.
    * MUST throw PaymentError("WEBHOOK_UNVERIFIED") when the signature cannot

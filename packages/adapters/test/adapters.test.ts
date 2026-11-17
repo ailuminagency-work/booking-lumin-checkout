@@ -49,19 +49,16 @@ describe("mock payment: intents", () => {
   });
 });
 
-describe("mock payment: refunds", () => {
-  it("tracks partial vs full refunds and rejects over-refunds", async () => {
+describe("mock payment: refunds are not an operation", () => {
+  it("exposes no way to issue one, so a caller cannot develop against a capability production lacks", async () => {
     const provider = createMockPaymentProvider();
     const intent = await provider.createIntent(intentInput());
-    // refunding an uncaptured intent is illegal
-    await expect(provider.refund(intent.intentId, usd(1_000))).rejects.toBeInstanceOf(PaymentError);
     provider.completePayment(intent.intentId, "succeeded");
-    await provider.refund(intent.intentId, usd(4_000));
-    expect((await provider.getIntent(intent.intentId))?.state).toBe("partially_refunded");
-    await provider.refund(intent.intentId, usd(6_000));
-    expect((await provider.getIntent(intent.intentId))?.state).toBe("refunded");
-    await expect(provider.refund(intent.intentId, usd(1))).rejects.toBeInstanceOf(PaymentError);
-    expect(provider.listRefunds(intent.intentId)).toHaveLength(2);
+    expect((provider as unknown as Record<string, unknown>).refund).toBeUndefined();
+    // A succeeded payment stays succeeded: nothing in the adapter can move it to
+    // refunded. That transition belongs to reconciliation of an inbound
+    // charge.refunded, never to a call this system makes.
+    expect((await provider.getIntent(intent.intentId))?.state).toBe("succeeded");
   });
 });
 

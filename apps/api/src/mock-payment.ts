@@ -1,0 +1,123 @@
+import {isDeepStrictEqual} from 'node:util';
+import {PaidOptionSelection,PaidOptionService,validatePaidOptionAnswers} from '@lumin/workflow';
+import type {Pool,PoolClient} from 'pg';
+import {z} from 'zod';
+import {Service,Selection,type PriceBreakdown} from '@lumin/contracts';
+import {createPricingEngine} from '@lumin/core';
+import {ConfirmationInput,ConfirmationReceipt} from './confirmation';
+import {FlowError} from './repository';
+export const MockPaymentInput=ConfirmationInput;
+export const MockPaymentReceipt=ConfirmationReceipt.extend({provider:z.literal('staging_mock'),simulated:z.literal(true)}).strict();
+export type MockPaymentWriter=(actor:string,tenant:string,booking:string)=>Promise<z.infer<typeof MockPaymentReceipt>>;
+/**
+ * The staging mock provider currently has one intentionally narrow contract:
+ * it can complete only a simple service whose price is reconstructed from
+ * the tenant-scoped service row. A persisted V4 request may include one
+ * proven price-neutral choice; configurable/cart/rental selections stay
+ * fail-closed until their catalog, pricing, and (for rentals) resource-hold
+ * authority are available at this boundary. In particular, this seam must
+ * never fall back to a client supplied total. A rental implementation must
+ * also prove a tenant-owned, unexpired resource reservation and atomically
+ * reconcile its server-derived rental charge/deposit before it can widen this
+ * provider; this boundary deliberately performs neither operation yet.
+ */
+const SimpleMockPaymentSelection=z.object({serviceId:z.string().uuid()}).strict();
+export function mockPaymentsEnabled(env:Record<string,string|undefined>):boolean{
+ if(env.BOOKING_LUMIN_FAKE_PAYMENTS!=='1')return false;
+ if(env.BOOKING_LUMIN_ENV!=='staging')throw Error('Fake payments require explicit staging environment');
+ return true;
+}
+/** Only fake staging evidence. Never invoke with production databases. */
+export function createMockPaymentWriter(pool:Pool,env:Record<string,string|undefined>):MockPaymentWriter{
+ const enabled=mockPaymentsEnabled(env);
+ return async(actor,tenant,booking)=>{
+  if(!enabled)throw new FlowError('UNSUPPORTED_CONFIG');
+  booking=MockPaymentInput.parse({bookingId:booking}).bookingId;
+  const c=await pool.connect();let broken=false;
+  try{
+   await c.query('begin');await c.query("set local statement_timeout='5s'");await c.query('set local role service_role');
+   const member=await c.query(`select t.id from public.tenants t join public.tenant_members m on m.tenant_id=t.id where t.id=$1::uuid and m.user_id=$2::uuid and t.status='active' and m.role in ('BUSINESS_OWNER','BUSINESS_STAFF') for share of t,m`,[tenant,actor]);
+   if(member.rows.length!==1)throw new FlowError('FORBIDDEN');
+   const receipt=await mockPaymentInTransaction(c,tenant,booking);
+   await c.query('commit');return receipt;
+  }catch(error){
+   try{await c.query('rollback');}catch{broken=true;}
+   if(error instanceof FlowError)throw error;
+   const code=(error as {code?:string})?.code;
+   if(code==='42883'||code==='0A000')throw new FlowError('UNSUPPORTED_CONFIG');
+   if(['40001','40P01','22023','23505'].includes(code??''))throw new FlowError('CONFLICT');
+   throw new FlowError('INTERNAL_ERROR');
+  }finally{c.release(broken);}
+ };
+}
+
+/** Internal staging transaction primitive. Caller owns capability/owner authorization and the staging gate. */
+export async function mockPaymentInTransaction(c:PoolClient,tenant:string,booking:string):Promise<z.infer<typeof MockPaymentReceipt>>{
+   // Existing statement trigger acquires the policy/head prefix without touching rows.
+   await c.query('update public.bookings set payment_id=payment_id where false');
+   await c.query('lock table public.services,public.service_items,public.service_addons,public.service_questions,public.service_resources,public.refunds in share mode');
+   // Bounded staging seam: serialize payment writers, then payment rows before booking.
+   await c.query('lock table public.payments in share row exclusive mode');
+   const payments=await c.query('select * from public.payments where booking_id=$1::uuid order by id for update',[booking]);
+   const result=await c.query('select * from public.bookings where id=$1::uuid and tenant_id=$2::uuid for update',[booking,tenant]);
+   if(result.rows.length!==1)throw new FlowError('NOT_AVAILABLE');
+   await c.query('select public.assert_legacy_mock_payment_booking($1::uuid,$2::uuid)',[tenant,booking]);
+   const b=result.rows[0];const selection=Selection.safeParse(b.selection);
+   if(!selection.success)throw new FlowError('UNSUPPORTED_CONFIG');
+   // Parse the shared contract before the service lookup so a canonical
+   // rental selection reaches the same tenant/service boundary. The mock
+   // provider accepts only exact simple or persisted V4 neutral-choice shapes.
+   const simpleSelection=SimpleMockPaymentSelection.safeParse(b.selection);
+   let s;let questions:unknown[]=[];let pricedSelection:unknown={serviceId:selection.data.serviceId};
+   const optionSelection=PaidOptionSelection.safeParse(b.selection);
+   if(optionSelection.success){
+    // Only a persisted V4 request with current pinned eligibility reaches this path.
+    const proven=(await c.query('select public.paid_option_booking_service($1::uuid,$2::uuid) as service',[tenant,booking])).rows[0]?.service;
+    if(!proven)throw new FlowError('UNSUPPORTED_CONFIG');
+    const option=PaidOptionService.parse(proven);
+    pricedSelection=validatePaidOptionAnswers(option,optionSelection.data.answers);
+    if(option.id!==selection.data.serviceId)throw new FlowError('UNSUPPORTED_CONFIG');
+    s={id:option.id,tenant_id:tenant,name:option.name,archetype:'simple',currency:option.price.currency,base_price:option.price.amount,duration_minutes:option.durationMinutes};
+    questions=option.questions.map(q=>({...q,choices:q.choices.map(c=>({...c,priceDelta:0,priceMultiplierBp:10000}))}));
+   }else{
+    const service=await c.query(`select s.* from public.services s where s.id=$1::uuid and s.tenant_id=$2::uuid and s.active and s.archetype='simple' and s.tax_rate_bp=0 and s.rental is null and not exists(select 1 from public.service_items where service_id=s.id) and not exists(select 1 from public.service_addons where service_id=s.id) and not exists(select 1 from public.service_questions where service_id=s.id) and not exists(select 1 from public.service_resources where service_id=s.id)`,[selection.data.serviceId,tenant]);
+   if(service.rows.length!==1)throw new FlowError('UNSUPPORTED_CONFIG');
+   s=service.rows[0];
+   if(!simpleSelection.success)throw new FlowError('UNSUPPORTED_CONFIG');
+   // Keep the explicit runtime guard alongside the SQL predicate: mocked or
+   // substituted adapters must not widen this staging-only authority.
+   if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
+
+   }
+   if(s.archetype!=='simple')throw new FlowError('UNSUPPORTED_CONFIG');
+   const amount=Number(s.base_price);
+   if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
+   const pricing=createPricingEngine().price(Service.parse({id:s.id,tenantId:s.tenant_id,name:s.name,archetype:s.archetype,currency:s.currency,basePrice:amount,durationMinutes:s.duration_minutes,questions}),Selection.parse(pricedSelection));
+   if(pricing.total.amount!==amount||pricing.total.currency!==s.currency)throw new FlowError('UNSUPPORTED_CONFIG');
+   return stagingMockEvidenceInTransaction(c,tenant,booking,b,payments.rows,pricing);
+}
+
+/** Internal tail only: caller must prove eligibility, authorization and payment-before-booking locks. */
+export async function stagingMockEvidenceInTransaction(c:PoolClient,tenant:string,booking:string,b:Record<string,any>,payments:Record<string,any>[],pricing:PriceBreakdown,pricingAlreadyPersisted=false):Promise<z.infer<typeof MockPaymentReceipt>>{
+   const amount=pricing.total.amount,currency=pricing.total.currency;
+   if(!Number.isSafeInteger(amount)||amount<=0)throw new FlowError('UNSUPPORTED_CONFIG');
+   if(b.id!==booking||b.tenant_id.toLowerCase()!==tenant.toLowerCase()||(pricingAlreadyPersisted&&!isDeepStrictEqual(b.pricing,pricing)))throw new FlowError('CONFLICT');
+   // Every shared evidence caller must retain this exclusion, including callers
+   // with an independently computed price. V8 payment authority is unavailable.
+   await c.query('select public.assert_legacy_mock_payment_booking($1::uuid,$2::uuid)',[tenant,booking]);
+   let paymentId:string;
+   if(payments.length){
+    const p=payments[0];
+    if(!p||payments.length!==1||p.provider!=='staging_mock'||p.provider_intent_id!==`staging_mock:${booking}`||p.tenant_id.toLowerCase()!==tenant.toLowerCase()||p.id!==b.payment_id||p.state!=='succeeded'||Number(p.amount)!==amount||p.currency!==currency||b.pricing?.total?.amount!==amount||b.pricing?.total?.currency!==currency)throw new FlowError('CONFLICT');
+    paymentId=p.id;
+   }else{
+    if(b.state!=='draft'||b.payment_id!==null||(!pricingAlreadyPersisted&&Object.keys(b.pricing??{}).length))throw new FlowError('CONFLICT');
+    const inserted=await c.query(`insert into public.payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2::uuid,'staging_mock',$3,'succeeded',$4::bigint,$5) returning id`,[tenant,booking,`staging_mock:${booking}`,amount,currency]);
+    paymentId=z.string().uuid().parse(inserted.rows[0]?.id);
+    await c.query('update public.bookings set pricing=$1::jsonb,payment_id=$2::uuid where id=$3::uuid',[JSON.stringify(pricing),paymentId,booking]);
+   }
+   const confirmed=await c.query('select public.confirm_succeeded_payment($1::uuid) result',[paymentId]);
+   const receipt=ConfirmationReceipt.safeParse(confirmed.rows[0]?.result);
+   if(!receipt.success||receipt.data.bookingId!==booking||receipt.data.paymentId!==paymentId)throw new FlowError('INTERNAL_ERROR');
+   return{...receipt.data,provider:'staging_mock',simulated:true};
+}

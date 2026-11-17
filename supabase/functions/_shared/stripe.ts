@@ -27,6 +27,19 @@ export type PaymentState =
   | "refunded"
   | "partially_refunded";
 
+/**
+ * A provider can deliver a delayed payment_failed/canceled event after a
+ * succeeded or refund event. Those events must not regress an already
+ * terminal payment state (or reopen a booking for a second decision).
+ *
+ * "processing" is also the durable park state introduced by migration 0090;
+ * treating it as protected keeps an unresolved captured payment in the human
+ * review queue instead of allowing a delayed failure to erase that evidence.
+ */
+export function shouldIgnoreStalePaymentFailure(state: string): boolean {
+  return state === "processing" || state === "succeeded" || state === "refunded" || state === "partially_refunded";
+}
+
 export type PaymentIntentRef = {
   intentId: string;
   clientToken: string;
@@ -120,10 +133,17 @@ export function createStripeClient(opts: StripeClientOptions) {
   const now = opts.now ?? (() => Date.now());
 
   function authHeaders(extra?: Record<string, string>): Record<string, string> {
+    // `extra` is spread FIRST and the credential headers pinned LAST, so a
+    // caller-supplied header map can never override the bearer token or the
+    // content type. It used to be the other way round: `...extra` last meant
+    // any call site that ever passed a caller-derived map could silently
+    // replace Authorization. No current call site does -- the only key passed
+    // is a literal "Idempotency-Key" -- so this closes the class rather than a
+    // live hole, in the one function every Stripe request goes through.
     return {
+      ...extra,
       Authorization: `Bearer ${opts.secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
-      ...extra,
     };
   }
 
@@ -181,28 +201,10 @@ export function createStripeClient(opts: StripeClientOptions) {
       return toRef((await readJson(res)) as StripeIntent);
     },
 
-    /**
-     * Issue a refund against a PaymentIntent (F1 compensation / F4). Passing an
-     * explicit `amount` (minor units) makes a partial refund when it is less
-     * than the captured total and a full refund when it equals it; Stripe
-     * rejects an amount above the captured total (over-refund).
-     */
-    async refund(intentId: string, amount: Money): Promise<{ refundId: string }> {
-      if (!Number.isSafeInteger(amount.amount) || amount.amount <= 0) {
-        throw new PaymentError("INVALID_REQUEST", "refund amount must be a positive integer (minor units)");
-      }
-      const body = new URLSearchParams();
-      body.set("payment_intent", intentId);
-      body.set("amount", String(amount.amount));
-      const res = await doFetch(`${apiBase}/v1/refunds`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: body.toString(),
-      });
-      if (!res.ok) throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe refund failed");
-      const refund = (await readJson(res)) as { id: string };
-      return { refundId: refund.id };
-    },
+    // No refund operation. This function runs with the tenant connection and is
+    // the one place that could move money back; it deliberately cannot. 0090
+    // replaced the former compensation path with park-for-human-review, and
+    // inbound charge.refunded is still reconciled below.
 
     /**
      * Verify + normalize a Stripe webhook. Throws PaymentError("WEBHOOK_UNVERIFIED")
@@ -281,9 +283,12 @@ function intOrNull(v: unknown): number | null {
  * refund.created / refund.updated) against the SERVER-authoritative payment
  * amount. Mirror of packages/adapters/src/stripePayment.ts#interpretRefundEvent.
  *
- *  - `refundedTotal` — cumulative amount refunded so far, in minor units:
- *    a Charge object carries `amount_refunded`; a bare Refund object carries
- *    only its own `amount` (best-effort cumulative).
+ *  - `refundedTotal` — the event's refund amount, in minor units. A Charge
+ *    object carries the cumulative `amount_refunded`; a bare Refund object
+ *    carries only its own individual `amount`.
+ *  - `isCumulative` — whether `refundedTotal` is a provider cumulative total
+ *    (Charge) or an individual refund amount (bare Refund). The webhook RPC
+ *    uses this bit to avoid under-counting a sequence of bare Refund events.
  *  - `isFullyRefunded` — true ONLY when refundedTotal ≥ the server amount. A
  *    partial refund is NOT full, so the booking must NOT be driven to refunded.
  *  - `refundId` — the Stripe refund id (re_…) used as the DEDUPE key. A charge
@@ -294,13 +299,15 @@ export interface RefundOutcome {
   refundId: string | null;
   refundedTotal: number | null;
   isFullyRefunded: boolean;
+  isCumulative: boolean;
 }
 
 export function interpretRefundEvent(raw: unknown, serverAmount: number): RefundOutcome {
   const ev = raw as { data?: { object?: Record<string, unknown> } };
   const obj = (ev?.data?.object ?? {}) as Record<string, unknown>;
 
-  let refundedTotal = intOrNull(obj.amount_refunded);
+  let refundedTotal: number | null = null;
+  let isCumulative = false;
   let refundId: string | null = null;
 
   const refunds = (obj.refunds as { data?: unknown } | undefined)?.data;
@@ -310,9 +317,14 @@ export function interpretRefundEvent(raw: unknown, serverAmount: number): Refund
   }
   if (obj.object === "refund") {
     if (typeof obj.id === "string") refundId = obj.id;
-    if (refundedTotal === null) refundedTotal = intOrNull(obj.amount);
+    // Stripe Refund objects report this refund's amount, not a running total.
+    refundedTotal = intOrNull(obj.amount);
+  } else {
+    // Charge objects report the cumulative amount_refunded value.
+    refundedTotal = intOrNull(obj.amount_refunded);
+    isCumulative = refundedTotal !== null;
   }
 
   const isFullyRefunded = refundedTotal !== null && refundedTotal >= serverAmount;
-  return { refundId, refundedTotal, isFullyRefunded };
+  return { refundId, refundedTotal, isFullyRefunded, isCumulative };
 }

@@ -424,12 +424,15 @@ begin
     raise exception 'FAIL 5b: staff role changed to %', v_role;
   end if;
 
+  -- 0089 revoked every client write verb on payment_connections, so staff no
+  -- longer reach the UPDATE at all -- the verb is gone before RLS is consulted.
   begin
     update public.payment_connections
        set status = 'revoked'
      where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    get diagnostics n = row_count;
-    if n <> 0 then raise exception 'FAIL 5c: staff updated % connection row(s)', n; end if;
+    raise exception 'FAIL 5c: staff reached the payment_connections UPDATE verb';
+  exception when insufficient_privilege then
+    null; -- expected
   end;
 
   begin
@@ -456,6 +459,59 @@ begin
   exception when insufficient_privilege then
     raise notice 'PASS 5e: member denied on payment_connection_secrets';
   end;
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 5g — the tenant's OWNER cannot write their own payment connection.
+-- 0089 made payment_connections server-authoritative: provider, status and
+-- config decide which connected account money is created on, so an owner who
+-- could declare them would have a path to point money at an unverified account.
+-- Reading stays allowed; the portal must still be able to show the status.
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+set local role authenticated;
+do $t$
+declare
+  n bigint;
+begin
+  select count(*) into n from public.payment_connections
+   where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n <> 1 then raise exception 'FAIL 5g-read: owner sees % own connection row(s)', n; end if;
+
+  begin
+    insert into public.payment_connections (tenant_id, provider, status, config)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'stripe_connect', 'connected',
+            '{"accountId":"acct_owner_declared"}');
+    raise exception 'FAIL 5g-insert: owner declared a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  begin
+    update public.payment_connections set status = 'connected', config = '{"accountId":"acct_owner_declared"}'
+     where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL 5g-update: owner rewrote a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  begin
+    delete from public.payment_connections
+     where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL 5g-delete: owner deleted a payment connection';
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  if exists (select 1 from pg_policy where polrelid = 'public.payment_connections'::regclass and polcmd <> 'r') then
+    raise exception 'FAIL 5g-policy: a write policy exists on payment_connections';
+  end if;
+
+  raise notice 'PASS 5g: owner reads but can never write their payment connection';
 end;
 $t$;
 
@@ -965,6 +1021,93 @@ begin
   if n <> 0 then raise exception 'FAIL 14o: suspended-tenant member saw % total refund row(s)', n; end if;
 
   raise notice 'PASS 14g: SUSPENDED-tenant member/owner reads ZERO raw payments/refunds/audit (active-tenant gate)';
+end;
+$t$;
+
+reset role;
+
+-- ============================================================================
+-- ATTACK 15 — the handoff ledger and the connection facts are out of reach.
+-- Added by migration 0093; no existing assertion above is changed.
+--
+-- 0093 made public.payment_connection_handoffs the record of "an owner began
+-- connecting a provider", and the thing an account id must be presented AGAINST.
+-- If a client could write it, an owner could forge a handoff and then bind an
+-- account the platform never verified -- the exact diversion 0089 closed the
+-- direct write path to prevent. The ledger is therefore unreachable to clients in
+-- every verb, reads included: it names tenants and provider accounts.
+--
+-- It also pins the two provider-fact columns. blocked_reason is shown to staff, and
+-- charges_enabled is what the status derivation reads, so an owner who could write
+-- either could declare their own connection chargeable.
+-- ============================================================================
+select set_config('request.jwt.claims',
+  '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+set local role authenticated;
+do $t$
+declare
+  n bigint;
+begin
+  begin
+    select count(*) into n from public.payment_connection_handoffs;
+    raise exception 'FAIL 15a: owner read % handoff ledger row(s)', n;
+  exception when insufficient_privilege then
+    null; -- expected
+  end;
+
+  begin
+    insert into public.payment_connection_handoffs
+      (handoff_id, tenant_id, provider, idempotency_key, expires_at)
+    values ('mch_owner_forged', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'stripe_connect',
+            'owner-forged-handoff-key', now() + interval '1 hour');
+    raise exception 'FAIL 15b: owner forged a payment connection handoff';
+  exception
+    when insufficient_privilege then null; -- expected
+    when others then
+      raise exception 'FAIL 15b: the handoff ledger INSERT verb was reachable (got %)', sqlerrm;
+  end;
+
+  -- The provider-reported columns are part of the same row 5g already proves is
+  -- unwritable; this states it of the new columns by name, so adding a column
+  -- without a verb check cannot pass unnoticed.
+  begin
+    update public.payment_connections
+       set account_id = 'acct_owner_declared_1', charges_enabled = true, blocked_reason = null
+     where tenant_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL 15c: owner declared their own connection chargeable';
+  exception
+    when insufficient_privilege then null; -- expected
+    when others then
+      raise exception 'FAIL 15c: the connection UPDATE verb was reachable (got %)', sqlerrm;
+  end;
+
+  -- The four RPCs are the only write path, and none of them is callable by a
+  -- client: an owner who could call record_payment_connection directly would be
+  -- back to declaring their own merchant account.
+  begin
+    perform public.begin_payment_connection(
+      '11111111-1111-1111-1111-111111111111'::uuid,
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
+      'stripe_connect', 'owner-called-rpc-directly', 'mch_owner_direct', now() + interval '1 hour');
+    raise exception 'FAIL 15d: owner called begin_payment_connection directly';
+  exception
+    when insufficient_privilege then null; -- expected
+    when others then
+      raise exception 'FAIL 15d: begin_payment_connection was REACHABLE by an owner (got %)', sqlerrm;
+  end;
+
+  begin
+    perform public.observe_payment_connection(
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
+      'acct_owner_declared_2', true, true, true, null, now());
+    raise exception 'FAIL 15e: owner called observe_payment_connection directly';
+  exception
+    when insufficient_privilege then null; -- expected
+    when others then
+      raise exception 'FAIL 15e: observe_payment_connection was REACHABLE by an owner (got %)', sqlerrm;
+  end;
+
+  raise notice 'PASS 15: handoff ledger unreachable; connection facts and connect RPCs unwritable by an owner';
 end;
 $t$;
 

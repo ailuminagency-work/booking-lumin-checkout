@@ -25,3 +25,13 @@ export type {
 } from "./pricingEffects";
 export * from "./publication";
 export * from "./configurablePublication";
+
+export * from './paidPublication';
+export * from './paidOptionPublication';
+export * from './paidCustomerFieldPublication';
+export * from './paidConditionalCustomerFieldPublication';
+
+export * from "./detailingPublication";
+export * from './paidJourney';
+export * from './paidJourneyPublication';
+export * from './paidJourneyCustomerFieldPublication';

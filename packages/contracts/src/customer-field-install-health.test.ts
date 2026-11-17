@@ -1,0 +1,6 @@
+import {it,expect} from 'vitest';
+import {CustomerFieldInstallHealth} from './customer-field-install-health';
+const id='58000000-0000-4000-8000-000000000001';
+const good={schemaVersion:1,flowId:id,draftRevision:2,versionId:id,renderSchemaVersion:5,status:'unknown',installation:{status:'available',receipt:{versionId:id,installationId:id,renderSchemaVersion:5,hostedPath:'/checkout/flow/'+id}},catalog:{status:'compatible'},customerEvidence:{issuedSessionCount:0,sessionCountCapped:false,lastSuccessfulLoadAt:null,loadEvidence:'unavailable',confirmedStagingBookingCount:0,bookingCountCapped:false,lastConfirmedStagingBookingAt:null},testPayment:{mode:'staging_mock',simulated:true,enabled:true}};
+it('strict V5 evidence is not a healthy or browser-load certificate',()=>{expect(CustomerFieldInstallHealth.parse(good)).toEqual(good);});
+it.each([{...good,renderSchemaVersion:3},{...good,status:'healthy'},{...good,draftRevision:0},{...good,customerAnswers:{}},{...good,customerEvidence:{...good.customerEvidence,lastSuccessfulLoadAt:'2026-10-04T10:00:00Z'}},{...good,customerEvidence:{...good.customerEvidence,confirmedStagingBookingCount:1}},{...good,installation:{status:'unavailable',receipt:good.installation.receipt}}])('rejects malformed or widened evidence',value=>{expect(CustomerFieldInstallHealth.safeParse(value).success).toBe(false);});

@@ -1,0 +1,170 @@
+import assert from 'node:assert/strict';
+import { readdir } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const SHA = /^[0-9a-f]{40}$/i;
+const MIGRATION = /^0\d+_[a-z0-9][a-z0-9_]*$/;
+const EDGE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const MAX_BODY = 65_536;
+const DEFAULT_EDGE_FUNCTIONS = ['stripe-webhook', 'create-payment-intent'];
+
+function object(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function rootUrl(value, label) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error(`CONFIG: ${label} must be a valid URL`); }
+  const local = new Set(['localhost', '127.0.0.1', '[::1]']);
+  if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
+      !['https:', 'http:'].includes(url.protocol) || (url.protocol === 'http:' && !local.has(url.hostname))) {
+    throw new Error(`CONFIG: ${label} must be an HTTPS origin (HTTP only on loopback)`);
+  }
+  return url;
+}
+
+function safeMigration(value, label = 'migration head') {
+  if (typeof value !== 'string' || !MIGRATION.test(value)) throw new Error(`CONFIG: invalid ${label}`);
+  return value;
+}
+
+function edgeFunctions(env) {
+  const raw = env.BOOKING_LUMIN_EDGE_FUNCTIONS ?? '';
+  const additional = raw.split(',').map(value => value.trim()).filter(Boolean);
+  if (additional.some(name => !EDGE_NAME.test(name))) throw new Error('CONFIG: invalid Edge Function list');
+  return [...new Set([...DEFAULT_EDGE_FUNCTIONS, ...additional])];
+}
+
+async function activeMigrationHead(rootDir) {
+  const dir = resolve(rootDir, 'supabase', 'migrations');
+  const names = (await readdir(dir)).filter(name => /^0\d+_.+\.sql$/.test(name)).sort();
+  if (!names.length) throw new Error('CONFIG: no active migrations found');
+  return safeMigration(names.at(-1).replace(/\.sql$/, ''), 'checked-in migration head');
+}
+
+async function responseJson(response, label) {
+  if (response.status !== 200 || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
+    throw new Error(`FAIL ${label}: expected HTTP 200 JSON`);
+  }
+  if (!response.body) throw new Error(`FAIL ${label}: empty response`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > MAX_BODY) throw new Error(`FAIL ${label}: response too large`);
+      chunks.push(part.value);
+    }
+  } finally { await reader.cancel().catch(() => undefined); }
+  try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); }
+  catch { throw new Error(`FAIL ${label}: invalid JSON`); }
+}
+
+async function request(fetchImpl, url, label, timeoutMs, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, method: options.method ?? 'GET', redirect: 'error', signal: controller.signal });
+  } catch {
+    throw new Error(`FAIL ${label}: network or timeout`);
+  } finally { clearTimeout(timer); }
+}
+
+/**
+ * Read-only, opt-in hosted staging gate. It never sends a database password or
+ * service-role credential and never mutates an API, database, or Edge Function.
+ * A missing migrationHead is deliberately a failure: /ready only proves that
+ * PostgreSQL accepts a connection, not that the expected schema is present.
+ */
+export async function runHostedReadiness(env = process.env, {
+  fetchImpl = fetch,
+  rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+  timeoutMs = 10_000,
+  log = console.log,
+} = {}) {
+  if (env.BOOKING_LUMIN_READINESS !== '1') throw new Error('CONFIG: set BOOKING_LUMIN_READINESS=1 for hosted readiness checks');
+  const api = rootUrl(env.BOOKING_LUMIN_API_BASE_URL, 'BOOKING_LUMIN_API_BASE_URL');
+  const supabase = rootUrl(env.BOOKING_LUMIN_SUPABASE_URL ?? env.SUPABASE_URL, 'BOOKING_LUMIN_SUPABASE_URL');
+  const expectedSha = env.BOOKING_LUMIN_EXPECTED_RELEASE_SHA;
+  if (expectedSha !== undefined && !SHA.test(expectedSha)) throw new Error('CONFIG: invalid expected release SHA');
+  const expectedMigration = await activeMigrationHead(rootDir);
+  const functions = edgeFunctions(env);
+  const versionResponse = await request(fetchImpl, new URL('/version', api), 'version', timeoutMs, { headers: { accept: 'application/json' } });
+  const version = await responseJson(versionResponse, 'version');
+  if (!object(version) || version.schemaVersion !== 1 || version.service !== 'booking-lumin-api' || version.environment !== 'staging' || !SHA.test(version.releaseSha ?? '')) {
+    throw new Error('FAIL version: unexpected release metadata');
+  }
+  if (expectedSha && version.releaseSha.toLowerCase() !== expectedSha.toLowerCase()) throw new Error('FAIL version: RELEASE_MISMATCH');
+  if (typeof version.migrationHead !== 'string') throw new Error('FAIL version: MIGRATION_STATUS_UNAVAILABLE');
+  if (version.migrationHead !== expectedMigration) throw new Error('FAIL version: MIGRATION_DRIFT');
+  log('PASS release and migration metadata');
+
+  const edgeResults = [];
+  for (const name of functions) {
+    const response = await request(fetchImpl, new URL(`/functions/v1/${name}`, supabase), `Edge Function ${name}`, timeoutMs, { headers: { accept: 'application/json' } });
+    if (response.status === 404) throw new Error(`FAIL Edge Function ${name}: EDGE_FUNCTION_MISSING`);
+    if (response.status >= 500) throw new Error(`FAIL Edge Function ${name}: provider unavailable`);
+    if (response.status < 400) throw new Error(`FAIL Edge Function ${name}: EDGE_FUNCTION_UNVERIFIED`);
+    edgeResults.push({ name, status: response.status });
+    log(`PASS Edge Function ${name} is deployed (HTTP ${response.status})`);
+    await response.body?.cancel().catch(() => undefined);
+  }
+  return Object.freeze({ releaseSha: version.releaseSha, migrationHead: version.migrationHead, edgeFunctions: edgeResults });
+}
+
+async function selfTest() {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const migrationHead = '0098_refund_event_shape_authority';
+  const env = {
+    BOOKING_LUMIN_READINESS: '1',
+    BOOKING_LUMIN_API_BASE_URL: 'https://api.example.test',
+    BOOKING_LUMIN_SUPABASE_URL: 'https://project.supabase.co',
+    BOOKING_LUMIN_EXPECTED_RELEASE_SHA: sha,
+  };
+  const seen = [];
+  const fake = async (url, options) => {
+    seen.push({ path: url.pathname, options });
+    if (url.pathname === '/version') return Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } });
+    return new Response('', { status: url.pathname.endsWith('stripe-webhook') ? 405 : 401 });
+  };
+  const logs = [];
+  const result = await runHostedReadiness(env, { fetchImpl: fake, log: value => logs.push(value) });
+  assert.equal(result.releaseSha, sha);
+  assert.equal(result.migrationHead, migrationHead);
+  assert.deepEqual(result.edgeFunctions.map(item => item.name), DEFAULT_EDGE_FUNCTIONS);
+  assert.equal(seen.length, 3);
+  assert.ok(logs.every(value => !String(value).includes('project.supabase.co')));
+
+  await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_READINESS: undefined }, { fetchImpl: () => { throw new Error('must not fetch'); } }), /CONFIG/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 404 }) }), /EDGE_FUNCTION_MISSING/);
+  await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_EDGE_FUNCTIONS: 'create-payment-intent' }, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: url.pathname.endsWith('stripe-webhook') ? 404 : 405 }) }), /EDGE_FUNCTION_MISSING/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 200 }) }), /EDGE_FUNCTION_UNVERIFIED/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /MIGRATION_STATUS_UNAVAILABLE/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead: '0097_confirmation_hold_deadline' }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /MIGRATION_DRIFT/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: 'fedcba98765432100123456789abcdef01234567', migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /RELEASE_MISMATCH/);
+  console.log('PASS hosted-readiness self-test: opt-in, release binding, migration drift, missing Edge Function, bounded responses, no secret logging');
+}
+
+const help = `Usage: npm run readiness:phase-a
+Requires BOOKING_LUMIN_READINESS=1, BOOKING_LUMIN_API_BASE_URL and
+BOOKING_LUMIN_SUPABASE_URL. It is read-only and fails closed unless /version
+exposes a migrationHead matching the checked-in migration head; it also rejects
+missing required staging Edge Functions. Use --self-test for offline fixtures.`;
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    const args = process.argv.slice(2);
+    if (args.length === 1 && args[0] === '--help') console.log(help);
+    else if (args.length === 1 && args[0] === '--self-test') await selfTest();
+    else if (args.length) throw new Error('CONFIG: unsupported arguments; use --help or --self-test');
+    else await runHostedReadiness();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'hosted readiness failed');
+    process.exitCode = 1;
+  }
+}
+

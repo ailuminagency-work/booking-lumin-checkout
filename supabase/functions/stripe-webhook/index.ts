@@ -12,16 +12,29 @@
 //     F3 (amount guard, FAIL-CLOSED): confirm ONLY when a POSITIVE Stripe amount
 //        is present AND equals the server payments.amount. Missing/null/≤0 or a
 //        mismatch ⇒ NEVER confirm — route through the compensation path.
-//     F1 (hold re-verify + compensation): re-verify the capacity hold is still
-//        'active' (or already 'consumed' for this booking) before confirming,
-//        then confirm + consume_hold. If the hold is MISSING / EXPIRED /
-//        RELEASED at confirm time (oversold or lost), DO NOT confirm — issue a
-//        Stripe REFUND for the intent, record it, move the booking to `failed`,
-//        and return 200 (handled). This is the deterministic refund-on-oversell.
+//     F1 (hold re-verify + PARK): re-verify the capacity hold is still 'active'
+//        (or already 'consumed' for this booking) before confirming, then confirm
+//        + consume_hold. If the hold is MISSING / EXPIRED / RELEASED at confirm
+//        time (oversold or lost), DO NOT confirm — and DO NOT refund. Park the
+//        payment for a human: payments.state := 'processing', one row in
+//        public.payment_reviews, release the hold, leave the booking in its
+//        non-terminal state, return 200 (handled). See migration 0090.
+//
+//        POLICY REVERSAL (0090): this used to issue a Stripe refund automatically
+//        ("deterministic refund-on-oversell"). Booking Lumin must NEVER refund
+//        automatically — moving a customer's money with no person deciding is the
+//        action that rule exists to prevent, and it fired on a RACE (a hold
+//        expiring between capture and webhook delivery), not on fraud. Nothing in
+//        this function may invoke the provider's refund API; scripts/
+//        no-auto-refund-check.sh enforces that mechanically in CI, and since the
+//        refund primitive itself was deleted from _shared/stripe.ts there is no
+//        longer anything here to invoke.
 //     A replayed succeeded event finds the booking already `confirmed` (or its
 //        hold `consumed`) and is a no-op.
 //
-//   payment_intent.payment_failed / canceled → release_hold + booking failed.
+//   payment_intent.payment_failed / canceled → release_hold + booking failed,
+//     unless a delayed failure arrives after a terminal succeeded/refunded
+//     payment, in which case it is acknowledged without regressing state.
 //
 //   charge.refunded / refund.*  → F4 refund accounting: record the refund keyed
 //        by the Stripe refund id (dedup — a replay is a no-op), set the payment
@@ -31,7 +44,12 @@
 // Always returns 200 after successful processing (so Stripe stops retrying);
 // 400 only on a bad signature.
 
-import { createStripeClient, interpretRefundEvent, webhookIntentAmount } from "../_shared/stripe.ts";
+import {
+  createStripeClient,
+  interpretRefundEvent,
+  shouldIgnoreStalePaymentFailure,
+  webhookIntentAmount,
+} from "../_shared/stripe.ts";
 import { errorResponse, jsonResponse, serviceRoleClient } from "../_shared/db.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -62,25 +80,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: payment } = await db
     .from("payments")
     .select("id, tenant_id, booking_id, amount, currency, state")
-    .eq("provider", "stripe")
+    .eq("provider", "stripe_connect")
     .eq("provider_intent_id", intentId)
     .maybeSingle();
   if (!payment) return jsonResponse({ received: true, note: "unknown intent" });
 
   try {
     if (event.kind === "payment_succeeded") {
-      return await handleSucceeded(db, stripe, event, payment, intentId);
+      return await handleSucceeded(db, event, payment);
     }
 
     if (event.kind === "payment_failed") {
-      await db.from("payments").update({ state: "failed" }).eq("id", payment.id);
-      // Return the slot to the pool immediately (F1) and fail the booking.
-      await db.rpc("release_hold", { p_booking_id: payment.booking_id });
-      await db
-        .from("bookings")
-        .update({ state: "failed" })
-        .eq("id", payment.booking_id)
-        .in("state", ["draft", "pending_payment"]);
+      // Stripe can deliver delayed/canceled events after a succeeded, parked, or
+      // refund event. The migration 0094 RPC locks the payment row and performs
+      // the compare-and-set, hold release, and booking transition atomically.
+      if (shouldIgnoreStalePaymentFailure(payment.state)) {
+        return jsonResponse({ received: true, failed: false, note: "ignored stale failure" });
+      }
+      const { data: failure, error: failureError } = await db.rpc("fail_payment_webhook", {
+        p_payment_id: payment.id,
+      });
+      if (failureError) throw failureError;
+      if (!failure || failure.result !== "FAILED") {
+        return jsonResponse({ received: true, failed: false, note: "ignored stale failure" });
+      }
       return jsonResponse({ received: true, failed: true });
     }
 
@@ -96,7 +119,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
 });
 
 type Db = ReturnType<typeof serviceRoleClient>;
-type Stripe = ReturnType<typeof createStripeClient>;
 interface PaymentRow {
   id: string;
   tenant_id: string;
@@ -108,32 +130,35 @@ interface PaymentRow {
 
 async function handleSucceeded(
   db: Db,
-  stripe: Stripe,
   event: { raw: unknown },
   payment: PaymentRow,
-  intentId: string,
 ): Promise<Response> {
-  // Idempotent replay: the booking is already confirmed — nothing to do.
+  // A parked, failed, or refunded payment is already resolved by another
+  // authority. Check this before the confirmed-booking replay branch: a stale
+  // succeeded event must never rewrite a refunded payment back to succeeded.
+  if (payment.state === "processing" || payment.state === "failed" || payment.state === "refunded" || payment.state === "partially_refunded") {
+    return jsonResponse({ received: true, confirmed: false, note: "already resolved payment" });
+  }
+
   const { data: booking } = await db
     .from("bookings")
     .select("id, state")
     .eq("id", payment.booking_id)
     .maybeSingle();
-  if (booking?.state === "confirmed") {
-    await db.from("payments").update({ state: "succeeded" }).eq("id", payment.id);
+  // Idempotent replay: only a payment that is already succeeded may replay a
+  // confirmed booking. A contradictory requires_payment+confirmed pair is not
+  // allowed to become financially true here.
+  if (payment.state === "succeeded" && booking?.state === "confirmed") {
     return jsonResponse({ received: true, confirmed: true, note: "already confirmed (replay)" });
   }
 
-  // Idempotent compensation: a prior delivery already refunded this intent (the
-  // oversell/mismatch path). Do NOT refund again — a second refund would be an
-  // over-refund and error, looping Stripe retries.
-  if (payment.state === "refunded") {
-    return jsonResponse({ received: true, confirmed: false, note: "already compensated (replay)" });
+  if (payment.state !== "requires_payment" && payment.state !== "succeeded") {
+    return jsonResponse({ received: true, confirmed: false, note: "ignored unsupported payment state" });
   }
 
   // F3 — AMOUNT GUARD, FAIL-CLOSED. A positive amount must be present AND equal
   // the server amount. Anything else (missing / null / ≤0 / mismatch) is a
-  // desync or tampering: NEVER confirm — compensate.
+  // desync or tampering: NEVER confirm — park it for a human (0090).
   const stripeAmount = webhookIntentAmount(event.raw);
   const amountOk = stripeAmount !== null && stripeAmount > 0 && stripeAmount === payment.amount;
 
@@ -149,74 +174,86 @@ async function handleSucceeded(
   const holdHonored = holdActive || holdConsumed;
 
   if (!amountOk || !holdHonored) {
-    // COMPENSATION: refund the intent, record it, fail the booking. Deterministic
-    // refund-on-oversell (missing/expired/lost hold) and refund-on-mismatch.
-    return await compensate(db, stripe, payment, intentId, !amountOk ? "amount_mismatch" : "capacity_oversold");
+    // PARK for a human (0090). No refund is issued here, ever.
+    return await park(
+      db,
+      payment,
+      !amountOk ? "amount_mismatch" : "capacity_oversold",
+      stripeAmount,
+    );
   }
 
-  // Confirm. Ensure the booking is in pending_payment first (defense against a
-  // draft left behind by a failed state advance), then pending_payment→confirmed.
-  await db.from("payments").update({ state: "succeeded" }).eq("id", payment.id);
-  if (booking?.state === "draft") {
-    await db.from("bookings").update({ state: "pending_payment" }).eq("id", payment.booking_id).eq("state", "draft");
+  // Compare-and-set the payment state before entering the existing atomic
+  // confirmation RPC. A concurrent failure/refund either wins this row race
+  // (and this delivery becomes a no-op) or observes succeeded and cannot
+  // regress it. The RPC then locks payment + booking + hold together.
+  if (payment.state === "requires_payment") {
+    const { data: advanced, error: advanceError } = await db
+      .from("payments")
+      .update({ state: "succeeded" })
+      .eq("id", payment.id)
+      .eq("state", "requires_payment")
+      .select("id")
+      .maybeSingle();
+    if (advanceError) throw advanceError;
+    if (!advanced) {
+      return jsonResponse({ received: true, confirmed: false, note: "payment state changed before confirmation" });
+    }
   }
-  if (holdActive) {
-    await db.rpc("consume_hold", { p_booking_id: payment.booking_id });
-  }
-  await db.from("bookings").update({ payment_id: payment.id }).eq("id", payment.booking_id).is("payment_id", null);
-  const { data: confirmed } = await db
-    .from("bookings")
-    .update({ state: "confirmed" })
-    .eq("id", payment.booking_id)
-    .eq("state", "pending_payment")
-    .select("id, state")
-    .maybeSingle();
 
-  return jsonResponse({ received: true, confirmed: confirmed?.state === "confirmed" });
+  const { data: confirmed, error: confirmationError } = await db.rpc("confirm_succeeded_payment", {
+    p_payment_id: payment.id,
+  });
+  if (confirmationError) throw confirmationError;
+  return jsonResponse({
+    received: true,
+    confirmed: confirmed?.state === "confirmed",
+    replayed: confirmed?.replayed === true,
+  });
 }
 
 /**
- * F1 deterministic compensation: refund the succeeded intent, record the refund
- * (dedup on the Stripe refund id), mark the payment refunded, and fail the
- * booking. Returns 200 (handled) so Stripe stops retrying.
+ * F1 PARK (migration 0090). A succeeded intent that cannot be confirmed is handed
+ * to a person instead of being refunded automatically.
+ *
+ * Order matters. The review row is written FIRST: if anything after it fails, the
+ * outer catch returns 500, Stripe retries, and the replay is a no-op because the
+ * row is keyed on payment_id. Writing it last would risk releasing the hold and
+ * moving the payment with no record of why.
+ *
+ * `processing` is the park state because confirm_succeeded_payment requires
+ * `succeeded` — so a parked payment cannot be turned into a booking by any later
+ * automatic path, only by a person setting it back deliberately.
+ *
+ * The booking is intentionally NOT transitioned. `failed` is terminal in the 0005
+ * transition table, and with the money still captured a terminal booking would
+ * strand it; left at `pending_payment`, both `-> confirmed` (honour) and
+ * `-> failed` (refund by hand) stay legal for the reviewer.
+ *
+ * Returns 200 (handled) so Stripe stops retrying a decision that is now a human's.
  */
-async function compensate(
+async function park(
   db: Db,
-  stripe: Stripe,
   payment: PaymentRow,
-  intentId: string,
   reason: string,
+  observedAmount: number | null,
 ): Promise<Response> {
-  const refund = await stripe.refund(intentId, { amount: payment.amount, currency: payment.currency });
-  await db.from("refunds").upsert(
-    {
-      tenant_id: payment.tenant_id,
-      booking_id: payment.booking_id,
-      payment_id: payment.id,
-      amount: payment.amount,
-      currency: payment.currency,
-      reason: `compensation_${reason}`,
-      provider: "stripe",
-      provider_refund_id: refund.refundId,
-    },
-    { onConflict: "provider,provider_refund_id", ignoreDuplicates: true },
-  );
-  await db.from("payments").update({ state: "refunded" }).eq("id", payment.id);
-  // Release any lingering active hold, then fail the booking.
-  await db.rpc("release_hold", { p_booking_id: payment.booking_id });
-  await db
-    .from("bookings")
-    .update({ state: "failed" })
-    .eq("id", payment.booking_id)
-    .in("state", ["draft", "pending_payment"]);
-  return jsonResponse({ received: true, confirmed: false, compensated: reason });
+  const { data: parked, error: parkError } = await db.rpc("park_payment_webhook", {
+    p_payment_id: payment.id,
+    p_reason: reason,
+    p_observed_amount: observedAmount,
+  });
+  if (parkError) throw parkError;
+  if (!parked || parked.result !== "PARKED") {
+    return jsonResponse({ received: true, confirmed: false, note: "payment state changed before parking" });
+  }
+  return jsonResponse({ received: true, confirmed: false, parked: reason });
 }
 
 /**
- * F4 refund accounting. Uses amount_refunded (cumulative) — NOT the full amount
- * — to decide full vs partial, dedupes on the Stripe refund id, and drives the
- * booking to `refunded` ONLY when fully refunded (a partial refund records the
- * refund + marks the payment partially_refunded but leaves the booking state).
+ * F4 refund accounting. Charge events carry amount_refunded (cumulative), while
+ * bare Refund events carry an individual amount. The server-side RPC receives
+ * the event shape and derives the accumulated total under the payment lock.
  */
 async function handleRefund(
   db: Db,
@@ -225,39 +262,33 @@ async function handleRefund(
   intentId: string,
 ): Promise<Response> {
   const outcome = interpretRefundEvent(event.raw, payment.amount);
-  const refundedTotal = outcome.refundedTotal ?? payment.amount;
+  // Never infer a full refund when Stripe omitted the amount. A missing amount
+  // is an acknowledged, non-mutating event until a later event contains a
+  // verifiable amount.
+  const refundedTotal = outcome.refundedTotal;
+  if (refundedTotal === null) {
+    return jsonResponse({ received: true, refunded: false, full: false, note: "refund amount unavailable" });
+  }
   // Stable dedupe key: prefer the Stripe refund id; fall back to a synthetic
-  // (intent + cumulative total) so a replay of an id-less event still dedupes.
-  const dedupeKey = outcome.refundId ?? `${intentId}:${refundedTotal}`;
+  // (intent + event shape + amount) so a replay of an id-less event still
+  // dedupes without conflating cumulative Charge and individual Refund events.
+  const dedupeKey = outcome.refundId ?? `${intentId}:${outcome.isCumulative ? "cumulative" : "individual"}:${refundedTotal}`;
 
   if (refundedTotal > 0) {
-    await db.from("refunds").upsert(
-      {
-        tenant_id: payment.tenant_id,
-        booking_id: payment.booking_id,
-        payment_id: payment.id,
-        amount: refundedTotal,
-        currency: payment.currency,
-        reason: "stripe_refund_webhook",
-        provider: "stripe",
-        provider_refund_id: dedupeKey,
-      },
-      { onConflict: "provider,provider_refund_id", ignoreDuplicates: true },
-    );
+    const { data: recorded, error: refundError } = await db.rpc("record_refund_webhook", {
+      p_payment_id: payment.id,
+      p_provider_refund_id: dedupeKey,
+      p_refunded_total: refundedTotal,
+      p_is_fully_refunded: outcome.isFullyRefunded,
+      p_is_cumulative: outcome.isCumulative,
+    });
+    if (refundError) throw refundError;
+    return jsonResponse({
+      received: true,
+      refunded: recorded?.result === "RECORDED" || recorded?.result === "IGNORED",
+      full: recorded?.full === true || outcome.isFullyRefunded,
+    });
   }
 
-  await db
-    .from("payments")
-    .update({ state: outcome.isFullyRefunded ? "refunded" : "partially_refunded" })
-    .eq("id", payment.id);
-
-  if (outcome.isFullyRefunded) {
-    await db
-      .from("bookings")
-      .update({ state: "refunded" })
-      .eq("id", payment.booking_id)
-      .in("state", ["confirmed", "completed", "cancelled"]);
-  }
-
-  return jsonResponse({ received: true, refunded: true, full: outcome.isFullyRefunded });
+  return jsonResponse({ received: true, refunded: false, full: outcome.isFullyRefunded });
 }

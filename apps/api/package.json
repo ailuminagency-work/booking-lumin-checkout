@@ -8,22 +8,23 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration": "bash scripts/run-integration.sh",
-    "build": "node -e \"process.exit(0)\"",
+    "build": "tsc --noEmit",
     "dev": "tsx src/local.ts",
     "seed": "tsx src/seed.ts",
     "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@lumin/action-api": "*",
+    "@lumin/core": "*",
     "@lumin/contracts": "*",
     "@lumin/workflow": "*",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/pg": "^8.11.10",
-    "tsx": "^4.19.2",
     "typescript": "~5.6.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }
