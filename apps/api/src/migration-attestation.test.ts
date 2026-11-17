@@ -38,7 +38,8 @@ describe('server-side migration attestation',()=>{
   expect(fixture.query).toHaveBeenCalledWith('commit');
   expect(fixture.release).toHaveBeenCalledOnce();
  });
- it.each([[],[{migrationHead:'0098_refund_event_shape_authority'}],[{migrationHead:'private credential'}]])('fails closed for missing or stale/forged row %j',async rows=>{
+ const malformedRows:unknown[][]=[[],[{migrationHead:'0098_refund_event_shape_authority'}],[{migrationHead:'private credential'}]];
+ it.each(malformedRows)('fails closed for missing or stale/forged row %j',async rows=>{
   const fixture=poolFor(rows);
   await expect(createMigrationAttestationReader(fixture.pool)()).rejects.toThrow('MIGRATION_ATTESTATION_MISMATCH');
   expect(fixture.query).toHaveBeenCalledWith('rollback');
