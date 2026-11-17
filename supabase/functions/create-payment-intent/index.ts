@@ -243,7 +243,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     {
       tenant_id,
       booking_id: booking.id,
-      provider: "stripe",
+      // 0088's confirmable-provider allowlist names the tenant payment
+      // connection "stripe_connect"; keep the persisted payment provenance
+      // aligned so the sole confirmation RPC can authorize it.
+      provider: "stripe_connect",
       provider_intent_id: intent.intentId,
       state: intent.state,
       amount: charge.amount,
