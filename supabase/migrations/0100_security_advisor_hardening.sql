@@ -34,13 +34,13 @@ alter function lumin.touch_updated_at() set search_path = pg_catalog;
 -- being mistaken for a database that has received this hardening batch.
 alter table public.booking_lumin_schema_attestation
   drop constraint if exists booking_lumin_schema_attestation_migration_head_check;
-alter table public.booking_lumin_schema_attestation
-  add constraint booking_lumin_schema_attestation_migration_head_check
-  check (migration_head = '0100_security_advisor_hardening');
 update public.booking_lumin_schema_attestation
    set migration_head = '0100_security_advisor_hardening',
        applied_at = timezone('utc', now())
  where id = true;
+alter table public.booking_lumin_schema_attestation
+  add constraint booking_lumin_schema_attestation_migration_head_check
+  check (migration_head = '0100_security_advisor_hardening');
 
 commit;
 
