@@ -1,9 +1,9 @@
 /**
  * refundAccounting.test.ts — F4 refund accounting decision logic. Proves
- * interpretRefundEvent (the pure decision the stripe-webhook applies) uses the
- * cumulative amount_refunded — NOT the full charge amount — to distinguish a
- * PARTIAL refund from a FULL one, and yields a STABLE dedupe key so a replayed
- * refund webhook is a no-op.
+ * interpretRefundEvent (the pure decision the stripe-webhook applies) keeps
+ * Charge amount_refunded values cumulative but preserves bare Refund amounts
+ * as individual deltas. The database authority accumulates those deltas,
+ * while the Stripe refund id remains the stable replay/dedupe key.
  */
 
 import { describe, expect, it } from "vitest";
@@ -40,6 +40,7 @@ describe("F4: partial vs full refund classification", () => {
     expect(out.isFullyRefunded).toBe(false);
     expect(out.refundedTotal).toBe(5_000); // uses amount_refunded, not the full amount
     expect(out.refundId).toBe("re_a");
+    expect(out.isCumulative).toBe(true);
   });
 
   it("a FULL refund (amount_refunded == server amount) IS fully refunded", () => {
@@ -47,6 +48,7 @@ describe("F4: partial vs full refund classification", () => {
     expect(out.isFullyRefunded).toBe(true);
     expect(out.refundedTotal).toBe(SERVER_AMOUNT);
     expect(out.refundId).toBe("re_b"); // newest refund id in the list
+    expect(out.isCumulative).toBe(true);
   });
 
   it("cumulative over-refund (amount_refunded >= server amount) is treated as full", () => {
@@ -81,6 +83,28 @@ describe("F4: dedupe key stability", () => {
     expect(out.refundId).toBe("re_solo");
     expect(out.refundedTotal).toBe(SERVER_AMOUNT);
     expect(out.isFullyRefunded).toBe(true);
+    expect(out.isCumulative).toBe(false);
+  });
+
+  it("marks sequential bare Refund amounts as individual deltas", () => {
+    const first = interpretRefundEvent({
+      type: "refund.created",
+      data: { object: { id: "re_bare_30", object: "refund", amount: 3_000, payment_intent: "pi_123" } },
+    }, SERVER_AMOUNT);
+    const second = interpretRefundEvent({
+      type: "refund.created",
+      data: { object: { id: "re_bare_70", object: "refund", amount: 9_600, payment_intent: "pi_123" } },
+    }, SERVER_AMOUNT);
+
+    expect(first.refundId).toBe("re_bare_30");
+    expect(first.refundedTotal).toBe(3_000);
+    expect(first.isCumulative).toBe(false);
+    expect(first.isFullyRefunded).toBe(false);
+    expect(second.refundId).toBe("re_bare_70");
+    expect(second.refundedTotal).toBe(9_600);
+    expect(second.isCumulative).toBe(false);
+    // The database, not this individual event, derives the final full state.
+    expect(second.isFullyRefunded).toBe(false);
   });
 
   it("a missing/absent amount_refunded is not fully refunded (fail-closed on unknown)", () => {
@@ -88,5 +112,7 @@ describe("F4: dedupe key stability", () => {
     const out = interpretRefundEvent(ev, SERVER_AMOUNT);
     expect(out.refundedTotal).toBeNull();
     expect(out.isFullyRefunded).toBe(false);
+    expect(out.isCumulative).toBe(false);
   });
 });
+
