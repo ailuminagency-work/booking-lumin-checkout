@@ -38,7 +38,7 @@ describe('server-side migration attestation',()=>{
   expect(fixture.query).toHaveBeenCalledWith('commit');
   expect(fixture.release).toHaveBeenCalledOnce();
  });
- const malformedRows:unknown[][]=[[],[{migrationHead:'0098_refund_event_shape_authority'}],[{migrationHead:'private credential'}]];
+ const malformedRows:Array<[unknown[]]>=[[[]],[[{migrationHead:'0098_refund_event_shape_authority'}]],[[{migrationHead:'private credential'}]]];
  it.each(malformedRows)('fails closed for missing or stale/forged row %j',async rows=>{
   const fixture=poolFor(rows);
   await expect(createMigrationAttestationReader(fixture.pool)()).rejects.toThrow('MIGRATION_ATTESTATION_MISMATCH');
