@@ -21,7 +21,7 @@ export function readReleaseMetadata(env:ReleaseEnvironment):Readonly<ReleaseMeta
  return Object.freeze({schemaVersion:1,service:'booking-lumin-api',
   environment:environment==='staging'||environment==='demo'||environment==='production'?environment:'unknown',
   releaseSha:typeof sha==='string'&&/^[0-9a-f]{40}$/.test(sha)?sha:null,
-  migrationHead:typeof migrationHead==='string'&&/^[0-9]{4}_[a-z0-9_]+$/.test(migrationHead)?migrationHead:null});
+  migrationHead:typeof migrationHead==='string'&&/^0\d+_[a-z0-9][a-z0-9_]*$/.test(migrationHead)?migrationHead:null});
 }
 
 /** Public GET only, without authentication, database access or CORS changes. */
