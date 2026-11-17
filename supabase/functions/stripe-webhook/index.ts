@@ -292,4 +292,3 @@ async function handleRefund(
 
   return jsonResponse({ received: true, refunded: false, full: outcome.isFullyRefunded });
 }
-

@@ -328,4 +328,3 @@ export function interpretRefundEvent(raw: unknown, serverAmount: number): Refund
   const isFullyRefunded = refundedTotal !== null && refundedTotal >= serverAmount;
   return { refundId, refundedTotal, isFullyRefunded, isCumulative };
 }
-

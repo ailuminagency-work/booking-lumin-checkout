@@ -373,4 +373,3 @@ function normalizeEvent(event: { type?: unknown; data?: { object?: unknown } }):
       return { kind: "unrecognized", intentId: objectId ?? linkedIntent, raw: event };
   }
 }
-

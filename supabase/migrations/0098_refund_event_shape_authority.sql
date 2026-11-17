@@ -153,4 +153,3 @@ comment on function public.record_refund_webhook(uuid, text, bigint, boolean, bo
   'Atomic server-only refund reconciliation. Charge totals are cumulative; bare Refund amounts are accumulated as deltas under the payment lock, with provider-ID dedupe and monotonic state.';
 
 commit;
-

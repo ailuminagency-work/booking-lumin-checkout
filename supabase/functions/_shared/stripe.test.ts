@@ -42,4 +42,3 @@ Deno.test("refund interpretation fails closed when a Charge amount is unavailabl
     throw new Error("a missing charge refund amount must not be treated as a cumulative full refund");
   }
 });
-

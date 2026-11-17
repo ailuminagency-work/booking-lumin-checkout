@@ -267,4 +267,3 @@ rollback to savepoint before_fail;
 
 rollback;
 \echo 'payment review park PASS (fixtures and fixture allowlist rows rolled back)'
-
