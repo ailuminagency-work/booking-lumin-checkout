@@ -308,16 +308,16 @@ select pg_temp.assert(
   'T8f upgrade back to pooled re-forces is_exclusive = false');
 
 -- ----------------------------------------------------------------------------
--- R1b — the capacity-slot booking backstop (a confirmed booking must reference a
--- consumed capacity_hold) is DEFERRED, not enforced here (see 0031's foot NOTE):
--- existing suites and legitimate admin confirms insert confirmed bookings with
--- no hold, so it cannot be made backward-compatible cleanly. Documented only.
+-- R1b — the capacity-slot booking backstop is enforced by migration 0095 and is
+-- covered by service_capacity_backstop_tests.sql. This resource-focused suite
+-- leaves that service-capacity proof in its own disposable fixture.
 -- ----------------------------------------------------------------------------
 do $t$
 begin
-  raise notice 'NOTE: capacity-slot booking backstop deferred to R1b (see 0031 NOTE).';
+  raise notice 'NOTE: service-capacity confirmation backstop is asserted by service_capacity_backstop_tests.sql (migration 0095).';
 end $t$;
 
 rollback;
 
 \echo 'ALL OVERBOOKING BACKSTOP TESTS PASSED'
+
