@@ -106,6 +106,17 @@ jobs:
             echo "applying $f"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "$f"
           done
+      - name: Verify migration attestation and incomplete-schema fail-closed
+        run: |
+          psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/migration_attestation_tests.sql
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_migration_attestation_guard_ci;'
+          if psql -v ON_ERROR_STOP=1 -d lumin_migration_attestation_guard_ci -f supabase/migrations/0099_migration_attestation.sql; then
+            echo 'MIGRATION_ATTESTATION_SCHEMA_MISMATCH was not enforced on an incomplete disposable schema'
+            exit 1
+          fi
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'drop database lumin_migration_attestation_guard_ci;'
+      - name: Verify security-advisor hardening and intentional role boundaries
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/security_advisor_hardening_tests.sql
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
       - name: Run domain security suites (each transactional; fails on any FAIL)
