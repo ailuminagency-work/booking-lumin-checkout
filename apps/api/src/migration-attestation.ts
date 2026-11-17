@@ -1,14 +1,14 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Pool} from 'pg';
 
-export const MIGRATION_ATTESTATION_HEAD='0099_migration_attestation' as const;
+export const MIGRATION_ATTESTATION_HEAD='0100_security_advisor_hardening' as const;
 export const MIGRATION_ATTESTATION_EVIDENCE='core_schema_contract' as const;
 export type MigrationAttestation=Readonly<{schemaVersion:1;migrationHead:typeof MIGRATION_ATTESTATION_HEAD;evidence:typeof MIGRATION_ATTESTATION_EVIDENCE}>;
 type IdentityVerifier=(token:string)=>Promise<{userId:string}|null>;
 
 /**
  * Reads the attestation row and a small core-schema contract through the
- * server-side service role. This proves the 0099 sentinel and the listed
+ * server-side service role. This proves the 0100 sentinel and the listed
  * booking/payment objects are present; it deliberately does NOT claim that
  * every historical migration is present or unmodified. Full-chain replay
  * remains a separate disposable-Postgres/CI evidence gate. No tenant,
