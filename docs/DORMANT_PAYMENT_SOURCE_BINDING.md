@@ -48,7 +48,7 @@ The caller must resolve uncertainty safely rather than begin a new source/attemp
 Apply local_harness and all active numbered migrations to an owned disposable
 PostgreSQL. Run `supabase/tests/payment_source_binding_tests.sql` using psql with
 ON_ERROR_STOP. For real concurrent sessions set explicit loopback PGHOST, PGPORT,
-PGDATABASE (lumin_ prefix), PGUSER, PAYMENT_SOURCE_DISPOSABLE=1 and optionally
+PGDATABASE (dedicated lumin_source_binding_ prefix), PGUSER, PAYMENT_SOURCE_DISPOSABLE=1 and optionally
 PSQL_BIN, then run `python3 scripts/payment-source-binding-concurrency.py`.
 Concurrency fixtures are retained in that disposable database; use a fresh DB for
 repeat runs. CI runs both suites. No provider or network credentials are used.
@@ -61,3 +61,13 @@ and v9 integration fixtures refused this different disposable target via their
 hardcoded safety guards; these were not bypassed or counted as passes. New suite
 separately verifies a recorded staging_mock payment remains unchanged and cannot
 acquire a Stripe source. PostgreSQL 16 CI and independent review remain gates.
+
+Review hardening: the harness rejects missing/non-numeric/out-of-range ports and
+non-dedicated database names before invoking psql. Explicit postgres user and
+server address/port/database/user checks precede fixture writes. Docker private
+server addresses are permitted behind the required loopback client endpoint.
+Safety regressions include 12 invalid port cases plus five target guard cases.
+CI creates/migrates a dedicated source-binding database and drops it through an
+EXIT trap, never inserting concurrent fixtures into shared lumin_test. The
+readiness self-test dynamically uses the checkout migration head while its drift
+case guarantees a different value; production comparison is unchanged.

@@ -1,13 +1,18 @@
 """Run ONLY against an already-migrated disposable DB. No credentials/providers.
 Uses explicit loopback PGHOST + PGPORT + PGDATABASE; writes retained test fixtures.
 """
-import os, subprocess, concurrent.futures
+import os, subprocess, concurrent.futures, re, ipaddress
 if os.environ.get("PAYMENT_SOURCE_DISPOSABLE") != "1":
     raise SystemExit("Set PAYMENT_SOURCE_DISPOSABLE=1 for owned disposable database only")
 if os.environ.get("PGHOST") not in ("127.0.0.1", "localhost"):
     raise SystemExit("Loopback-only fixture")
-if not os.environ.get("PGDATABASE", "").startswith("lumin_"):
-    raise SystemExit("Expected explicit lumin_ disposable database")
+port = os.environ.get("PGPORT", "")
+if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
+    raise SystemExit("Explicit bounded numeric PGPORT required")
+if not re.fullmatch(r"lumin_source_binding_[a-z0-9_]+", os.environ.get("PGDATABASE", "")):
+    raise SystemExit("Expected dedicated lumin_source_binding_ disposable database")
+if os.environ.get("PGUSER") != "postgres":
+    raise SystemExit("Explicit disposable postgres admin required")
 env = os.environ.copy()
 for k in ("PGSERVICE", "PGSERVICEFILE", "PGPASSFILE", "PGOPTIONS", "PGHOSTADDR", "DATABASE_URL"):
     env.pop(k, None)
@@ -18,6 +23,13 @@ def run(sql):
     if p.returncode:
         raise RuntimeError(p.stderr)
     return p.stdout.strip()
+identity = run("select host(inet_server_addr())||'|'||inet_server_port()||'|'||current_database()||'|'||current_user")
+parts = identity.split("|")
+# Docker's loopback-published PostgreSQL sees its private container address.
+# Client endpoint remains explicitly loopback; verify server address and identity.
+allowed = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+if len(parts) != 4 or not any(ipaddress.ip_address(parts[0]) in n for n in allowed) or parts[1:] != [str(int(port)), env["PGDATABASE"], "postgres"]:
+    raise SystemExit("Disposable server identity mismatch; no fixture writes performed")
 T = "a1020000-1111-4000-8000-000000000001"
 B = "a1020000-1111-4000-8000-000000000002"
 run(f"""insert into public.tenants(id,name,slug,timezone,currency) values

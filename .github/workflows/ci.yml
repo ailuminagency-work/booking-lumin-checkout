@@ -106,10 +106,23 @@ jobs:
             echo "applying $f"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "$f"
           done
-      - name: Dormant payment source concurrent bindings
+      - name: Dormant payment source harness safety tests
+        run: python3 scripts/payment-source-binding-safety-test.py
+      - name: Dormant payment source isolated concurrent bindings
         env:
           PAYMENT_SOURCE_DISPOSABLE: '1'
-        run: python3 scripts/payment-source-binding-concurrency.py
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_source_binding_ci
+        run: |
+          # This unique database is owned by this step, never the shared lumin_test.
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_source_binding_ci;'
+          trap 'psql -X -v ON_ERROR_STOP=1 -d postgres -c "drop database lumin_source_binding_ci;"' EXIT
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          python3 scripts/payment-source-binding-concurrency.py
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/payment_source_binding_tests.sql
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
       - name: Run domain security suites (each transactional; fails on any FAIL)
