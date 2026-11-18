@@ -9,9 +9,22 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0127_scoped_success_receipt_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0129_late_success_resource_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["attention missing", "drop table payment_internal.payment_attention"],
+ ["attention immutable trigger disabled", "alter table payment_internal.payment_attention disable trigger payment_attention_immutable"],
+ ["attention service column select", "grant select(reason) on payment_internal.payment_attention to service_role"],
+ ["attention client read", "grant select on payment_internal.payment_attention to authenticated"],
+ ["attention RLS disabled", "alter table payment_internal.payment_attention disable row level security"],
+ ["attention check removed", "alter table payment_internal.payment_attention drop constraint payment_attention_reason_check"],
+ ["attention reader PUBLIC", "grant execute on function payment_internal.read_payment_attention(uuid,uuid) to public"],
+ ["attention reader invoker", "alter function payment_internal.read_payment_attention(uuid,uuid) security invoker"],
+ ["resource release helper changed", "create or replace function lumin.release_resource_holds(p_booking_id uuid) returns integer language plpgsql security definer set search_path='' as $$begin return 0;end$$"],
+ ["resource admission invoker", "alter function lumin.reserve_resource_quantity(uuid,uuid,timestamptz,timestamptz,uuid,interval,integer) security invoker"],
+ ["resource admission service revoked", "revoke execute on function lumin.reserve_resource_quantity(uuid,uuid,timestamptz,timestamptz,uuid,interval,integer) from service_role"],
+ ["resource admission public grant", "grant execute on function lumin.reserve_resource_quantity(uuid,uuid,timestamptz,timestamptz,uuid,interval,integer) to public"],
+
  ["payment_internal.confirm_scoped_payment(uuid) service grant", "grant execute on function payment_internal.confirm_scoped_payment(uuid) to service_role"],
  ["payment_internal.confirm_scoped_payment(uuid) PUBLIC grant", "grant execute on function payment_internal.confirm_scoped_payment(uuid) to public"],
  ["payment_internal.confirm_scoped_payment(uuid) definer", "alter function payment_internal.confirm_scoped_payment(uuid) security definer"],
