@@ -18,7 +18,7 @@
 //      the slot BEFORE minting the intent. NO_CAPACITY ⇒ 409 and NO intent.
 //   7. Create OR REUSE the Stripe PaymentIntent (Stripe-native Idempotency-Key
 //      = the booking idempotency_key) and UPSERT the payments row keyed by the
-//      UNIQUE (provider, provider_intent_id) (SI-3). Release the hold on failure.
+//      UNIQUE (provider, provider_intent_id) (SI-3), without overwriting a replay.
 //   8. Return ONLY { clientSecret, publishableKey } — never the secret key.
 //
 // ── F2: AUTHORIZATION / CAPABILITY-TOKEN MODEL ──────────────────────────────
@@ -231,14 +231,28 @@ Deno.serve(async (req: Request): Promise<Response> => {
       metadata: { bookingId: booking.id },
     });
   } catch (e) {
-    // The charge could not be opened — RELEASE the hold so the slot is not
-    // stranded until TTL expiry (F1).
-    await db.rpc("release_hold", { p_booking_id: booking.id });
+    // A transport error does not prove that no intent exists. A previous retry
+    // may already have exposed a usable client secret. Preserve the bounded hold.
     const code = e instanceof PaymentError ? e.code : "PROVIDER_UNAVAILABLE";
     return errorResponse(code, "could not create payment intent", 502);
   }
 
-  // UPSERT the payments row on the SI-3 anchor (provider, provider_intent_id).
+  // The adapter's TypeScript return type is not runtime validation of a provider
+  // response. Never persist our requested price beside a different provider price,
+  // even when no frontend capability exists. Do not assume Stripe ID formats.
+  if (!intent || typeof intent !== "object" || Array.isArray(intent) ||
+      typeof intent.intentId !== "string" || intent.intentId.trim().length === 0 ||
+      !intent.amount || typeof intent.amount !== "object" || Array.isArray(intent.amount) ||
+      !Number.isSafeInteger(intent.amount.amount) || intent.amount.amount <= 0 ||
+      intent.amount.amount !== charge.amount || intent.amount.currency !== charge.currency ||
+      !["requires_payment", "processing", "succeeded", "failed", "refunded", "partially_refunded"].includes(intent.state)) {
+    // A malformed/mismatched response leaves provider outcome uncertain. Keep the
+    // hold and do not record, disclose, refund or infer that the intent is absent.
+    return errorResponse("PROVIDER_UNAVAILABLE", "invalid payment provider response", 502);
+  }
+
+  // Insert on the SI-3 anchor without updating an existing row. Webhooks and
+  // review/refund authorities may have advanced it while createIntent was in flight.
   const { error: pErr } = await db.from("payments").upsert(
     {
       tenant_id,
@@ -252,11 +266,38 @@ Deno.serve(async (req: Request): Promise<Response> => {
       amount: charge.amount,
       currency: charge.currency,
     },
-    { onConflict: "provider,provider_intent_id" },
+    { onConflict: "provider,provider_intent_id", ignoreDuplicates: true },
   );
   if (pErr) {
-    await db.rpc("release_hold", { p_booking_id: booking.id });
+    // Persistence failure also leaves the provider outcome uncertain.
     return errorResponse("PROVIDER_UNAVAILABLE", "could not record payment", 500);
+  }
+
+  // Read the authoritative row after INSERT ... ON CONFLICT DO NOTHING. Never
+  // return a capability for an anchor owned by a different booking or price.
+  const { data: recorded, error: recordedError } = await db.from("payments")
+    .select("tenant_id, booking_id, provider, provider_intent_id, state, amount, currency")
+    .eq("provider", "stripe_connect")
+    .eq("provider_intent_id", intent.intentId)
+    .maybeSingle();
+  if (recordedError || !recorded) {
+    return errorResponse("PROVIDER_UNAVAILABLE", "could not verify recorded payment", 500);
+  }
+  if (recorded.tenant_id !== tenant_id || recorded.booking_id !== booking.id ||
+      recorded.provider !== "stripe_connect" || recorded.provider_intent_id !== intent.intentId ||
+      recorded.amount !== charge.amount || recorded.currency !== charge.currency) {
+    return errorResponse("PAYMENT_CONFLICT", "payment does not match booking", 409);
+  }
+  if (recorded.state !== "requires_payment") {
+    // In particular, never reopen a succeeded, parked, failed or refunded payment.
+    return errorResponse("ILLEGAL_TRANSITION", "payment is not awaiting customer payment", 409);
+  }
+
+  // A valid financial anchor may have no client secret (for example a resolved
+  // provider intent). Persist/read that anchor first so recovery is not stranded.
+  // Only a still-payable intent needs a usable frontend capability.
+  if (typeof intent.clientToken !== "string" || intent.clientToken.trim().length === 0) {
+    return errorResponse("PROVIDER_UNAVAILABLE", "payment capability is unavailable", 502);
   }
 
   // Advance draft → pending_payment (idempotent; the DB trigger validates the

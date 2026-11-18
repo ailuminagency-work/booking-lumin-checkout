@@ -28,6 +28,7 @@ import {createBusinessProfileInitializer} from './existing-business-profile';
 import {attachRequestId} from './request-id';
 import {createRequestTelemetry} from './request-telemetry';
 import {readReleaseMetadata,serveReleaseMetadata} from './release-metadata';
+import {createMigrationAttestationHandler,createMigrationAttestationReader} from './migration-attestation';
 import {createCustomerFieldRollbackReceiptReader} from './customer-field-rollback-receipt';
 import {createCustomerFieldRollback} from './customer-field-rollback';
 import {createCustomerFieldVersionHistoryReader} from './customer-field-version-history';
@@ -161,6 +162,20 @@ function main(): void {
   pool.on("error", () => {
     // Never log connection error detail (may embed the connection string).
   });
+  const readMigrationAttestation = createMigrationAttestationReader(pool);
+  const migrationAttestationHandler = createMigrationAttestationHandler({
+    environment: process.env.BOOKING_LUMIN_ENV,
+    verifyIdentity: async token => {
+      try {
+        const evidence = await verifyIdentity(`Bearer ${token}`);
+        return evidence ? { userId: evidence.userId } : null;
+      } catch {
+        return null;
+      }
+    },
+    read: readMigrationAttestation,
+    onFailure: () => console.warn(JSON.stringify({ event: "migration_attestation_failed", category: "schema_unavailable" })),
+  });
 
   // ---- Payment-provenance pairing (app-side half of migration 0088) ------
   // The in-database allowlist refuses to confirm a provider this deployment
@@ -222,7 +237,7 @@ function main(): void {
     res.end(JSON.stringify(body));
   };
 
-  const server = createServer({ maxHeaderSize: 16384 }, (req: IncomingMessage, res: ServerResponse) => {
+  const server = createServer({ maxHeaderSize: 16384 }, async (req: IncomingMessage, res: ServerResponse) => {
     attachRequestId(req, res);
     observeRequest(req, res);
     // Mispaired with a simulated-money database: serve nothing, not even the
@@ -254,6 +269,11 @@ function main(): void {
         });
       return;
     }
+    // Staging-only, authenticated schema attestation. This is deliberately
+    // separate from public /version: deployment metadata can be forged by a
+    // stale environment value, while this reader proves the live database ran
+    // the attestation migration through the server-side connection.
+    if (await migrationAttestationHandler(req, res, path)) return;
     // Everything else is served by the authenticated flow BFF. The flow server
     // is never `.listen()`ed itself; we drive its request handler directly.
     flowServer.emit("request", req, res);

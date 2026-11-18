@@ -106,6 +106,44 @@ jobs:
             echo "applying $f"
             psql -v ON_ERROR_STOP=1 -d lumin_test -f "$f"
           done
+      - name: Dormant payment source harness safety tests
+        run: python3 scripts/payment-source-binding-safety-test.py
+      - name: Dormant payment source isolated concurrent bindings
+        env:
+          PAYMENT_SOURCE_DISPOSABLE: '1'
+          PGHOST: 127.0.0.1
+          PGDATABASE: lumin_source_binding_ci
+        run: |
+          # This unique database is owned by this step, never the shared lumin_test.
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_source_binding_ci;'
+          trap 'psql -X -v ON_ERROR_STOP=1 -d postgres -c "drop database lumin_source_binding_ci;"' EXIT
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -f "$f"
+          done
+          python3 scripts/payment-source-binding-concurrency.py
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/payment_source_binding_tests.sql
+      - name: Verify migration attestation and incomplete-schema fail-closed
+        run: |
+          psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/migration_attestation_tests.sql
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'create database lumin_migration_attestation_guard_ci;'
+          if psql -v ON_ERROR_STOP=1 -d lumin_migration_attestation_guard_ci -f supabase/migrations/0099_migration_attestation.sql; then
+            echo 'MIGRATION_ATTESTATION_SCHEMA_MISMATCH was not enforced on an incomplete disposable schema'
+            exit 1
+          fi
+          psql -v ON_ERROR_STOP=1 -d postgres -c 'drop database lumin_migration_attestation_guard_ci;'
+      - name: Verify payment attestation under explicit English ICU collation
+        run: |
+          # Dedicated disposable database; default CI/local collations differ.
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c "create database lumin_attestation_icu_ci template template0 encoding 'UTF8' locale_provider icu icu_locale 'en-US';"
+          trap 'psql -X -v ON_ERROR_STOP=1 -d postgres -c "drop database lumin_attestation_icu_ci;"' EXIT
+          psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f supabase/tests/migration_attestation_tests.sql
+      - name: Verify security-advisor hardening and intentional role boundaries
+        run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/security_advisor_hardening_tests.sql
       - name: Run RLS attack suite (fails on any FAIL)
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/rls_attack_tests.sql
       - name: Run domain security suites (each transactional; fails on any FAIL)
@@ -137,6 +175,7 @@ jobs:
             single_business_account_tests \
             payment_review_park_tests \
             payment_connection_authority_tests \
+            payment_source_binding_tests \
             notification_planner_config_tests \
             mode_installations_tests \
             mode_flow_session_tests \
@@ -1106,4 +1145,3 @@ jobs:
         # than stopping at the first failure -- so one red harness still reports the
         # others. It exits non-zero if any failed.
         run: bash apps/api/scripts/run-integration.sh
-

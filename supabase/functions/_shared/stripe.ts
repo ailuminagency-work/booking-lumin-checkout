@@ -41,6 +41,7 @@ export function shouldIgnoreStalePaymentFailure(state: string): boolean {
 }
 
 export type PaymentIntentRef = {
+  source?: StripeDirectChargeSource;
   intentId: string;
   clientToken: string;
   state: PaymentState;
@@ -83,6 +84,7 @@ function mapIntentStatus(status: string): PaymentState {
 }
 
 interface StripeIntent {
+  livemode?: unknown;
   id: string;
   status: string;
   amount: number;
@@ -90,8 +92,9 @@ interface StripeIntent {
   client_secret: string | null;
 }
 
-function toRef(i: StripeIntent): PaymentIntentRef {
+function toRef(i: StripeIntent, source?: StripeDirectChargeSource): PaymentIntentRef {
   return {
+    ...(source ? {source} : {}),
     intentId: i.id,
     clientToken: i.client_secret ?? "",
     state: mapIntentStatus(i.status),
@@ -119,7 +122,20 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** Dormant opt-in; trusted server connection authority, never customer metadata. */
+export type StripeDirectChargeSource = Readonly<{accountId: string; livemode: boolean}>;
+
+function pinDirectChargeSource(value: StripeDirectChargeSource | undefined): StripeDirectChargeSource | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value.accountId !== "string" || !/^acct_[A-Za-z0-9]{8,64}$/.test(value.accountId) || typeof value.livemode !== "boolean") {
+    throw new PaymentError("INVALID_REQUEST", "invalid direct-charge source");
+  }
+  return Object.freeze({accountId: value.accountId, livemode: value.livemode});
+}
+
 export interface StripeClientOptions {
+  /** Omitted preserves legacy behavior. No runtime route opts in in this change. */
+  directChargeSource?: StripeDirectChargeSource;
   secretKey: string;
   webhookSecret: string;
   apiBase?: string;
@@ -129,6 +145,7 @@ export interface StripeClientOptions {
 
 export function createStripeClient(opts: StripeClientOptions) {
   const apiBase = (opts.apiBase ?? "https://api.stripe.com").replace(/\/$/, "");
+  const source = pinDirectChargeSource(opts.directChargeSource);
   const doFetch = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
 
@@ -144,7 +161,15 @@ export function createStripeClient(opts: StripeClientOptions) {
       ...extra,
       Authorization: `Bearer ${opts.secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      ...(source ? {"Stripe-Account": source.accountId} : {}),
     };
+  }
+
+  function scopedRef(intent: StripeIntent): PaymentIntentRef {
+    if (source && intent?.livemode !== source.livemode) {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "payment mode does not match source");
+    }
+    return toRef(intent, source);
   }
 
   async function readJson(res: Response): Promise<any> {
@@ -188,7 +213,7 @@ export function createStripeClient(opts: StripeClientOptions) {
         body: body.toString(),
       });
       if (!res.ok) throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe createIntent failed");
-      return toRef((await readJson(res)) as StripeIntent);
+      return scopedRef((await readJson(res)) as StripeIntent);
     },
 
     async getIntent(intentId: string): Promise<PaymentIntentRef | null> {
@@ -198,7 +223,7 @@ export function createStripeClient(opts: StripeClientOptions) {
       });
       if (res.status === 404) return null;
       if (!res.ok) throw new PaymentError("PROVIDER_UNAVAILABLE", "stripe getIntent failed");
-      return toRef((await readJson(res)) as StripeIntent);
+      return scopedRef((await readJson(res)) as StripeIntent);
     },
 
     // No refund operation. This function runs with the tenant connection and is
@@ -238,11 +263,14 @@ export function createStripeClient(opts: StripeClientOptions) {
         throw new PaymentError("WEBHOOK_UNVERIFIED", "signature mismatch");
       }
 
-      let event: { type?: unknown; data?: { object?: unknown } };
+      let event: { type?: unknown; account?: unknown; livemode?: unknown; data?: { object?: unknown } };
       try {
         event = JSON.parse(payload);
       } catch {
         return { kind: "unrecognized", intentId: null, raw: payload };
+      }
+      if (source && (event?.account !== source.accountId || event?.livemode !== source.livemode)) {
+        throw new PaymentError("WEBHOOK_UNVERIFIED", "webhook source mismatch");
       }
       const type = typeof event.type === "string" ? event.type : "";
       const object = (event.data?.object ?? {}) as { id?: unknown; payment_intent?: unknown; amount?: unknown };

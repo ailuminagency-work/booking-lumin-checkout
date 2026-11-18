@@ -100,6 +100,8 @@ TSX="${ROOT}/node_modules/.bin/tsx"
 status=0
 n=0
 for harness in \
+  src/provider-processing-authority.integration.mjs \
+  src/payment-attestation.integration.mjs \
   src/pg-http.integration.ts \
   src/roster-http.integration.ts \
   src/phase-a-golden.integration.ts \
@@ -124,7 +126,12 @@ do
   echo "== running ${harness} on ${DB} =="
   # Every harness runs to completion even after one fails, so a single red
   # harness still reports the others.
-  if ! PGDATABASE="${DB}" "${TSX}" "${harness}"; then
+  runner=("${TSX}")
+  if [[ "$harness" == src/phase-a-http-golden.integration.ts ]]; then
+    # Guard only this fresh-process journey. Authentication and payment remain synthetic.
+    runner=(node --import "${ROOT}/apps/api/scripts/deny-external-network.mjs" --import tsx)
+  fi
+  if ! PGDATABASE="${DB}" "${runner[@]}" "${harness}"; then
     echo "FAIL: ${harness}"
     status=1
   fi

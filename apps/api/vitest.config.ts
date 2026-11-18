@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // tsx scripts under src/*.integration.ts and are run via `npm run test:integration`.
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "test/**/*.test.ts", "src/stripe-webhook-outage.test.mjs", "src/payment-intent-recording.test.mjs"],
     exclude: ["**/node_modules/**", "**/*.integration.ts"],
   },
 });

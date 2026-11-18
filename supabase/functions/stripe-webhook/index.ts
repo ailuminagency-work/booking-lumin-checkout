@@ -41,13 +41,12 @@
 //        to refunded / partially_refunded using amount_refunded, and drive the
 //        booking to `refunded` ONLY when fully refunded.
 //
-// Always returns 200 after successful processing (so Stripe stops retrying);
-// 400 only on a bad signature.
+// Returns 200 only after handled processing. Bad signatures return 400;
+// unavailable anchors and processing errors are retryable 5xx.
 
 import {
   createStripeClient,
   interpretRefundEvent,
-  shouldIgnoreStalePaymentFailure,
   webhookIntentAmount,
 } from "../_shared/stripe.ts";
 import { errorResponse, jsonResponse, serviceRoleClient } from "../_shared/db.ts";
@@ -72,18 +71,28 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return errorResponse("WEBHOOK_UNVERIFIED", "signature verification failed", 400);
   }
 
+  // Only verified financial event kinds need payment persistence. Do not turn
+  // irrelevant signed deliveries into database work or retry noise.
+  if (event.kind === "unrecognized") return jsonResponse({ received: true, ignored: event.kind });
+
   const db = serviceRoleClient();
 
   const intentId = event.intentId;
   if (!intentId) return jsonResponse({ received: true, note: "no intent id" });
 
-  const { data: payment } = await db
+  const { data: payment, error: paymentLookupError } = await db
     .from("payments")
     .select("id, tenant_id, booking_id, amount, currency, state")
     .eq("provider", "stripe_connect")
     .eq("provider_intent_id", intentId)
     .maybeSingle();
-  if (!payment) return jsonResponse({ received: true, note: "unknown intent" });
+  // A database outage is not proof that this intent is unknown. Acknowledge only
+  // a successful lookup; retry valid deliveries whose persistence is unavailable.
+  if (paymentLookupError) return errorResponse("PROVIDER_UNAVAILABLE", "payment lookup failed", 500);
+  // The event may have arrived before the create-intent writer committed, or
+  // after that writer lost its persistence response. Do not discard it as handled.
+  // Provider-managed retries are finite; this is not a durable inbox.
+  if (!payment) return errorResponse("PROVIDER_UNAVAILABLE", "payment is not available yet", 503);
 
   try {
     if (event.kind === "payment_succeeded") {
@@ -92,11 +101,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (event.kind === "payment_failed") {
       // Stripe can deliver delayed/canceled events after a succeeded, parked, or
-      // refund event. The migration 0094 RPC locks the payment row and performs
+      // refund event. The migration 0101 RPC locks the payment row, checks review
+      // provenance, and performs
       // the compare-and-set, hold release, and booking transition atomically.
-      if (shouldIgnoreStalePaymentFailure(payment.state)) {
-        return jsonResponse({ received: true, failed: false, note: "ignored stale failure" });
-      }
       const { data: failure, error: failureError } = await db.rpc("fail_payment_webhook", {
         p_payment_id: payment.id,
       });
@@ -133,121 +140,20 @@ async function handleSucceeded(
   event: { raw: unknown },
   payment: PaymentRow,
 ): Promise<Response> {
-  // A parked, failed, or refunded payment is already resolved by another
-  // authority. Check this before the confirmed-booking replay branch: a stale
-  // succeeded event must never rewrite a refunded payment back to succeeded.
-  if (payment.state === "processing" || payment.state === "failed" || payment.state === "refunded" || payment.state === "partially_refunded") {
-    return jsonResponse({ received: true, confirmed: false, note: "already resolved payment" });
-  }
-
-  const { data: booking } = await db
-    .from("bookings")
-    .select("id, state")
-    .eq("id", payment.booking_id)
-    .maybeSingle();
-  // Idempotent replay: only a payment that is already succeeded may replay a
-  // confirmed booking. A contradictory requires_payment+confirmed pair is not
-  // allowed to become financially true here.
-  if (payment.state === "succeeded" && booking?.state === "confirmed") {
-    return jsonResponse({ received: true, confirmed: true, note: "already confirmed (replay)" });
-  }
-
-  if (payment.state !== "requires_payment" && payment.state !== "succeeded") {
-    return jsonResponse({ received: true, confirmed: false, note: "ignored unsupported payment state" });
-  }
-
-  // F3 — AMOUNT GUARD, FAIL-CLOSED. A positive amount must be present AND equal
-  // the server amount. Anything else (missing / null / ≤0 / mismatch) is a
-  // desync or tampering: NEVER confirm — park it for a human (0090).
-  const stripeAmount = webhookIntentAmount(event.raw);
-  const amountOk = stripeAmount !== null && stripeAmount > 0 && stripeAmount === payment.amount;
-
-  // F1 — HOLD RE-VERIFY. The hold must still be this booking's (active, or
-  // already consumed by a prior confirm of THIS booking).
-  const { data: hold } = await db
-    .from("capacity_holds")
-    .select("status, expires_at")
-    .eq("booking_id", payment.booking_id)
-    .maybeSingle();
-  const holdActive = !!hold && hold.status === "active" && new Date(hold.expires_at).getTime() > Date.now();
-  const holdConsumed = !!hold && hold.status === "consumed";
-  const holdHonored = holdActive || holdConsumed;
-
-  if (!amountOk || !holdHonored) {
-    // PARK for a human (0090). No refund is issued here, ever.
-    return await park(
-      db,
-      payment,
-      !amountOk ? "amount_mismatch" : "capacity_oversold",
-      stripeAmount,
-    );
-  }
-
-  // Compare-and-set the payment state before entering the existing atomic
-  // confirmation RPC. A concurrent failure/refund either wins this row race
-  // (and this delivery becomes a no-op) or observes succeeded and cannot
-  // regress it. The RPC then locks payment + booking + hold together.
-  if (payment.state === "requires_payment") {
-    const { data: advanced, error: advanceError } = await db
-      .from("payments")
-      .update({ state: "succeeded" })
-      .eq("id", payment.id)
-      .eq("state", "requires_payment")
-      .select("id")
-      .maybeSingle();
-    if (advanceError) throw advanceError;
-    if (!advanced) {
-      return jsonResponse({ received: true, confirmed: false, note: "payment state changed before confirmation" });
-    }
-  }
-
-  const { data: confirmed, error: confirmationError } = await db.rpc("confirm_succeeded_payment", {
+  // Review provenance, payment/booking/hold authority and every mutation share
+  // one database transaction. The lookup above is routing, not state authority.
+  const { data: outcome, error } = await db.rpc("succeed_payment_webhook", {
     p_payment_id: payment.id,
+    p_observed_amount: webhookIntentAmount(event.raw),
   });
-  if (confirmationError) throw confirmationError;
+  if (error) throw error;
+  if (!outcome || outcome.result === "NOT_FOUND") throw new Error("payment unavailable");
   return jsonResponse({
     received: true,
-    confirmed: confirmed?.state === "confirmed",
-    replayed: confirmed?.replayed === true,
+    confirmed: outcome.result === "CONFIRMED",
+    ...(outcome.result === "CONFIRMED" ? { replayed: outcome.replayed === true } : {}),
+    ...(outcome.result === "PARKED" ? { parked: outcome.reason } : {}),
   });
-}
-
-/**
- * F1 PARK (migration 0090). A succeeded intent that cannot be confirmed is handed
- * to a person instead of being refunded automatically.
- *
- * Order matters. The review row is written FIRST: if anything after it fails, the
- * outer catch returns 500, Stripe retries, and the replay is a no-op because the
- * row is keyed on payment_id. Writing it last would risk releasing the hold and
- * moving the payment with no record of why.
- *
- * `processing` is the park state because confirm_succeeded_payment requires
- * `succeeded` — so a parked payment cannot be turned into a booking by any later
- * automatic path, only by a person setting it back deliberately.
- *
- * The booking is intentionally NOT transitioned. `failed` is terminal in the 0005
- * transition table, and with the money still captured a terminal booking would
- * strand it; left at `pending_payment`, both `-> confirmed` (honour) and
- * `-> failed` (refund by hand) stay legal for the reviewer.
- *
- * Returns 200 (handled) so Stripe stops retrying a decision that is now a human's.
- */
-async function park(
-  db: Db,
-  payment: PaymentRow,
-  reason: string,
-  observedAmount: number | null,
-): Promise<Response> {
-  const { data: parked, error: parkError } = await db.rpc("park_payment_webhook", {
-    p_payment_id: payment.id,
-    p_reason: reason,
-    p_observed_amount: observedAmount,
-  });
-  if (parkError) throw parkError;
-  if (!parked || parked.result !== "PARKED") {
-    return jsonResponse({ received: true, confirmed: false, note: "payment state changed before parking" });
-  }
-  return jsonResponse({ received: true, confirmed: false, parked: reason });
 }
 
 /**
