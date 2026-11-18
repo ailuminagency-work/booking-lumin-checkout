@@ -251,36 +251,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return errorResponse("PROVIDER_UNAVAILABLE", "invalid payment provider response", 502);
   }
 
-  // Insert on the SI-3 anchor without updating an existing row. Webhooks and
-  // review/refund authorities may have advanced it while createIntent was in flight.
-  const { error: pErr } = await db.from("payments").upsert(
-    {
-      tenant_id,
-      booking_id: booking.id,
-      // 0088's confirmable-provider allowlist names the tenant payment
-      // connection "stripe_connect"; keep the persisted payment provenance
-      // aligned so the sole confirmation RPC can authorize it.
-      provider: "stripe_connect",
-      provider_intent_id: intent.intentId,
-      state: intent.state,
-      amount: charge.amount,
-      currency: charge.currency,
-    },
-    { onConflict: "provider,provider_intent_id", ignoreDuplicates: true },
-  );
+  // Compatibility RPC keeps global insert-only arbitration and authoritative
+  // reread in one transaction. This path is still legacy, NOT source-aware.
+  const { data: recorded, error: pErr } = await db.rpc("record_legacy_payment_observation", {
+    p_tenant_id: tenant_id, p_booking_id: booking.id,
+    p_provider_intent_id: intent.intentId, p_state: intent.state,
+    p_amount: charge.amount, p_currency: charge.currency,
+  });
   if (pErr) {
-    // Persistence failure also leaves the provider outcome uncertain.
+    // No provider absence inference or hold release on database uncertainty.
+    if (pErr.code === "P0001" && pErr.message === "PAYMENT_RECORDING_CONFLICT") {
+      return errorResponse("PAYMENT_CONFLICT", "payment does not match booking", 409);
+    }
     return errorResponse("PROVIDER_UNAVAILABLE", "could not record payment", 500);
   }
-
-  // Read the authoritative row after INSERT ... ON CONFLICT DO NOTHING. Never
-  // return a capability for an anchor owned by a different booking or price.
-  const { data: recorded, error: recordedError } = await db.from("payments")
-    .select("tenant_id, booking_id, provider, provider_intent_id, state, amount, currency")
-    .eq("provider", "stripe_connect")
-    .eq("provider_intent_id", intent.intentId)
-    .maybeSingle();
-  if (recordedError || !recorded) {
+  if (!recorded) {
     return errorResponse("PROVIDER_UNAVAILABLE", "could not verify recorded payment", 500);
   }
   if (recorded.tenant_id !== tenant_id || recorded.booking_id !== booking.id ||
