@@ -1,3 +1,4 @@
+import {OwnerPaymentAttention,AttentionCursor,type OwnerPaymentAttentionReader} from './owner-payment-attention';
 import {SavePaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldDraftReceipt,PaidJourneyCustomerFieldDraft,type PaidJourneyCustomerFieldDraftReader,type PaidJourneyCustomerFieldDraftWriter} from './paid-journey-customer-field-draft';
 import {PublishPaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldPublicationReceipt,PaidJourneyCustomerFieldOwnerPublication,type createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import type {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
@@ -85,6 +86,7 @@ export interface FlowHttpOptions{
  ownerBookings?:OwnerBookingsListReader;
  ownerBookingDetail?:OwnerBookingDetailReader;
  ownerPaymentReviews?:OwnerPaymentReviewsReader;
+ ownerPaymentAttention?:OwnerPaymentAttentionReader;
  ownerPaymentConnections?:OwnerPaymentConnectionsReader;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
@@ -417,7 +419,7 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     if(!result.success||result.data.businessType!==body.businessType)throw new FlowError("INTERNAL_ERROR");
     send(res,200,{ok:true,data:result.data});return;
    }
-   const allowed=url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==="/api/bookings"?["tenantId","limit","before"]:url.pathname==="/api/payment-reviews"?["tenantId","limit","before","status"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers','/api/bookings/detail'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
+   const allowed=url.pathname==="/api/payment-attention"?["tenantId","limit","cursor"]:url.pathname==="/api/availability"?["tenantId","serviceId","from","to"]:url.pathname==="/api/bookings"?["tenantId","limit","before"]:url.pathname==="/api/payment-reviews"?["tenantId","limit","before","status"]:['/api/confirmation-receipts','/api/confirmation-receipt-history','/api/booking-form-answers','/api/bookings/detail'].includes(url.pathname)?['tenantId','bookingId']:["tenantId"];
    if([...url.searchParams.keys()].some(k=>!allowed.includes(k))||url.searchParams.getAll("tenantId").length!==1)throw new FlowError("INVALID_REQUEST");
    const tenant=Uuid.parse(url.searchParams.get("tenantId"));
    const journeyFieldPublication=url.pathname.match(/^\/api\/paid-journey-customer-field-flows\/([^/]+)\/(publish|publication)$/);
@@ -501,6 +503,17 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const tenantId=tenant.toLowerCase();
     const result=OwnerBookingsList.safeParse(await options.ownerBookings(actor,tenantId,{limit,before}));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   if(url.pathname==='/api/payment-attention'){
+    if(!options.ownerPaymentAttention)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='GET'||req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))throw new FlowError('INVALID_REQUEST');
+    if(url.searchParams.getAll('limit').length>1||url.searchParams.getAll('cursor').length>1)throw new FlowError('INVALID_REQUEST');
+    const raw=url.searchParams.get('limit');if(raw!==null&&!/^[1-9][0-9]{0,2}$/.test(raw))throw new FlowError('INVALID_REQUEST');
+    const limit=raw===null?25:Number(raw),cursor=url.searchParams.get('cursor');
+    if(limit>100||cursor!==null&&!AttentionCursor.safeParse(cursor).success)throw new FlowError('INVALID_REQUEST');
+    const tenantId=tenant.toLowerCase(),result=OwnerPaymentAttention.safeParse(await options.ownerPaymentAttention(actor,tenantId,{limit,cursor}));
+    if(!result.success||result.data.tenantId!==tenantId||result.data.items.length>limit)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==='/api/payment-reviews'){

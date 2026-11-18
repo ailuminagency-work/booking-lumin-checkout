@@ -1,3 +1,11 @@
+export type PaymentAttentionItem=Readonly<{receiptId:string;bookingId:string;bookingReference:string|null;reason:'late_success_after_failure';recordedAt:string;conflictSeen:boolean}>;
+export type PaymentAttentionPage=Readonly<{tenantId:string;items:readonly PaymentAttentionItem[];nextCursor:string|null}>;
+export class PaymentAttentionError extends Error {constructor(readonly code:'UNAUTHENTICATED'|'FORBIDDEN'|'INVALID_REQUEST'|'UNSUPPORTED_CONFIG'|'UNVERIFIED'|'STALE_CONTEXT'|'ABORTED',message:string){super(message);}}
+export function validPaymentAttentionPage(value:unknown,tenantId:string):value is PaymentAttentionPage {
+ const keys=(x:unknown,wanted:string[]):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).length===wanted.length&&wanted.every(k=>Object.prototype.hasOwnProperty.call(x,k));
+ const id=(x:unknown)=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(x);
+ return keys(value,['tenantId','items','nextCursor'])&&value.tenantId===tenantId.toLowerCase()&&id(value.tenantId)&&Array.isArray(value.items)&&value.items.length<=100&&(value.nextCursor===null||typeof value.nextCursor==='string'&&value.nextCursor.length>0&&value.nextCursor.length<=200&&!/[\x00-\x20\x7f]/.test(value.nextCursor))&&value.items.every(x=>keys(x,['receiptId','bookingId','bookingReference','reason','recordedAt','conflictSeen'])&&id(x.receiptId)&&id(x.bookingId)&&(x.bookingReference===null||typeof x.bookingReference==='string'&&x.bookingReference.length>0&&x.bookingReference.length<=200)&&x.reason==='late_success_after_failure'&&typeof x.recordedAt==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(x.recordedAt)&&Number.isFinite(Date.parse(x.recordedAt))&&typeof x.conflictSeen==='boolean')&&new Set(value.items.map(x=>x.receiptId)).size===value.items.length;
+}
 export interface PaidJourneyCustomerFieldPaymentReceipt extends Omit<PaidJourneyPaymentReceipt,'schemaVersion'> {readonly schemaVersion:2;readonly realPayment:false;readonly productionMoney:false}
 export type PaidJourneyCustomerFieldPaymentState=Readonly<{phase:'ready'|'paying'|'unknown'|'blocked'}>|Readonly<{phase:'confirmed';receipt:PaidJourneyCustomerFieldPaymentReceipt}>;
 export class PaidJourneyCustomerFieldPaymentError extends Error {constructor(readonly delivery:'not_sent'|'rejected'|'unknown',message:string){super(message);}}
@@ -1474,6 +1482,39 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessCreation={phase:'unknown',attempt:body};throw new BusinessOnboardingError('unknown','Business creation remains unverified. This response does not prove an earlier attempt failed; retry only the same frozen key and details.');
  }
  const offerBody=(input:CreateSimpleOffer)=>JSON.stringify({name:input.name,description:input.description,price:{amount:input.price.amount,currency:input.price.currency},durationMinutes:input.durationMinutes,idempotencyKey:input.idempotencyKey});
+ async function readPaymentAttention(tenantId:string,query:{limit?:number;cursor?:string|null}={},signal?:AbortSignal):Promise<PaymentAttentionPage>{
+  if(!token||!userId||!bookingApiOrigin)throw new PaymentAttentionError('UNAUTHENTICATED','Sign in with the configured booking service.');
+  if(!uuid(tenantId)||Object.keys(query).some(k=>!['limit','cursor'].includes(k))||!Number.isInteger(query.limit??25)||(query.limit??25)<1||(query.limit??25)>100||(query.cursor!=null&&(typeof query.cursor!=='string'||query.cursor.length<1||query.cursor.length>200||/[\x00-\x20\x7f]/.test(query.cursor))))throw new PaymentAttentionError('INVALID_REQUEST','Select a valid business and page.');
+  tenantId=tenantId.toLowerCase();const at=generation,actor=userId,credential=token,controller=new AbortController();
+  const current=()=>at===generation&&actor===userId&&credential===token;
+  let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;controller.abort();},15000);
+  const aborted=()=>new PaymentAttentionError(!current()?'STALE_CONTEXT':timedOut?'UNVERIFIED':'ABORTED',!current()?'The signed-in account changed. Refresh this business again.':timedOut?'Payment attention could not be verified.':'Payment-attention loading was cancelled.');
+  const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();bookingAnswerReads.add(controller);
+  // Race only these GET/body reads; never change the uncertain-outcome semantics of booking writers.
+  async function wait<T>(value:Promise<T>):Promise<T>{
+   let stop!:()=>void;const cancelled=new Promise<never>((_resolve,reject)=>{stop=()=>reject(aborted());controller.signal.addEventListener('abort',stop,{once:true});if(controller.signal.aborted)stop();});
+   try{return await Promise.race([value,cancelled]);}finally{controller.signal.removeEventListener('abort',stop);}
+  }
+  const ensure=()=>{if(!current())throw new PaymentAttentionError('STALE_CONTEXT','The signed-in account changed. Refresh this business again.');if(controller.signal.aborted)throw aborted();};
+  const readOptions={method:'GET',credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal} as const;
+  try{
+   ensure();let response=await wait(transport(base.origin+`/rest/v1/tenant_members?select=tenant_id,role&user_id=eq.${tenant(actor)}`,{...readOptions,headers:{apikey:config.publishableKey,Authorization:`Bearer ${credential}`}}));ensure();
+   if(response.status===401){signOut();throw new PaymentAttentionError('UNAUTHENTICATED','Please sign in again before loading payment attention.');}
+   if(!response.ok)throw new PaymentAttentionError('UNVERIFIED','Fresh owner membership could not be verified.');
+   const memberships=rows(await wait(response.json()));ensure();
+   if(!memberships.every(row=>exact(row,['tenant_id','role'])&&uuid(row.tenant_id)&&typeof row.role==='string')||!memberships.some(row=>String(row.tenant_id).toLowerCase()===tenantId&&['BUSINESS_OWNER','BUSINESS_STAFF'].includes(String(row.role))))throw new PaymentAttentionError('FORBIDDEN','An authenticated member of this business can load payment attention.');
+   response=await wait(transport(bookingApiOrigin+'/api/payment-attention?tenantId='+encodeURIComponent(tenantId)+'&limit='+String(query.limit??25)+(query.cursor?'&cursor='+encodeURIComponent(query.cursor):''),{...readOptions,headers:{Authorization:`Bearer ${credential}`}}));ensure();
+   if(response.status===401){signOut();throw new PaymentAttentionError('UNAUTHENTICATED','Please sign in again before loading payment attention.');}
+   const value:unknown=await wait(response.json());ensure();
+   if(response.status===200&&exact(value,['ok','data'])&&value.ok===true&&validPaymentAttentionPage(value.data,tenantId)&&value.data.items.length<=(query.limit??25)){for(const item of value.data.items)Object.freeze(item);Object.freeze(value.data.items);return Object.freeze(value.data);}
+   if(exact(value,['ok','code'])&&value.ok===false){
+    if(response.status===403&&value.code==='FORBIDDEN')throw new PaymentAttentionError('FORBIDDEN','An authenticated member of this business can load payment attention.');
+    if(response.status===422&&value.code==='UNSUPPORTED_CONFIG')throw new PaymentAttentionError('UNSUPPORTED_CONFIG','Payment attention is unavailable in this workspace.');
+   }
+   throw new PaymentAttentionError('UNVERIFIED','Payment attention could not be verified.');
+  }catch(error){if(error instanceof PaymentAttentionError)throw error;if(!current()||controller.signal.aborted)throw aborted();throw new PaymentAttentionError('UNVERIFIED','Payment attention could not be verified.');}
+  finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);bookingAnswerReads.delete(controller);}
+ }
  async function readBookingFormAnswers(tenantId:string,bookingId:string,signal?:AbortSignal):Promise<OwnerBookingFormAnswers>{
   if(!token||!userId||!bookingApiOrigin)throw new BookingFormAnswersError('UNAUTHENTICATED','Sign in with the configured booking service.');
   if(!uuid(tenantId)||!uuid(bookingId))throw new BookingFormAnswersError('INVALID_REQUEST','Select a valid business and booking.');
@@ -1793,6 +1834,7 @@ export function createRuntimeClient(config:RuntimeConfig, transport:typeof fetch
   businessProfileInitializationLocked:profileInitializationLocked,
   ownerDetailingScheduling,
   detailingSchedulingState(tenantId:string,serviceId:string):DetailingSchedulingState {const state=detailingScheduling.get(tenantId.toLowerCase()+':'+serviceId.toLowerCase());return state?JSON.parse(JSON.stringify(state)) as DetailingSchedulingState:{phase:'ready'};},
+  readPaymentAttention,
   readBookingFormAnswers,
   readConfirmationReceiptStatus,
   readConfirmationReceiptHistory,

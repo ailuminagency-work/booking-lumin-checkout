@@ -1,3 +1,4 @@
+import {createOwnerPaymentAttentionReader} from './owner-payment-attention';
 import {createPaidJourneyCustomerFieldDraftOperations} from './paid-journey-customer-field-draft';
 import {createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
@@ -59,7 +60,7 @@ import { createOwnerBookingsListReader, createOwnerBookingDetailReader } from '.
 import { createOwnerPaymentReviewsReader } from './owner-payment-reviews';
 import { createOwnerPaymentConnectionsReader } from './owner-payment-connections';
 import { createOwnerBookingCancelWriter } from './owner-booking-cancel';
-import { paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled } from './capability-flags';
+import { paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled, paymentAttentionVisibilityEnabled } from './capability-flags';
 import { createSimulatedPaymentGuard } from './simulated-payment-readiness';
 /**
  * @lumin/api â€” production entrypoint for the hostable Booking Lumin API service.
@@ -196,6 +197,7 @@ function main(): void {
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_PUBLICATION==='1'?{paidJourneyPublication:true,...(()=>{const operations=createPaidJourneyHistoryRollback(pool,customerOrigins);return{paidJourneyHistory:operations.history,paidJourneyRollback:operations.rollback};})()}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_JOURNEY_SESSIONS==='1'?{paidJourneySessions:true,paidJourneyAvailability:createPaidJourneyAvailabilityReader(pool),paidJourneyHold:createPaidJourneyHoldWriter(pool),paidJourneyHoldRead:createPaidJourneyHoldReader(pool),...(mockPaymentsEnabled(process.env)?{paidJourneyMockPayment:createPaidJourneyMockPaymentWriter(pool,process.env)}:{})}:{}),
     ...(process.env.BOOKING_LUMIN_ENV==='staging'&&process.env.BOOKING_LUMIN_NOTIFICATION_AUTHORING==='1'?{notificationAuthoring:true,notificationPlannerConfig:createNotificationPlannerConfigApi(pool),confirmationReceiptStatus:createConfirmationReceiptStatusReader(pool),confirmationReceiptHistory:createConfirmationReceiptHistoryReader(pool)}:{}),
+    ...(paymentAttentionVisibilityEnabled(process.env)?{ownerPaymentAttention:createOwnerPaymentAttentionReader(pool)}:{}),
     ...(ownerBookingOperationsEnabled(process.env)?{bookingFormAnswers:createBookingFormAnswersReader(pool),ownerBookings:createOwnerBookingsListReader(pool),ownerPaymentReviews:createOwnerPaymentReviewsReader(pool),ownerBookingDetail:createOwnerBookingDetailReader(pool),ownerBookingCancel:createOwnerBookingCancelWriter(pool)}:{}),
     // Its OWN flag: a deployment may want the booking surfaces on before any
     // payment connection exists to look at, and this one is read-only.

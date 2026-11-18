@@ -16,11 +16,11 @@ export function UnavailablePage({ title, children }: { title: string; children?:
   return <section><h1>{title}</h1><p role="status">This section is not available yet.</p><p>No changes can be made here. Existing bookings and settings are unchanged.</p>{children}</section>;
 }
 
-export function PortalRoutes({ mode, bookings, bookingDetail, services, embed, workers, settings }: { mode: "demo" | "connected"; bookings?: ReactNode; bookingDetail?: ReactNode; services?: ReactNode; embed?: ReactNode; workers?: ReactNode; settings?: ReactNode }) {
+export function PortalRoutes({ mode, bookings, bookingDetail, services, embed, workers, settings, dashboard }: { mode: "demo" | "connected"; bookings?: ReactNode; bookingDetail?: ReactNode; services?: ReactNode; embed?: ReactNode; workers?: ReactNode; settings?: ReactNode; dashboard?:ReactNode }) {
   const demo = mode === "demo";
   const page = (title: string, content: ReactNode) => demo ? content : <UnavailablePage title={title} />;
   return <Suspense fallback={<p role="status" aria-live="polite">Loading page…</p>}><Routes>
-    <Route index element={demo ? <DashboardPage /> : <section><h1>Dashboard</h1><p>Use Bookings to review bookings and requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View bookings</Link> · <Link to="/services">View services</Link></p></section>} />
+    <Route index element={demo ? <DashboardPage /> : dashboard ?? <section><h1>Dashboard</h1><p>Use Bookings to review bookings and requests or Services to manage the connected simple-service catalog. Dashboard metrics are not available yet.</p><p><Link to="/bookings">View bookings</Link> · <Link to="/services">View services</Link></p></section>} />
     <Route path="bookings" element={demo ? <BookingsPage /> : bookings} />
     <Route path="bookings/:bookingId" element={!demo&&bookingDetail?bookingDetail:<UnavailablePage title="Booking detail" />} />
     <Route path="calendar" element={<UnavailablePage title="Calendar">{demo && <p><Link to="/calendar/availability">View demo availability settings</Link></p>}</UnavailablePage>} />
