@@ -8,7 +8,11 @@ changes, routing/association, deployment, dispatch/retry policy or refunds.
 0110 accepts only payment_intent.succeeded, payment_intent.payment_failed and
 payment_intent.canceled, with objectType payment_intent. Refund/charge events and
 all other shapes are rejected, not guessed or mapped using fallback identifiers.
-This deliberately narrower-than-Stripe v1 shape requires positive safe-integer
+This deliberately narrower-than-Stripe v1 shape accepts evt_ event IDs and pi_
+intent IDs with nonempty ASCII alphanumeric suffixes only (maximum 255 characters).
+Other or future provider identifier forms are rejected pending an explicit contract
+update, not guessed; personal/error prose and mismatched object prefixes cannot be
+used as identifiers. It requires positive safe-integer
 intentAmount and uppercase currency. intentAmount is the requested intent amount,
 NOT paid, captured, refunded or money received. No financial action follows it.
 
@@ -37,7 +41,8 @@ exists. Exact duplicate returns the original receipt/facts. Valid but conflictin
 facts preserve the original and atomically insert one immutable conflict marker,
 then return outcome conflict without raising/rolling back. The marker stores only
 receipt ID and first_seen_at, not conflicting payload or an unbounded counter.
-Later exact-original duplicates still report conflictSeen=true. Unsupported shapes
+Later exact-original duplicates still report conflictSeen=true and outcome=conflict;
+the top-level verdict is sticky too, never a clean duplicate after conflict. Unsupported shapes
 or versions reject before receipt creation rather than being recorded as new IDs.
 
 Unique insertion arbitrates concurrent first writers. Receipt immutability means a
@@ -66,7 +71,7 @@ Fresh actual PostgreSQL16.16 full-chain C and en-US ICU runs passed: standalone
 migration_attestation_tests.sql; receipt harness with real concurrent duplicate and
 conflicting first writers, source isolation, rollback/redelivery, malformed input,
 permission/immutability and unchanged financial-table counts; existing envelope and
-restart harnesses; 92 reader+guard catalog mutations, four witness negatives and
+restart harnesses; 95 reader+guard catalog mutations, four witness negatives and
 predecessor rejection. Each harness used a separate fresh clone. Migration-attestation
 unit tests: 15 passed. API typecheck and diff check passed. No live endpoint tested.
 

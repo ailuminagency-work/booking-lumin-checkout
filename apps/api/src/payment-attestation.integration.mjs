@@ -12,6 +12,9 @@ const read=createMigrationAttestationReader(pool);
 const migration=fs.readFileSync(new URL('../../../supabase/migrations/0111_payment_receipt_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['receipt event identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_id_check'],
+ ['receipt intent identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_intent_id_check'],
+ ['receipt supported type constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_type_check'],
  ['receipt RPC absent','drop function payment_internal.record_quarantined_event(jsonb)'],
  ['receipt RPC client execute','grant execute on function payment_internal.record_quarantined_event(jsonb) to authenticated'],
  ['receipt RPC service revoked','revoke execute on function payment_internal.record_quarantined_event(jsonb) from service_role'],

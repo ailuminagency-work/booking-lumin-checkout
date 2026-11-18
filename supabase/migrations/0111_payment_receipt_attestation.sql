@@ -21,7 +21,7 @@ select coalesce(
    ('public.snapshot_payment_request_envelope(uuid,uuid,text)','84ba3a22321049b5db22a7b0a945418e',true,true,'public.payment_request_envelopes'),
    ('payment_internal.materialize_payment_request_envelope(uuid,uuid)','bea7b992e7cd40df605f3a4fe8d03f9d',true,true,'jsonb')
 ,
-   ('payment_internal.record_quarantined_event(jsonb)','64a3c0d6a42ad4eecfdb3796b5ffb3bd',true,true,'jsonb')
+   ('payment_internal.record_quarantined_event(jsonb)','22dd7cec041ed8a4e8e2b8f8e5305812',true,true,'jsonb')
   ) expected(signature,body_hash,definer,callable,result_type)
   left join pg_catalog.pg_proc p on p.oid=to_regprocedure(expected.signature)
   left join pg_catalog.pg_language l on l.oid=p.prolang
@@ -45,7 +45,7 @@ select coalesce(
    ('public.payment_attempt_intents','1d21391177c75b2ff03c4cadbe9a85bb','ae693d0d2ae8b537ce28aa53d8275f88',false,false),
    ('public.payment_request_envelopes','9b067f2c3c65dbc8badbb1831e596f32','e77717aaefb57e32ce2d768acae5c936',false,false)
 ,
-   ('payment_internal.event_receipts','a4ab207363c984a7468011344a2dfeb4','74fa5da079516de0ee75c8c175f5fae9',false,false)
+   ('payment_internal.event_receipts','a4ab207363c984a7468011344a2dfeb4','743dde15cda69ca24fe33820c1dc9c46',false,false)
 ,
    ('payment_internal.event_receipt_conflicts','c6a44eb2d328f7bc9d8c16f4f157b4d9','69a5136618c862ae46f6db45b1f63179',false,false)
   ) expected(name,columns_hash,constraints_hash,review_writes,service_reads)

@@ -6,14 +6,14 @@ create table payment_internal.event_receipts (
  platform_account_id text not null check(platform_account_id ~ '^acct_[A-Za-z0-9]{8,64}$'),
  connected_account_id text not null check(connected_account_id ~ '^acct_[A-Za-z0-9]{8,64}$'),
  livemode boolean not null,
- event_id text not null check(length(event_id) between 1 and 255 and event_id=btrim(event_id) and event_id !~ '[[:cntrl:]]'),
+ event_id text not null check(event_id ~ '^evt_[A-Za-z0-9]{1,251}$'),
  object_type text not null check(object_type='payment_intent'),
  event_type text not null check(event_type in ('payment_intent.succeeded','payment_intent.payment_failed','payment_intent.canceled')),
  event_created bigint not null check(event_created between 0 and 253402300799),
  event_api_version text check(event_api_version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.[a-z]+)?$' and length(event_api_version)<=64),
  parser_version integer not null check(parser_version=1),
  schema_version integer not null check(schema_version=1),
- intent_id text not null check(length(intent_id) between 1 and 255 and intent_id=btrim(intent_id) and intent_id !~ '[[:cntrl:]]'),
+ intent_id text not null check(intent_id ~ '^pi_[A-Za-z0-9]{1,252}$'),
  intent_amount bigint not null check(intent_amount between 1 and 9007199254740991),
  currency text not null check(currency ~ '^[A-Z]{3}$'),
  quarantine_state text not null default 'quarantined' check(quarantine_state='quarantined'),
@@ -36,7 +36,7 @@ create trigger event_receipt_conflicts_immutable before update or delete on paym
 
 create function payment_internal.record_quarantined_event(p_facts jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare r payment_internal.event_receipts; original jsonb; outcome text; inserted boolean;
+declare r payment_internal.event_receipts; original jsonb; outcome text; inserted boolean; conflicted boolean;
 begin
  -- Explicit trusted-server assertions only. SQL does not verify signatures or
  -- authenticate ingress/platform identity. All fields required; no extras accepted.
@@ -72,8 +72,10 @@ begin
   outcome:='conflict';
  else outcome:=case when inserted then 'inserted' else 'duplicate' end;
  end if;
+ select exists(select 1 from payment_internal.event_receipt_conflicts where receipt_id=r.id) into conflicted;
+ if conflicted then outcome:='conflict'; end if;
  return jsonb_build_object('receiptId',r.id,'facts',original,'quarantineState','quarantined','outcome',outcome,
-  'conflictSeen',exists(select 1 from payment_internal.event_receipt_conflicts where receipt_id=r.id));
+  'conflictSeen',conflicted);
 end$$;
 revoke all on function payment_internal.record_quarantined_event(jsonb) from public,anon,authenticated,service_role;
 grant execute on function payment_internal.record_quarantined_event(jsonb) to service_role;
