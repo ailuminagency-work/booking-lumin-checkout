@@ -1,9 +1,10 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import {portalRetainedArtifact} from "../../scripts/portal-retained-artifact.mjs";
 
 export default defineConfig({
   base: process.env.VITE_BASE_PATH || "/",
-  plugins: [react()],
+  plugins: [react(), portalRetainedArtifact()],
   server: {
     port: 5174,
     allowedHosts: true,
