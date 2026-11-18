@@ -37,7 +37,9 @@ jobs:
       - run: npm run build
       - run: bash scripts/contamination-check.sh
       - name: Never-auto-refund invariant
-        run: bash scripts/no-auto-refund-check.sh
+        run: |
+          node --test scripts/no-auto-refund-check.test.mjs
+          bash scripts/no-auto-refund-check.sh
 
   # The edge functions run under Deno, not the Node workspace, so the `verify` job's
   # tsc and vitest never see them -- and they are the money path: the Stripe webhook
