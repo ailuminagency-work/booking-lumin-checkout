@@ -1,0 +1,10 @@
+import {afterEach,expect,it} from 'vitest';
+import {cleanup,render,screen,within} from '@testing-library/react';
+import {MemoryRouter} from 'react-router-dom';
+import {ConnectedOverview} from './ConnectedOverview';
+const bookings=[{id:'11111111-1111-4111-8111-111111111111',tenant_id:'22222222-2222-4222-8222-222222222222',reference:'VISIBLE-BOOKING',state:'confirmed',slot_start:'2030-01-01T12:00:00Z',created_at:'2030-01-01T10:00:00Z'}];
+const services=[{id:'33333333-3333-4333-8333-333333333333',tenant_id:bookings[0]!.tenant_id,name:'Service',currency:'USD',duration_minutes:60,base_price:100,active:true}];
+afterEach(cleanup);
+it('shows only explicitly bounded loaded facts, no fabricated revenue or provider status',()=>{render(<MemoryRouter><ConnectedOverview bookings={bookings} services={services} loading={false} error={false}/></MemoryRouter>);expect(screen.getByRole('heading',{level:1})).toHaveTextContent('Dashboard');expect(screen.getByText('Latest records, up to 100. Not an all-time total.')).toBeTruthy();expect(screen.getByRole('link',{name:'VISIBLE-BOOKING'})).toHaveAttribute('href','/bookings/'+bookings[0]!.id);expect(screen.getByText('Providers inactive')).toBeTruthy();expect(screen.queryByText(/revenue/i)).toBeNull();});
+it.each([{loading:true,error:false},{loading:false,error:true}])('never represents unverified data as zero or exposes retained rows %#',props=>{render(<MemoryRouter><ConnectedOverview bookings={bookings} services={services} {...props}/></MemoryRouter>);expect(screen.queryByRole('link',{name:'VISIBLE-BOOKING'})).toBeNull();expect(screen.getByRole('status')).toBeTruthy();const summaries=document.querySelector('.workspace-summary')!;expect([...summaries.querySelectorAll('strong')].map(x=>x.textContent)).not.toContain('0');expect(within(summaries as HTMLElement).queryByText('1')).toBeNull();});
+it('empty successful reads are distinct from failures',()=>{render(<MemoryRouter><ConnectedOverview bookings={[]} services={[]} loading={false} error={false}/></MemoryRouter>);expect(screen.getByRole('heading',{name:'No bookings loaded'})).toBeTruthy();expect(screen.getAllByText('0')).toHaveLength(2);});
