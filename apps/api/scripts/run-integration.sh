@@ -124,7 +124,12 @@ do
   echo "== running ${harness} on ${DB} =="
   # Every harness runs to completion even after one fails, so a single red
   # harness still reports the others.
-  if ! PGDATABASE="${DB}" "${TSX}" "${harness}"; then
+  runner=("${TSX}")
+  if [[ "$harness" == src/phase-a-http-golden.integration.ts ]]; then
+    # Guard only this fresh-process journey. Authentication and payment remain synthetic.
+    runner=(node --import "${ROOT}/apps/api/scripts/deny-external-network.mjs" --import tsx)
+  fi
+  if ! PGDATABASE="${DB}" "${runner[@]}" "${harness}"; then
     echo "FAIL: ${harness}"
     status=1
   fi
