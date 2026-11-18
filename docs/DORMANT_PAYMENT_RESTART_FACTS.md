@@ -48,3 +48,9 @@ Verified locally on PostgreSQL 16.16: fresh full-chain replay through 0107 in bo
 C and en-US ICU databases; the restart harness and all 62 negative catalog mutations
 plus four witness negatives and predecessor rejection pass in each locale.
 Migration-attestation unit tests: 15 passed. API TypeScript noEmit: passed.
+
+Independent review found the standalone SQL suite still expected 0105. Corrected
+supabase/tests/migration_attestation_tests.sql to 0107 (head and comment), without
+changing its contract checks. Fresh PG16 C and en-US ICU replay now explicitly runs
+that exact SQL suite as well as the restart and actual-reader mutation harnesses.
+The original run did not include this standalone SQL suite.
