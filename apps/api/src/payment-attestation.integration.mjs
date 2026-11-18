@@ -9,9 +9,24 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0107_payment_restart_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0109_payment_envelope_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['envelope RPC absent','drop function public.snapshot_payment_request_envelope(uuid,uuid,text)'],
+ ['private materializer absent','drop function payment_internal.materialize_payment_request_envelope(uuid,uuid)'],
+ ['private materializer client execute','grant execute on function payment_internal.materialize_payment_request_envelope(uuid,uuid) to authenticated'],
+ ['private schema client usage','grant usage on schema payment_internal to anon'],
+ ['private schema PUBLIC usage','grant usage on schema payment_internal to public'],
+ ['private schema service create','grant create on schema payment_internal to service_role'],
+ ['private schema service usage revoked','revoke usage on schema payment_internal from service_role'],
+ ['materializer volatile','alter function payment_internal.materialize_payment_request_envelope(uuid,uuid) volatile'],
+ ['materializer invoker','alter function payment_internal.materialize_payment_request_envelope(uuid,uuid) security invoker'],
+ ['envelope service column read','grant select(api_version) on public.payment_request_envelopes to service_role'],
+ ['envelope service column write','grant update(api_version) on public.payment_request_envelopes to service_role'],
+ ['envelope client column read','grant select(api_version) on public.payment_request_envelopes to anon'],
+ ['envelope RLS disabled','alter table public.payment_request_envelopes disable row level security'],
+ ['envelope trigger disabled','alter table public.payment_request_envelopes disable trigger payment_request_envelopes_immutable'],
+ ['envelope default drift','alter table public.payment_request_envelopes alter column serializer_version set default 2'],
  ['restart RPC absent','drop function public.read_payment_attempt_restart(uuid,uuid)'],
  ['restart body drift',"create or replace function public.read_payment_attempt_restart(p_tenant_id uuid,p_booking_id uuid) returns jsonb language plpgsql stable security definer set search_path='' as $$begin return null;end$$"],
  ['restart volatile','alter function public.read_payment_attempt_restart(uuid,uuid) volatile'],
@@ -120,7 +135,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0105 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0105_payment_attempt_attestation'"],
+  ['unexpanded 0107 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0107_payment_restart_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
