@@ -8,9 +8,9 @@ select coalesce(
  not exists (
   select 1 from (values
    ('lumin.guard_payment_review_writer()', '54e41597367506447d0ebd87bdb3610c',true,false,'trigger'),
-   ('public.succeed_payment_webhook(uuid,bigint)','df838528f3933ab3c19166b71131f0fd',true,true,'jsonb'),
+   ('public.succeed_payment_webhook(uuid,bigint)','1ae87d6c2b45aad337ed0894bb22dc1a',true,true,'jsonb'),
    ('public.fail_payment_webhook(uuid)','75fe18b2ca362fb69822f5af0d621f2c',true,true,'jsonb'),
-   ('public.park_payment_webhook(uuid,text,bigint)','1ae87d6c2b45aad337ed0894bb22dc1a',true,true,'jsonb'),
+   ('public.park_payment_webhook(uuid,text,bigint)','df838528f3933ab3c19166b71131f0fd',true,true,'jsonb'),
    ('lumin.guard_payment_source_immutable()','564d3e7fa80bcff18182f7bab4a73689',false,false,'trigger'),
    ('public.register_payment_source_scope(uuid,text,boolean)','dc54b871d17c465aa7cfd7b441a21c27',true,true,'public.payment_source_scopes'),
    ('public.bind_booking_payment_source(uuid,uuid,uuid)','895361bce9f92b3e11eb9db477327e5c',true,true,'public.booking_payment_attempt_sources')
