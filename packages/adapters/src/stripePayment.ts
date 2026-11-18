@@ -36,7 +36,20 @@ import {
   WebhookEvent,
 } from "@lumin/contracts";
 
+/** Dormant opt-in; trusted server connection authority, never customer metadata. */
+export type StripeDirectChargeSource = Readonly<{accountId: string; livemode: boolean}>;
+
+function pinDirectChargeSource(value: StripeDirectChargeSource | undefined): StripeDirectChargeSource | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value.accountId !== "string" || !/^acct_[A-Za-z0-9]{8,64}$/.test(value.accountId) || typeof value.livemode !== "boolean") {
+    throw new PaymentError("INVALID_REQUEST", "invalid direct-charge source");
+  }
+  return Object.freeze({accountId: value.accountId, livemode: value.livemode});
+}
+
 export interface StripePaymentProviderOptions {
+  /** Omitted preserves legacy behavior. No runtime route opts in in this change. */
+  directChargeSource?: StripeDirectChargeSource;
   /** Stripe secret key (sk_test_… in test mode). SERVER-ONLY (SI-5). */
   secretKey: string;
   /** Stripe webhook signing secret (whsec_…). SERVER-ONLY (SI-5). */
@@ -54,6 +67,7 @@ const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 
 /** Minimal shape of a Stripe PaymentIntent we depend on. */
 interface StripePaymentIntent {
+  livemode?: unknown;
   id: string;
   object?: string;
   status: string;
@@ -96,8 +110,9 @@ function toMoney(intent: StripePaymentIntent): Money {
   return { amount: intent.amount, currency: intent.currency.toUpperCase() };
 }
 
-function toRef(intent: StripePaymentIntent): PaymentIntentRef {
+function toRef(intent: StripePaymentIntent, source?: StripeDirectChargeSource): StripePaymentIntentRef {
   return {
+    ...(source ? {source} : {}),
     intentId: intent.id,
     // Stripe's client_secret is a non-secret, single-intent token used by the
     // browser to confirm the payment. It is NOT the account secret key.
@@ -136,8 +151,15 @@ function parseSignatureHeader(header: string): { t: number | null; v1: string[] 
   return { t, v1 };
 }
 
-export function createStripePaymentProvider(opts: StripePaymentProviderOptions): PaymentProvider {
+export type StripePaymentIntentRef = PaymentIntentRef & {source?: StripeDirectChargeSource};
+export interface StripePaymentProvider extends PaymentProvider {
+  createIntent(input: CreateIntentInput): Promise<StripePaymentIntentRef>;
+  getIntent(intentId: string): Promise<StripePaymentIntentRef | null>;
+}
+
+export function createStripePaymentProvider(opts: StripePaymentProviderOptions): StripePaymentProvider {
   const apiBase = (opts.apiBase ?? "https://api.stripe.com").replace(/\/$/, "");
+  const source = pinDirectChargeSource(opts.directChargeSource);
   const doFetch = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
 
@@ -153,7 +175,15 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
       ...extra,
       Authorization: `Bearer ${opts.secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      ...(source ? {"Stripe-Account": source.accountId} : {}),
     };
+  }
+
+  function scopedRef(intent: StripePaymentIntent): StripePaymentIntentRef {
+    if (source && intent?.livemode !== source.livemode) {
+      throw new PaymentError("PROVIDER_UNAVAILABLE", "payment mode does not match source");
+    }
+    return toRef(intent, source);
   }
 
   async function readJson(res: Response): Promise<any> {
@@ -169,7 +199,7 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
   return {
     providerName: "stripe",
 
-    async createIntent(input: CreateIntentInput): Promise<PaymentIntentRef> {
+    async createIntent(input: CreateIntentInput): Promise<StripePaymentIntentRef> {
       // SI-1: the adapter charges ONLY the server-computed amount. Reject a
       // non-positive or malformed amount before any network call so a mispriced
       // charge can never reach Stripe.
@@ -201,10 +231,10 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
         const err = await readJson(res);
         throw new PaymentError("PROVIDER_UNAVAILABLE", stripeErrorMessage(err) ?? "stripe createIntent failed");
       }
-      return toRef((await readJson(res)) as StripePaymentIntent);
+      return scopedRef((await readJson(res)) as StripePaymentIntent);
     },
 
-    async getIntent(intentId: string): Promise<PaymentIntentRef | null> {
+    async getIntent(intentId: string): Promise<StripePaymentIntentRef | null> {
       const res = await doFetch(`${apiBase}/v1/payment_intents/${encodeURIComponent(intentId)}`, {
         method: "GET",
         headers: authHeaders(),
@@ -214,7 +244,7 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
         const err = await readJson(res);
         throw new PaymentError("PROVIDER_UNAVAILABLE", stripeErrorMessage(err) ?? "stripe getIntent failed");
       }
-      return toRef((await readJson(res)) as StripePaymentIntent);
+      return scopedRef((await readJson(res)) as StripePaymentIntent);
     },
 
     async cancelIntent(intentId: string): Promise<void> {
@@ -265,11 +295,14 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
       // payment_intent.succeeded maps to an already-confirmed booking and is a
       // no-op. Keeping the adapter stateless keeps verification pure and lets
       // the DB be the single source of replay truth (SI-3).
-      let event: { id?: unknown; type?: unknown; data?: { object?: unknown } };
+      let event: { id?: unknown; type?: unknown; account?: unknown; livemode?: unknown; data?: { object?: unknown } };
       try {
         event = JSON.parse(payload);
       } catch {
         return { kind: "unrecognized", intentId: null, raw: payload };
+      }
+      if (source && (event?.account !== source.accountId || event?.livemode !== source.livemode)) {
+        throw new PaymentError("WEBHOOK_UNVERIFIED", "webhook source mismatch");
       }
       return normalizeEvent(event);
     },
@@ -348,7 +381,7 @@ function stripeErrorMessage(err: unknown): string | undefined {
 }
 
 /** Map a verified Stripe event → normalized, provider-agnostic WebhookEvent. */
-function normalizeEvent(event: { type?: unknown; data?: { object?: unknown } }): WebhookEvent {
+function normalizeEvent(event: { type?: unknown; account?: unknown; livemode?: unknown; data?: { object?: unknown } }): WebhookEvent {
   const type = typeof event.type === "string" ? event.type : "";
   const object = (event.data?.object ?? {}) as {
     id?: unknown;
