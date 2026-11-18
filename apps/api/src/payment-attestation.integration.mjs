@@ -9,9 +9,17 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0105_payment_attempt_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0107_payment_restart_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['restart RPC absent','drop function public.read_payment_attempt_restart(uuid,uuid)'],
+ ['restart body drift',"create or replace function public.read_payment_attempt_restart(p_tenant_id uuid,p_booking_id uuid) returns jsonb language plpgsql stable security definer set search_path='' as $$begin return null;end$$"],
+ ['restart volatile','alter function public.read_payment_attempt_restart(uuid,uuid) volatile'],
+ ['restart invoker','alter function public.read_payment_attempt_restart(uuid,uuid) security invoker'],
+ ['restart path','alter function public.read_payment_attempt_restart(uuid,uuid) set search_path=public'],
+ ['restart client grant','grant execute on function public.read_payment_attempt_restart(uuid,uuid) to authenticated'],
+ ['restart PUBLIC grant','grant execute on function public.read_payment_attempt_restart(uuid,uuid) to public'],
+ ['restart service revoked','revoke execute on function public.read_payment_attempt_restart(uuid,uuid) from service_role'],
  ['request table absent','alter table public.payment_attempt_requests rename to synthetic_missing_request'],
  ['intent table absent','alter table public.payment_attempt_intents rename to synthetic_missing_intent'],
  ['request RPC missing','drop function public.snapshot_payment_attempt_request(uuid,uuid,bigint,text)'],
@@ -112,7 +120,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0103 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0103_payment_readiness_attestation'"],
+  ['unexpanded 0105 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0105_payment_attempt_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
