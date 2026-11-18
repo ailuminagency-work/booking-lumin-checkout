@@ -9,9 +9,22 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0137_refund_source_association_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0139_charge_reconciliation_assessment_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["assessment body replaced", "create or replace function payment_internal.assess_charge_reconciliation(p_charge_anchor_id uuid) returns jsonb language plpgsql stable security definer set search_path='' as $$begin return '{}'::jsonb;end$$"],
+ ["assessment strict", "alter function payment_internal.assess_charge_reconciliation(uuid) strict"],
+ ["assessment client grant", "grant execute on function payment_internal.assess_charge_reconciliation(uuid) to authenticated"],
+
+ ["assessment missing", "drop function payment_internal.assess_charge_reconciliation(uuid)"],
+ ["assessment public grant", "grant execute on function payment_internal.assess_charge_reconciliation(uuid) to public"],
+ ["assessment service revoked", "revoke execute on function payment_internal.assess_charge_reconciliation(uuid) from service_role"],
+ ["assessment invoker", "alter function payment_internal.assess_charge_reconciliation(uuid) security invoker"],
+ ["assessment volatility", "alter function payment_internal.assess_charge_reconciliation(uuid) volatile"],
+ ["assessment search path", "alter function payment_internal.assess_charge_reconciliation(uuid) set search_path=public"],
+ ["assessment delegable", "grant execute on function payment_internal.assess_charge_reconciliation(uuid) to service_role with grant option"],
+ ["assessment foreign grant", "create role synthetic_assessment_reader; grant execute on function payment_internal.assess_charge_reconciliation(uuid) to synthetic_assessment_reader"],
+
  ["attention list unexpected role grant", "create role synthetic_attention_reader; grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to synthetic_attention_reader"],
  ["attention list delegable service grant", "grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to service_role with grant option"],
 

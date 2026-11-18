@@ -109,6 +109,7 @@ for harness in \
   src/success-receipt-v2-upgrade.integration.mjs \
   src/success-receipt-facts-v2.integration.mjs \
   src/refund-receipt-facts-v3.integration.mjs \
+  src/charge-reconciliation-assessment.integration.mjs \
   src/refund-source-associations.integration.mjs \
   src/refund-source-association-upgrade.integration.mjs \
   src/refund-receipt-v3-upgrade.integration.mjs \
