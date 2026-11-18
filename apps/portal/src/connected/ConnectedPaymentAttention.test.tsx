@@ -5,7 +5,7 @@ import {PaymentAttentionError,type PaymentAttentionPage} from '@lumin/runtime-cl
 import {ConnectedPaymentAttention,type PaymentAttentionClient} from './ConnectedPaymentAttention';
 import {PortalRoutes} from '../components/PortalRoutes';
 const tenant='11111111-1111-4111-8111-111111111111',booking='22222222-2222-4222-8222-222222222222',receipt='33333333-3333-4333-8333-333333333333',foreign='44444444-4444-4444-8444-444444444444';
-const data=():PaymentAttentionPage=>({tenantId:tenant,items:[{receiptId:receipt,bookingId:booking,bookingReference:'PRIVATE-BOOKING',reason:'late_success_after_failure',recordedAt:'2026-11-18T03:12:24.123456Z',conflictSeen:true}],nextCursor:'opaque-page'});
+const data=():PaymentAttentionPage=>({tenantId:tenant,items:[{receiptId:receipt,bookingId:booking,bookingReference:'PRIVATE-BOOKING',reason:'late_success_after_failure',recordedAt:'2026-11-18T03:12:24.123456Z',conflictSeen:true,reviewedAt:null}],nextCursor:'opaque-page'});
 function fixture(){let auth=0;const client:PaymentAttentionClient={authContextRevision:()=>auth,readPaymentAttention:vi.fn(async()=>data())};return{client,reauth:()=>auth++};}
 const setup=(client:PaymentAttentionClient,role='BUSINESS_OWNER')=>render(<MemoryRouter><ConnectedPaymentAttention client={client} tenantId={tenant} role={role}/></MemoryRouter>);
 afterEach(()=>{cleanup();vi.restoreAllMocks();});

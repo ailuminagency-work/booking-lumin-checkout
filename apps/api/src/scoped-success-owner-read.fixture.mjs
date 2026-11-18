@@ -38,10 +38,10 @@ export async function assertRestartedOwnerAttention(pool, fixture, receiptId) {
    const response=await request(tenant,ownerToken,cursor);assert.equal(response.status,200);
    assert.deepEqual(Object.keys(response.body).sort(),['data','ok']);assert.equal(response.body.ok,true);
    const page=response.body.data;assert.deepEqual(Object.keys(page).sort(),['items','nextCursor','tenantId']);assert.equal(page.tenantId,tenant);assert.ok(page.items.length<=100);
-   for(const item of page.items){assert.deepEqual(Object.keys(item).sort(),['bookingId','bookingReference','conflictSeen','reason','receiptId','recordedAt']);assert.equal(item.reason,'late_success_after_failure');assert.match(item.recordedAt,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);assert.equal(typeof item.conflictSeen,'boolean');if(item.receiptId===receiptId){assert.equal(found,undefined,'receipt must not repeat across pages');found=item;}}
+   for(const item of page.items){assert.deepEqual(Object.keys(item).sort(),['bookingId','bookingReference','conflictSeen','reason','receiptId','recordedAt','reviewedAt']);assert.equal(item.reason,'late_success_after_failure');assert.match(item.recordedAt,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);assert.equal(typeof item.conflictSeen,'boolean');if(item.receiptId===receiptId){assert.equal(found,undefined,'receipt must not repeat across pages');found=item;}}
    cursor=page.nextCursor;if(cursor){assert.equal(typeof cursor,'string');assert.ok(!cursors.has(cursor),'pagination must progress');cursors.add(cursor);}assert.ok(++rounds<=100,'bounded fixture pagination');
   }while(cursor);
-  assert.deepEqual(found,{receiptId,bookingId:booking,bookingReference:expected[0].reference,reason:'late_success_after_failure',recordedAt:expected[0].recorded_at,conflictSeen:expected[0].conflict_seen});
+  assert.deepEqual(found,{receiptId,bookingId:booking,bookingReference:expected[0].reference,reason:'late_success_after_failure',recordedAt:expected[0].recorded_at,conflictSeen:expected[0].conflict_seen,reviewedAt:null});
   assert.equal((await request(foreignTenant,ownerToken)).status,403);
   assert.equal((await request(tenant,foreignToken)).status,403);
   assert.equal((await request(tenant,strangerToken)).status,403);

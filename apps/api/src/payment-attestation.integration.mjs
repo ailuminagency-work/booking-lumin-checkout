@@ -9,7 +9,7 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0131_owner_attention_reader_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0133_owner_attention_acknowledgment_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
  ["attention list unexpected role grant", "create role synthetic_attention_reader; grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to synthetic_attention_reader"],
@@ -23,7 +23,7 @@ const changes=[
  ["attention list volatility", "alter function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) volatile"],
  ["attention list index missing", "drop index payment_internal.payment_attention_tenant_cursor_idx"],
 
- ["attention missing", "drop table payment_internal.payment_attention"],
+ ["attention missing", "drop table payment_internal.payment_attention cascade"],
  ["attention immutable trigger disabled", "alter table payment_internal.payment_attention disable trigger payment_attention_immutable"],
  ["attention service column select", "grant select(reason) on payment_internal.payment_attention to service_role"],
  ["attention client read", "grant select on payment_internal.payment_attention to authenticated"],
@@ -238,6 +238,25 @@ for(const name of ['confirm_succeeded_payment','succeed_payment_webhook','fail_p
  const stripped=definition.replace(/\n  -- Legacy authority only: reject BEFORE terminal no-op, dedupe or effects\.\n  if (?:p|v_payment)\.source_scope_id is not null or (?:p|v_payment)\.attempt_id is not null then\n    raise exception 'SCOPED_PAYMENT_PROCESSING_DISABLED' using errcode='42501';\n  end if;/,'');
  assert.notEqual(stripped,definition);changes.push([name+' scoped denial removed',stripped]);
 }
+
+changes.push(
+ ['ack ledger missing','drop table payment_internal.payment_attention_acknowledgments'],
+ ['ack RLS disabled','alter table payment_internal.payment_attention_acknowledgments disable row level security'],
+ ['ack force RLS disabled','alter table payment_internal.payment_attention_acknowledgments no force row level security'],
+ ['ack mutable','alter table payment_internal.payment_attention_acknowledgments disable trigger payment_attention_acknowledgments_immutable'],
+ ['ack timestamp default changed',"alter table payment_internal.payment_attention_acknowledgments alter reviewed_at set default now()"],
+ ['ack actor nullable','alter table payment_internal.payment_attention_acknowledgments alter reviewed_by drop not null'],
+ ['ack extra policy','create policy ack_bad on payment_internal.payment_attention_acknowledgments using(true)'],
+ ['ack direct service write','grant insert on payment_internal.payment_attention_acknowledgments to service_role'],
+ ['ack column service write','grant insert(receipt_id,reviewed_by) on payment_internal.payment_attention_acknowledgments to service_role'],
+ ['ack direct service read','grant select on payment_internal.payment_attention_acknowledgments to service_role'],
+ ['ack foreign grant','create role ack_foreign;grant select on payment_internal.payment_attention_acknowledgments to ack_foreign'],
+ ['ack function client grant','grant execute on function payment_internal.acknowledge_payment_attention(uuid,uuid,uuid) to authenticated'],
+ ['ack function delegable','grant execute on function payment_internal.acknowledge_payment_attention(uuid,uuid,uuid) to service_role with grant option'],
+ ['ack function foreign grant','create role ack_foreign;grant execute on function payment_internal.acknowledge_payment_attention(uuid,uuid,uuid) to ack_foreign'],
+ ['ack body replaced',"create or replace function payment_internal.acknowledge_payment_attention(p_actor uuid,p_selected_tenant uuid,p_receipt uuid) returns jsonb language plpgsql security definer set search_path='' as $$begin return '{}'::jsonb;end$$"],
+ ['ack owner helper replaced',"create or replace function lumin.flow_actor(p_actor uuid,p_tenant uuid,p_owner boolean) returns void language plpgsql security definer set search_path=pg_catalog as $$begin return;end$$"]
+);
 
 try{
  const witness=await read();assert.equal(witness.migrationHead,MIGRATION_ATTESTATION_HEAD);
