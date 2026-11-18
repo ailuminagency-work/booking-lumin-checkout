@@ -9,9 +9,27 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0109_payment_envelope_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0111_payment_receipt_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['receipt event identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_id_check'],
+ ['receipt intent identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_intent_id_check'],
+ ['receipt supported type constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_type_check'],
+ ['receipt RPC absent','drop function payment_internal.record_quarantined_event(jsonb)'],
+ ['receipt RPC client execute','grant execute on function payment_internal.record_quarantined_event(jsonb) to authenticated'],
+ ['receipt RPC service revoked','revoke execute on function payment_internal.record_quarantined_event(jsonb) from service_role'],
+ ['receipt RPC invoker','alter function payment_internal.record_quarantined_event(jsonb) security invoker'],
+ ['receipt RPC path','alter function payment_internal.record_quarantined_event(jsonb) set search_path=public'],
+ ['receipt RPC stability','alter function payment_internal.record_quarantined_event(jsonb) stable'],
+ ['receipt service column read','grant select(intent_amount) on payment_internal.event_receipts to service_role'],
+ ['receipt service column write','grant update(intent_amount) on payment_internal.event_receipts to service_role'],
+ ['conflict service insert','grant insert(receipt_id) on payment_internal.event_receipt_conflicts to service_role'],
+ ['receipt RLS disabled','alter table payment_internal.event_receipts disable row level security'],
+ ['conflict FORCE disabled','alter table payment_internal.event_receipt_conflicts no force row level security'],
+ ['receipt trigger disabled','alter table payment_internal.event_receipts disable trigger event_receipts_immutable'],
+ ['conflict trigger disabled','alter table payment_internal.event_receipt_conflicts disable trigger event_receipt_conflicts_immutable'],
+ ['receipt default drift',"alter table payment_internal.event_receipts alter column quarantine_state set default 'handled'"],
+ ['conflict timestamp default drift','alter table payment_internal.event_receipt_conflicts alter column first_seen_at drop default'],
  ['envelope RPC absent','drop function public.snapshot_payment_request_envelope(uuid,uuid,text)'],
  ['private materializer absent','drop function payment_internal.materialize_payment_request_envelope(uuid,uuid)'],
  ['private materializer client execute','grant execute on function payment_internal.materialize_payment_request_envelope(uuid,uuid) to authenticated'],
@@ -135,7 +153,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0107 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0107_payment_restart_attestation'"],
+  ['unexpanded 0109 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0109_payment_envelope_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],

@@ -104,6 +104,7 @@ for harness in \
   src/payment-attestation.integration.mjs \
   src/payment-restart-facts.integration.mjs \
   src/payment-request-envelope.integration.mjs \
+  src/payment-event-receipts.integration.mjs \
   src/pg-http.integration.ts \
   src/roster-http.integration.ts \
   src/phase-a-golden.integration.ts \
