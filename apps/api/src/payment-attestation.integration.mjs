@@ -9,9 +9,29 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0125_success_receipt_facts_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0127_scoped_success_receipt_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["payment_internal.confirm_scoped_payment(uuid) service grant", "grant execute on function payment_internal.confirm_scoped_payment(uuid) to service_role"],
+ ["payment_internal.confirm_scoped_payment(uuid) PUBLIC grant", "grant execute on function payment_internal.confirm_scoped_payment(uuid) to public"],
+ ["payment_internal.confirm_scoped_payment(uuid) definer", "alter function payment_internal.confirm_scoped_payment(uuid) security definer"],
+ ["payment_internal.confirm_scoped_payment(uuid) missing", "drop function payment_internal.confirm_scoped_payment(uuid)"],
+ ["payment_internal.confirm_scoped_payment(uuid) arbitrary grant", "create role synthetic_success_core_reader; grant execute on function payment_internal.confirm_scoped_payment(uuid) to synthetic_success_core_reader"],
+ ["payment_internal.apply_payment_success(uuid,bigint) service grant", "grant execute on function payment_internal.apply_payment_success(uuid,bigint) to service_role"],
+ ["payment_internal.apply_payment_success(uuid,bigint) PUBLIC grant", "grant execute on function payment_internal.apply_payment_success(uuid,bigint) to public"],
+ ["payment_internal.apply_payment_success(uuid,bigint) definer", "alter function payment_internal.apply_payment_success(uuid,bigint) security definer"],
+ ["payment_internal.apply_payment_success(uuid,bigint) missing", "drop function payment_internal.apply_payment_success(uuid,bigint)"],
+ ["payment_internal.apply_payment_success(uuid,bigint) arbitrary grant", "create role synthetic_success_core_reader; grant execute on function payment_internal.apply_payment_success(uuid,bigint) to synthetic_success_core_reader"],
+ ["payment_internal.park_scoped_payment(uuid,text,bigint) service grant", "grant execute on function payment_internal.park_scoped_payment(uuid,text,bigint) to service_role"],
+ ["payment_internal.park_scoped_payment(uuid,text,bigint) PUBLIC grant", "grant execute on function payment_internal.park_scoped_payment(uuid,text,bigint) to public"],
+ ["payment_internal.park_scoped_payment(uuid,text,bigint) definer", "alter function payment_internal.park_scoped_payment(uuid,text,bigint) security definer"],
+ ["payment_internal.park_scoped_payment(uuid,text,bigint) missing", "drop function payment_internal.park_scoped_payment(uuid,text,bigint)"],
+ ["payment_internal.park_scoped_payment(uuid,text,bigint) arbitrary grant", "create role synthetic_success_core_reader; grant execute on function payment_internal.park_scoped_payment(uuid,text,bigint) to synthetic_success_core_reader"],
+ ["success processor missing", "drop function payment_internal.process_scoped_success_receipt(uuid)"],
+ ["success processor PUBLIC", "grant execute on function payment_internal.process_scoped_success_receipt(uuid) to public"],
+ ["success processor invoker", "alter function payment_internal.process_scoped_success_receipt(uuid) security invoker"],
+ ["success processor path", "alter function payment_internal.process_scoped_success_receipt(uuid) set search_path=public"],
+
  ['v2 closed version/facts removed','alter table payment_internal.event_receipts drop constraint event_receipts_version_facts_check'],
  ['v2 received default inferred','alter table payment_internal.event_receipts alter column amount_received set default 0'],
  ['v2 status service column read','grant select(intent_status) on payment_internal.event_receipts to service_role'],
