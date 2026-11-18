@@ -42,18 +42,18 @@ export function ConnectedPaymentAttention({client,tenantId,role,acknowledgmentEn
   }
  }
 
- return <section aria-label="Payment attention" style={{maxWidth:'100%',overflowWrap:'anywhere'}}>
-  <h2>Payment attention history</h2>
-  <p>These historical observations recorded a successful payment after a booking had failed. They do not establish a current balance or resolution. No booking is reopened and no refund is issued here. Marking an observation as reviewed records only that an owner saw it, not that the payment or booking is resolved. The business owner handles any refund in Stripe.</p>
+ return <section className="panel payment-attention" aria-label="Payment attention">
+  <div className="panel-header"><h2>Payment attention history</h2><span className="workspace-chip">Historical observations</span></div>
+  <p className="attention-explainer">These historical observations recorded a successful payment after a booking had failed. They do not establish a current balance or resolution. No booking is reopened and no refund is issued here. Marking an observation as reviewed records only that an owner saw it, not that the payment or booking is resolved. The business owner handles any refund in Stripe.</p>
   {!available?<p role="status">An active business membership is required.</p>:<>
    <button type="button" onClick={()=>{setPage(null);setRevision(n=>n+1);}}>Refresh payment attention</button>
    {currentAck?.error&&<p role="alert">{currentAck.error}</p>}
    {!current?<p role="status">Loading payment attention.</p>:current.error?<p role="alert">{current.error}</p>:current.data&&<>
-    {current.data.items.length===0?<p role="status">No historical late-payment attention was recorded on this page.</p>:<ul>{current.data.items.map(item=><li key={item.receiptId}>
+    {current.data.items.length===0?<p role="status">No historical late-payment attention was recorded on this page.</p>:<ul className="attention-records">{current.data.items.map(item=><li className="attention-record" key={item.receiptId}>
      <Link to={'/bookings/'+item.bookingId}>{item.bookingReference??'View booking'}</Link>
      <p>Successful payment observed after failure. Recorded <time dateTime={item.recordedAt}>{item.recordedAt}</time>.</p>
      {item.reviewedAt?<p>Reviewed <time dateTime={item.reviewedAt}>{item.reviewedAt}</time>. This does not resolve the payment or booking.</p>:acknowledgmentEnabled&&role==='BUSINESS_OWNER'&&client.acknowledgePaymentAttention?<button type="button" disabled={!!currentAck?.busy} onClick={()=>void markReviewed(item.receiptId)}>{currentAck?.busy&&currentAck.receiptId===item.receiptId?'Recording review…':'Mark as reviewed'}</button>:null}
-     {item.conflictSeen&&<p>Conflicting event facts were subsequently recorded. This observation needs separate verification.</p>}
+     {item.conflictSeen&&<p className="attention-conflict">Conflicting event facts were subsequently recorded. This observation needs separate verification.</p>}
     </li>)}</ul>}
     {current.data.nextCursor&&<button type="button" onClick={()=>setPage({client,tenant:tenantId,auth,role,cursor:current.data!.nextCursor!})}>Load older attention</button>}
    </>}

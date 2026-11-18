@@ -41,7 +41,7 @@ vi.mock("@lumin/runtime-client", async importOriginal => {
 };
 });
 
-const labels = ["Home", "Bookings", "Booking Form", "Services & Pricing", "Settings"];
+const labels = ["Dashboard", "Bookings", "Booking Form", "Services & Pricing", "Settings"];
 const tenant = "11111111-1111-4111-8111-111111111111";
 function portal(path = "/") {
   return render(<MemoryRouter initialEntries={[path]}><PortalApplication /></MemoryRouter>);
