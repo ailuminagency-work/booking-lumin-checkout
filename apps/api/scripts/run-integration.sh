@@ -102,6 +102,7 @@ n=0
 for harness in \
   src/provider-processing-authority.integration.mjs \
   src/payment-attestation.integration.mjs \
+  src/payment-restart-facts.integration.mjs \
   src/pg-http.integration.ts \
   src/roster-http.integration.ts \
   src/phase-a-golden.integration.ts \
