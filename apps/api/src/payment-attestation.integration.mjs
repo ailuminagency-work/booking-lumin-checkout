@@ -9,9 +9,27 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0117_legacy_webhook_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0119_payment_identity_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["admission absent", "drop function payment_internal.admit_payment_identity(text,boolean) cascade"],
+ ["admission client grant", "grant execute on function payment_internal.admit_payment_identity(text,boolean) to anon"],
+ ["admission service grant", "grant execute on function payment_internal.admit_payment_identity(text,boolean) to service_role"],
+ ["admission invoker", "alter function payment_internal.admit_payment_identity(text,boolean) security invoker"],
+ ["admission path", "alter function payment_internal.admit_payment_identity(text,boolean) set search_path=public"],
+ ["admission stable", "alter function payment_internal.admit_payment_identity(text,boolean) stable"],
+ ["identity guard absent", "drop function lumin.guard_payment_identity_admission() cascade"],
+ ["identity guard client grant", "grant execute on function lumin.guard_payment_identity_admission() to anon"],
+ ["identity guard service grant", "grant execute on function lumin.guard_payment_identity_admission() to service_role"],
+ ["identity guard invoker", "alter function lumin.guard_payment_identity_admission() security invoker"],
+ ["identity guard path", "alter function lumin.guard_payment_identity_admission() set search_path=public"],
+ ["identity guard stable", "alter function lumin.guard_payment_identity_admission() stable"],
+ ["identity trigger disabled", "alter table payments disable trigger payment_identity_admission_guard"],
+ ["scoped partial unique removed", "drop index payments_scoped_intent_unique"],
+ ["legacy index invalid", "update pg_index set indisvalid=false where indexrelid='payments_legacy_intent_unique'::regclass"],
+ ["scoped index notready", "update pg_index set indisready=false where indexrelid='payments_scoped_intent_unique'::regclass"],
+ ["legacy predicate altered", "drop index payments_legacy_intent_unique;create unique index payments_legacy_intent_unique on payments(provider,provider_intent_id) where source_scope_id is null"],
+ ["scoped predicate altered", "drop index payments_scoped_intent_unique;create unique index payments_scoped_intent_unique on payments(provider,source_scope_id,provider_intent_id) where source_scope_id is not null"],
  ["legacy webhook absent", "drop function public.process_legacy_payment_webhook(text,text,bigint,text,boolean)"],
  ["legacy webhook client grant", "grant execute on function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) to anon"],
  ["legacy webhook service revoked", "revoke execute on function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) from service_role"],
@@ -50,7 +68,7 @@ const changes=[
  ['legacy RPC invoker','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) security invoker'],
  ['legacy RPC path','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) set search_path=public'],
  ['legacy RPC stable','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) stable'],
- ['global intent uniqueness removed','alter table public.payments drop constraint payments_provider_provider_intent_id_key'],
+ ['legacy partial uniqueness removed','drop index public.payments_legacy_intent_unique'],
  ['receipt event identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_id_check'],
  ['receipt intent identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_intent_id_check'],
  ['receipt supported type constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_type_check'],
@@ -192,7 +210,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0115 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0115_payment_provenance_attestation'"],
+  ['unexpanded 0117 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0117_legacy_webhook_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
