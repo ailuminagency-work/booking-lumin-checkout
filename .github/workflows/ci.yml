@@ -121,8 +121,9 @@ jobs:
           for f in supabase/migrations/0*.sql; do
             psql -X -v ON_ERROR_STOP=1 -f "$f"
           done
-          python3 scripts/payment-source-binding-concurrency.py
+          python3 scripts/payment-intent-association-concurrency.py
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/payment_source_binding_tests.sql
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/payment_intent_association_tests.sql
       - name: Verify migration attestation and incomplete-schema fail-closed
         run: |
           psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/migration_attestation_tests.sql
@@ -176,6 +177,7 @@ jobs:
             payment_review_park_tests \
             payment_connection_authority_tests \
             payment_source_binding_tests \
+            payment_intent_association_tests \
             notification_planner_config_tests \
             mode_installations_tests \
             mode_flow_session_tests \
