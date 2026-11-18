@@ -71,7 +71,7 @@ jobs:
           deno check "${files[@]}"
       - name: Payment failure ordering regression tests
         working-directory: supabase/functions
-        run: deno test _shared/stripe.test.ts _shared/stripeReceiptCandidate.test.ts _shared/stripeSucceededReceiptCandidateV2.test.ts
+        run: deno test _shared/stripe.test.ts _shared/stripeReceiptCandidate.test.ts _shared/stripeSucceededReceiptCandidateV2.test.ts _shared/stripeRefundReceiptCandidateV3.test.ts
 
   database:
     name: database (migrations + RLS attack suite)

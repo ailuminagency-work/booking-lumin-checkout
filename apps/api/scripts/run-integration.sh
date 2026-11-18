@@ -108,6 +108,8 @@ for harness in \
   src/quarantined-receipt-crash.integration.mjs \
   src/success-receipt-v2-upgrade.integration.mjs \
   src/success-receipt-facts-v2.integration.mjs \
+  src/refund-receipt-facts-v3.integration.mjs \
+  src/refund-receipt-v3-upgrade.integration.mjs \
   src/scoped-failure-crash.integration.mjs \
   src/scoped-success-crash.integration.mjs \
   src/owner-payment-attention.integration.mjs \
