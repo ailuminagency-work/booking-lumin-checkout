@@ -87,8 +87,8 @@ begin
  then raise exception 'INVALID_PAYMENT_RECORDING'; end if;
  -- No explicit booking lock before unique arbitration. INSERT still performs
  -- normal booking FK checks/KEY SHARE; this is not a universal no-lock claim.
- -- Existing financial RPCs acquire
- -- payment before booking. Old direct insert/upsert remains compatible.
+ -- Existing financial RPCs acquire payment before booking. Direct INSERT
+ -- remains admitted by the trigger; old global ON CONFLICT targets are unsupported.
  begin perform payment_internal.admit_payment_identity(p_provider_intent_id,false);
  exception when raise_exception then
   if SQLERRM='PAYMENT_IDENTITY_CLASS_CONFLICT' then raise exception 'PAYMENT_RECORDING_CONFLICT'; end if;

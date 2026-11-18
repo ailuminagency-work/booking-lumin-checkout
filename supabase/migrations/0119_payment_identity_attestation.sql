@@ -23,7 +23,7 @@ select coalesce(
 ,
    ('payment_internal.record_quarantined_event(jsonb)','22dd7cec041ed8a4e8e2b8f8e5305812',true,true,'jsonb')
 ,
-   ('public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text)','66b3c9011240f2e83aa7646dd6459fc6',true,true,'jsonb')
+   ('public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text)','ca4c01214e29781c3c98b726d51ad147',true,true,'jsonb')
 ,
    ('lumin.guard_payment_provenance()','36526198fb449727b32fb94fd1f425bd',true,false,'trigger'),
    ('payment_internal.record_scoped_payment_observation(uuid,text)','0301c0d8ddcc27ee59f628b9aa40e072',true,true,'jsonb'),
