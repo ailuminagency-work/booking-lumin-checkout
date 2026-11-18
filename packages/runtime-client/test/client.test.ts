@@ -145,6 +145,13 @@ it('rejects a body decoded after the authenticated session has ended',async()=>{
  const f=transport([json({access_token:'synthetic'}),json({id:U}),slow]);const c=createRuntimeClient(config,f);await c.signIn('synthetic@example.test','fixture');const pending=c.memberships();
  await vi.waitFor(()=>expect(slow.json).toHaveBeenCalled());c.signOut();finish([{tenant_id:T,role:'BUSINESS_OWNER'}]);await expect(pending).rejects.toThrow('Session changed');
 });
+it('builds an exact HTTPS Google authorize URL and completes the returned access-token callback',async()=>{
+ const f=transport([json({id:U})]);const c=createRuntimeClient(config,f);const url=c.googleAuthorizeUrl('https://portal.example.test/');expect(url).toBe('https://example.supabase.co/auth/v1/authorize?provider=google&redirect_to=https%3A%2F%2Fportal.example.test%2F');expect(await c.finishOAuth('google-access-token-1234567890')).toBe(U);expect(f.mock.calls[0]?.[0]).toBe('https://example.supabase.co/auth/v1/user');expect(f.mock.calls[0]?.[1]?.headers).toMatchObject({Authorization:'Bearer google-access-token-1234567890'});
+});
+it('builds a state-bound PKCE authorize URL and exchanges the code without exposing the token',async()=>{
+ const f=transport([json({access_token:'google-pkce-token-1234567890'}),json({id:U})]);const c=createRuntimeClient(config,f);const url=c.googleAuthorizeUrl('https://portal.example.test/',{state:'0123456789abcdef',codeChallenge:'a'.repeat(43),allowedOrigins:['https://portal.example.test']});expect(url).toContain('state=0123456789abcdef');expect(url).toContain('code_challenge='+ 'a'.repeat(43));expect(url).toContain('code_challenge_method=S256');expect(await c.finishOAuthCode('auth-code-123456','v'.repeat(43))).toBe(U);expect(f.mock.calls[0]?.[0]).toBe('https://example.supabase.co/auth/v1/token?grant_type=pkce');expect(f.mock.calls[0]?.[1]?.body).toContain('auth_code');});
+it('rejects non-HTTPS Google redirect targets',()=>{const c=createRuntimeClient(config,transport([]));expect(()=>c.googleAuthorizeUrl('http://portal.example.test/')).toThrow('redirect is invalid');});
+it('rejects an unallowlisted or malformed Google OAuth binding before redirect',()=>{const c=createRuntimeClient(config,transport([]));expect(()=>c.googleAuthorizeUrl('https://other.example.test/',{allowedOrigins:['https://portal.example.test']})).toThrow('not allowlisted');expect(()=>c.googleAuthorizeUrl('https://portal.example.test/',{state:'short'})).toThrow('state is invalid');});
 const F='44444444-4444-4444-8444-444444444444';
 const publicationReceipt={versionId:U,installationId:S,renderSchemaVersion:3 as const,hostedPath:'/checkout/flow/'+S};
 const publicationInput={serviceId:S,name:'Paid test form',checkoutOrigin:'https://booking-lumin-checkout-staging.netlify.app'};
