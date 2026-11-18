@@ -23,7 +23,14 @@ begin
     or NEW.currency is distinct from p.currency then
     raise exception 'PAYMENT_REVIEW_IDENTITY_INVALID' using errcode = '23514';
   end if;
-  if TG_OP = 'UPDATE' and NEW.payment_id is distinct from OLD.payment_id then
+  -- Evidence is anchored to what was reviewed, not merely today's mutable
+  -- payment row. Even a privileged parent edit must not rewrite this history.
+  if TG_OP = 'UPDATE' and
+    row(NEW.payment_id, NEW.tenant_id, NEW.booking_id, NEW.provider,
+        NEW.provider_intent_id, NEW.expected_amount, NEW.currency)
+    is distinct from
+    row(OLD.payment_id, OLD.tenant_id, OLD.booking_id, OLD.provider,
+        OLD.provider_intent_id, OLD.expected_amount, OLD.currency) then
     raise exception 'PAYMENT_REVIEW_IDENTITY_IMMUTABLE' using errcode = '23514';
   end if;
   if TG_OP = 'INSERT' then

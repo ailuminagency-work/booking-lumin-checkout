@@ -28,7 +28,9 @@ NOWAIT deliberately returns 55P03 under that contention; retry the COMPLETE
 transaction. No waiting cycle is introduced by the review-parent edge.
 Insert also locks the booking NOWAIT and rejects late reviews for terminal
 payments or non-open bookings. Canonical identity must match the payment's
-business/booking/provider/reference/money. Identity cannot be reassigned.
+business/booking/provider/reference/money. Identity cannot be reassigned: UPDATE compares the full canonical tuple to OLD,
+not just the mutable parent. A privileged parent amount change therefore cannot
+authorize rewriting the originally reviewed expected_amount.
 Existing status and resolved_at semantics are unchanged; inbound external refund
 reconciliation remains allowed and later review resolution remains possible.
 Review deletion is forbidden, including cascading parent deletion: history must
@@ -59,14 +61,17 @@ PGDATABASE=lumin_<fresh-disposable-db> \
 node apps/api/src/provider-processing-authority.integration.mjs
 ```
 
-The 36 PostgreSQL cases include processing success/failure; replay; expired,
+The 40 PostgreSQL cases include processing success/failure; replay; expired,
 released, missing holds; amount guards; every review status; terminal guards;
 canonical review identity; service-only privilege; transaction/outbox/review
 failure rollback; review insert/update vs success; park/failure/refund vs success
-in both orders; and inbound refund plus human resolution. Contender waiting is
+in both orders; inbound refund plus human resolution; parent-drift immutability; and
+rollback-only payment/booking/tenant cascade-deletion rejection. Contender waiting is
 observed through pg_stat_activity, not guessed from sleep alone. The integration
 runner registers this harness on its own fresh DB, including in existing CI.
-Full API unit suite: 109 files, 2474 tests passed; API typecheck passed.
+Initial candidate full API suite: 109 files, 2474 tests passed. Revision full-suite
+reruns were incomplete due unexpected Vitest worker exits (2449 then2453 tests
+passed, exit1); do not treat those reruns as PASS. API typecheck passed.
 Existing payment_review_park_tests.sql and service_capacity_backstop_tests.sql
 also pass. New tests use synthetic verified-event boundaries, not live signatures.
 
@@ -79,3 +84,7 @@ callers must retry rather than acknowledge an uncommitted review. SQL authority
 must exist before deploying the new handler; mixed old/new application versions
 are not claimed safe by this isolated evidence. Reserved migration candidates
 and actual hosted attestation must be independently integrated and verified.
+
+Review correction: the parent-drift regression reproduced the defect in
+1541390 (missing expected rejection), then passed on the revised migration
+applied with the entire checked-in chain to a fresh disposable database.
