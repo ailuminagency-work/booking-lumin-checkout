@@ -95,3 +95,12 @@ synthetic readiness transport pass in both. Explicit English-ICU replay is added
 to CI. PostgreSQL16.16 testing here is Windows vendor build; Linux CI remains the
 final platform confirmation. Vendor binaries/data are isolated in .test-temp;
 no system installation, service registration, live calls or provider activation.
+
+### Concurrent native hash-change reconciliation
+Remote beb7f928 swapped succeed/park fingerprints while the reviewed locale fix
+was being prepared. Replayed that exact remote0103 on fresh PostgreSQL16.16 with
+C locale: it fails the payment contract. Actual pg_proc confirms park=df838528f3933ab3c19166b71131f0fd and
+succeed=1ae87d6c2b45aad337ed0894bb22dc1a. Reconciliation preserves both commit
+histories without force, restores the measured mapping and retains COLLATE C.
+Final executable/configuration tree is identical to reviewed cb0b4ae; this note
+is the only additional content relative to that reviewed candidate.
