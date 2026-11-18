@@ -13,7 +13,7 @@ begin
    into actual_head,actual_evidence
    from public.booking_lumin_schema_attestation
   where id=true;
- if actual_head is distinct from '0129_late_success_resource_attestation' then
+ if actual_head is distinct from '0131_owner_attention_reader_attestation' then
   raise exception 'MIGRATION_ATTESTATION_HEAD_MISMATCH';
  end if;
  if not lumin.payment_readiness_contract() then

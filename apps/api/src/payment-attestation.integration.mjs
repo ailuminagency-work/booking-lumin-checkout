@@ -9,9 +9,20 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0129_late_success_resource_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0131_owner_attention_reader_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["attention list unexpected role grant", "create role synthetic_attention_reader; grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to synthetic_attention_reader"],
+ ["attention list delegable service grant", "grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to service_role with grant option"],
+
+ ["attention list missing", "drop function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer)"],
+ ["attention list public execute", "grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to public"],
+ ["attention list service revoked", "revoke execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) from service_role"],
+ ["attention list invoker", "alter function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) security invoker"],
+ ["attention list search path", "alter function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) set search_path=public"],
+ ["attention list volatility", "alter function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) volatile"],
+ ["attention list index missing", "drop index payment_internal.payment_attention_tenant_cursor_idx"],
+
  ["attention missing", "drop table payment_internal.payment_attention"],
  ["attention immutable trigger disabled", "alter table payment_internal.payment_attention disable trigger payment_attention_immutable"],
  ["attention service column select", "grant select(reason) on payment_internal.payment_attention to service_role"],
