@@ -17,10 +17,12 @@
  * with no header belongs to the platform account, and a request carrying a
  * header only ever sees that account's own objects.
  *
- * Idempotency semantics MATCH Stripe: a create with a previously-seen
- * `Idempotency-Key` returns the ORIGINAL intent verbatim (never a second
- * charge), even if the retried request body differs (the altered amount is
- * ignored — this is the key defense tested by threat item 23).
+ * PaymentIntent-create idempotency models parameter matching, cached responses
+ * (including an injected post-execution 500), and pruning at 24 hours using an
+ * explicit clock. This is a bounded test model, NOT a complete Stripe emulator.
+ * Real retention can be longer; expiration here demonstrates possible duplicate
+ * creation, never permission to reuse a key or replace an uncertain operation.
+ * Connect account/link fake idempotency remains a separate simplified model.
  *
  * Signed webhook payloads use the SAME real scheme as the adapter, produced via
  * `signStripeTestWebhook` in the test files (identical HMAC), so no signing
@@ -105,8 +107,10 @@ export interface FakeStripe {
    * this system writing. How a restricted or payout-blocked merchant is staged.
    */
   driveAccount(accountId: string, facts: Partial<Omit<StoredAccount, "id" | "object" | "type">>): StoredAccount;
-  /** Make the next N responses a 500, to prove an outage changes nothing. */
+  /** Inject an uncached transport-facing outage before endpoint execution. */
   armServerError(times?: number): void;
+  /** PI endpoint execution starts, then returns a cached 500. No absence proof. */
+  armIntentExecutionError(times?: number): void;
   /** Make the next N responses a 429, which is equally inconclusive. */
   armRateLimit(times?: number): void;
   /** Make this account answer 403 account_invalid, the way a revoked one does. */
@@ -119,6 +123,8 @@ export interface FakeStripeOptions {
   webhookSecret: string;
   /** Clock in unix SECONDS for webhook signing defaults. Default 1_760_000_000. */
   nowSeconds?: number;
+  /** Explicit millisecond clock for PI-create cache retention; default fixed. */
+  nowMilliseconds?: () => number;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -135,6 +141,10 @@ function stripeError(message: string, status = 400): Response {
 export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
   const intents = new Map<string, StoredIntent>();
   const byIdempotencyKey = new Map<string, string>(); // key → intentId
+  const intentResponses = new Map<string, {params: string; body: string; status: number; createdAt: number}>();
+  const clock = opts.nowMilliseconds ?? (() => (opts.nowSeconds ?? 1_760_000_000) * 1000);
+  const retentionMs = 24 * 60 * 60 * 1000;
+  let armedIntentExecutionErrors = 0;
   const refundsByIntent = new Map<string, StoredRefund[]>();
   const nowSeconds = opts.nowSeconds ?? 1_760_000_000;
   const accounts = new Map<string, StoredAccount>();
@@ -273,11 +283,22 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
       createCallCount += 1;
       const idemKey = headerValue(init, "Idempotency-Key");
 
-      // Idempotency: replay the ORIGINAL intent for a seen key (Stripe-native).
-      // The current body (possibly tampered) is intentionally ignored.
-      if (idemKey && byIdempotencyKey.has(idemKey)) {
-        const existing = intents.get(byIdempotencyKey.get(idemKey)!)!;
-        return json(existing);
+      const cacheKey = JSON.stringify([acting, idemKey]);
+      // Canonical field ordering only; duplicate-field ordering remains significant.
+      const canonical = new URLSearchParams(params); canonical.sort();
+      const fingerprint = canonical.toString();
+      const now = clock();
+      if (!Number.isFinite(now)) throw new Error('invalid fake idempotency clock');
+      const prior = idemKey ? intentResponses.get(cacheKey) : undefined;
+      if (prior && now - prior.createdAt >= retentionMs) intentResponses.delete(cacheKey);
+      else if (prior) {
+        if (prior.params !== fingerprint) return json({error: {type: 'idempotency_error', message: 'Keys for idempotent requests can only be used with the same parameters'}},400);
+        return new Response(prior.body,{status:prior.status,headers:{'Content-Type':'application/json'}});
+      }
+      function remember(value: unknown, status = 200): Response {
+        const responseBody=JSON.stringify(value);
+        if(idemKey) intentResponses.set(cacheKey,{params:fingerprint,body:responseBody,status,createdAt:now});
+        return new Response(responseBody,{status,headers:{'Content-Type':'application/json'}});
       }
 
       const amount = Number(params.get("amount"));
@@ -289,6 +310,11 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         return stripeError("Invalid currency");
       }
 
+      // Validation failures above did not execute and must not populate cache.
+      if (armedIntentExecutionErrors > 0) {
+        armedIntentExecutionErrors -= 1;
+        return remember({error:{type:'api_error',message:'synthetic indeterminate endpoint execution'}},500);
+      }
       intentCounter += 1;
       const id = `pi_test_${intentCounter}`;
       const metadata: Record<string, string> = {};
@@ -309,8 +335,7 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
         refunded: 0,
       };
       intents.set(id, intent);
-      if (idemKey) byIdempotencyKey.set(idemKey, id);
-      return json(intent);
+      return remember(intent);
     }
 
     // /v1/payment_intents/{id} and /v1/payment_intents/{id}/cancel
@@ -421,6 +446,9 @@ export function createFakeStripe(opts: FakeStripeOptions): FakeStripe {
       Object.assign(account, facts);
       if (facts.requirements) account.requirements = { ...account.requirements, ...facts.requirements };
       return account;
+    },
+    armIntentExecutionError(times = 1) {
+      armedIntentExecutionErrors = times;
     },
     armServerError(times = 1) {
       armedServerErrors = times;
