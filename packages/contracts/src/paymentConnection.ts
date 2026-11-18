@@ -209,23 +209,48 @@ export interface BeginConnectionInput {
  * finishes it at the provider, resolveConnection reports an account that cannot
  * charge.
  */
+/**
+ * The URL an owner is sent to in order to finish a handoff.
+ *
+ * HTTPS ONLY. `z.string().url()` alone accepts `javascript:` and `data:`, and
+ * this value is handed to a browser, so the scheme is constrained here rather
+ * than trusted to each adapter -- or to each layer that forwards it. Exported
+ * so the adapter boundary and the API receipt use the SAME check: the receipt
+ * is the last gate before the browser, and a weaker one there would undo this.
+ */
+export const OnboardingUrl = z
+  .string()
+  .url()
+  .refine((u) => /^https:\/\//i.test(u), "onboardingUrl must be https");
+export type OnboardingUrl = z.infer<typeof OnboardingUrl>;
+
+/**
+ * A handoff reference.
+ *
+ * The same character class the ledger enforces
+ * (`payment_connection_handoffs.handoff_id` in 0093), so an API that accepts
+ * one can always store it and the two cannot drift. Deliberately header-safe:
+ * for Stripe the handoff reference IS the connected account id, which travels
+ * in a `Stripe-Account` request header, and this id arrives from a browser.
+ *
+ * Wider than ProviderAccountId on purpose -- a provider may mint an opaque
+ * handoff token that is not an account reference -- but never wider than what a
+ * header will carry.
+ */
+export const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_.-]{8,200}$/;
+
+export const ConnectionHandoffId = z
+  .string()
+  .regex(HANDOFF_ID_PATTERN, "handoff reference is not header-safe");
+export type ConnectionHandoffId = z.infer<typeof ConnectionHandoffId>;
+
 export const ConnectionHandoff = z
   .object({
     provider: z.string().min(1),
     /** Opaque; the server stores it to resolve the handoff later. */
-    handoffId: z.string().min(1),
-    /**
-     * The URL the owner visits. Single-purpose and short-lived.
-     *
-     * HTTPS ONLY. `z.string().url()` alone accepts `javascript:` and `data:`,
-     * and this value is handed to a browser, so the scheme is constrained here
-     * rather than trusted to each adapter. A provider answering with any other
-     * scheme is not something to navigate to.
-     */
-    onboardingUrl: z
-      .string()
-      .url()
-      .refine((u) => /^https:\/\//i.test(u), "onboardingUrl must be https"),
+    handoffId: ConnectionHandoffId,
+    /** The URL the owner visits. Single-purpose, short-lived, https only. */
+    onboardingUrl: OnboardingUrl,
     expiresAt: z.string().datetime(),
   })
   .strict();

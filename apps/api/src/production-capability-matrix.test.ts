@@ -4,7 +4,7 @@ import {businessOnboardingEnabled} from './business';
 import {catalogAuthoringEnabled} from './owner-catalog';
 import {schedulingAuthoringEnabled} from './owner-scheduling';
 import {detailingPublicationEnabled} from './detailing-publication';
-import {paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled} from './capability-flags';
+import {paidPublicationEnabled, ownerBookingOperationsEnabled, paymentConnectionVisibilityEnabled, paymentConnectionWriteEnabled} from './capability-flags';
 import {mockPaymentsEnabled} from './mock-payment';
 
 /**
@@ -26,6 +26,10 @@ const CAPABILITIES: Array<[string, string, (e: Record<string, string | undefined
   // P1 step 3: the read-only payment connection view. Reading only -- it opens
   // no path to begin a handoff, bind an account or record an observation.
   ['BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY', 'paymentConnectionVisibility', paymentConnectionVisibilityEnabled],
+  // P1 step 5: begin a handoff and record the verified connection. Moves no
+  // money; separate from the read flag because reading which account a tenant is
+  // connected to and CHANGING it are different authorities.
+  ['BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE', 'paymentConnectionWrite', paymentConnectionWriteEnabled],
 ];
 const everyFlagOn = Object.fromEntries(CAPABILITIES.map(([flag]) => [flag, '1']));
 

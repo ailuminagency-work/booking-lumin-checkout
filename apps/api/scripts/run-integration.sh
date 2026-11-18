@@ -25,6 +25,9 @@
 #   - rental-confirmation, phase-a-http-golden, draft, reservation, confirmation
 #     and mock-payment (the last five were runnable under this same
 #     FLOW_TEST_DISPOSABLE contract all along, and were simply not listed)
+#   - owner-payment-connection-write (the owner handoff/record flow of step 5,
+#     end to end against 0093: idempotent begin, the status the DATABASE derives,
+#     and that an inconclusive provider answer leaves the row untouched)
 #   - owner-payment-connections (the connection view 0093 records and nothing
 #     could show; drives the connection through 0093's own RPCs, because every
 #     direct write verb is revoked, and checks the four health verdicts)
@@ -115,7 +118,8 @@ for harness in \
   src/confirmation.integration.ts \
   src/mock-payment.integration.ts \
   src/owner-payment-reviews.integration.ts \
-  src/owner-payment-connections.integration.ts
+  src/owner-payment-connections.integration.ts \
+  src/owner-payment-connection-write.integration.ts
 do
   n=$((n + 1))
   DB="lumin_r2a_$$_${n}"

@@ -95,6 +95,15 @@ services:
       # secret that never leaves the server runtime.
       - key: BOOKING_LUMIN_PAYMENT_CONNECTION_VISIBILITY
         sync: false
+      # Payment connection WRITE path (P1 step 5): begin a provider handoff and
+      # record the verified connection it produces. Separate from the read flag
+      # because reading which account a tenant is connected to and CHANGING it are
+      # different authorities -- a deployment can show the state without being able
+      # to alter it. This moves no money: it decides which connected account a
+      # later charge would be created on, and routing that charge is a further step
+      # behind a further flag.
+      - key: BOOKING_LUMIN_PAYMENT_CONNECTION_WRITE
+        sync: false
       - key: BOOKING_LUMIN_JOURNEY_AUTHORING
         sync: false
       - key: BOOKING_LUMIN_JOURNEY_PUBLICATION

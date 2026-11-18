@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { RpcResults,type FlowRpc } from "./contracts";
 import { createAvailabilityEngine } from "@lumin/core";
 import type { AvailabilityOverride,AvailabilityRule,CapacityHold,SchedulingPolicy,Slot } from "@lumin/contracts";
-export type FlowCode="ROSTER_NOT_INITIALIZED"|"ROSTER_TOO_LARGE"|"ROSTER_UNSUPPORTED_TIME"|"INVALID_REQUEST"|"UNAUTHENTICATED"|"FORBIDDEN"|"CONFLICT"|"NOT_AVAILABLE"|"UNSUPPORTED_CONFIG"|"INTERNAL_ERROR"|"RATE_LIMITED";
+export type FlowCode="ROSTER_NOT_INITIALIZED"|"ROSTER_TOO_LARGE"|"ROSTER_UNSUPPORTED_TIME"|"INVALID_REQUEST"|"UNAUTHENTICATED"|"FORBIDDEN"|"CONFLICT"|"NOT_AVAILABLE"|"UNSUPPORTED_CONFIG"|"INTERNAL_ERROR"|"RATE_LIMITED"|"PROVIDER_UNAVAILABLE";
 export class FlowError extends Error{constructor(readonly code:FlowCode){super(code);}}
 export interface FlowRepository{call(name:FlowRpc,params:readonly unknown[]):Promise<unknown>}
 export interface TenantProfile{
