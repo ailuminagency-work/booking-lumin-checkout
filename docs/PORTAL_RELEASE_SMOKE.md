@@ -1,4 +1,4 @@
-# Credential-free portal release smoke
+# Credential-free reviewed-staging portal release smoke
 
 This complements, rather than replaces, `phase-a-staging-smoke.mjs` (API checks) and
 `phase-a-hosted-readiness.mjs` (authenticated database attestation and Edge probes).
@@ -7,7 +7,12 @@ Neither existing harness pins portal artifact bytes or direct-route responses.
 No live run is included in this change. Do not run while another operator's rollout
 is awaiting approval. This harness never deploys, signs in, runs JavaScript, follows
 redirects, calls Supabase/Stripe/Google, or supplies credentials. It GETs only the
-explicit portal root/primary routes/assets/two known QA paths and API health/ready/version.
+hardcoded reviewed staging portal root/primary routes/assets/two known QA paths and API health/ready/version.
+The only accepted pair is `https://booking-lumin-portal-staging-staging.up.railway.app`
+and `https://booking-lumin-api-staging.onrender.com`. Same-origin, provider and other
+hosts fail before network dispatch. This is not a generic URL probing tool; changing
+either host requires a separately reviewed source update. The result states this
+bounded destination restriction, not a universal guarantee about arbitrary injected transports.
 
 ## Required trusted artifact evidence
 
@@ -48,11 +53,13 @@ console.log(JSON.stringify({
 Then, only when the independent rollout owner releases the verification step:
 
 ```
-node scripts/portal-release-smoke.mjs https://PORTAL_HOST https://API_HOST approved-manifest.json
+node scripts/portal-release-smoke.mjs https://booking-lumin-portal-staging-staging.up.railway.app https://booking-lumin-api-staging.onrender.com approved-manifest.json
 ```
 
 The checker uses HTTPS roots, no URL credentials, no cookies, bounded responses
-(4 MiB each /16 MiB total), 5-second per-request deadlines and a maximum 64 assets.
+(4 MiB each /16 MiB total), 5-second per-request deadlines (also checked within the read loop), a maximum
+8,192 reads per response even for empty chunks, and a maximum 64 assets. JS and CSS
+assets must have appropriate JavaScript or text/css MIME types, not just matching bytes.
 All errors are fixed codes without raw response bodies, URLs or transport errors.
 Redirects fail closed. Known QA URLs may return 404/410 or exactly the ordinary SPA
 shell; SPA fallback alone is not a leaked fixture. Known fixture sentinels fail.
