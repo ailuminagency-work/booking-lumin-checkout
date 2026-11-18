@@ -111,6 +111,7 @@ for harness in \
   src/scoped-failure-crash.integration.mjs \
   src/scoped-success-crash.integration.mjs \
   src/owner-payment-attention.integration.mjs \
+  src/owner-payment-attention-acknowledgment.integration.mjs \
   src/late-success-resource-release.integration.mjs \
   src/scoped-success-receipts.integration.mjs \
   src/scoped-failure-receipts.integration.mjs \

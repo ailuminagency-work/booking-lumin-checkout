@@ -71,3 +71,6 @@ export function paymentConnectionVisibilityEnabled(env: Record<string, string | 
 
 /** Read-only historical attention; never enables payment processing or owner cancellation. */
 export function paymentAttentionVisibilityEnabled(env:Record<string,string|undefined>):boolean{return capabilityEnabled(env,'BOOKING_LUMIN_PAYMENT_ATTENTION_VISIBILITY');}
+
+/** Review accountability only; visibility never enables this write. */
+export function paymentAttentionAcknowledgmentEnabled(env:Record<string,string|undefined>):boolean{return capabilityEnabled(env,'BOOKING_LUMIN_PAYMENT_ATTENTION_ACKNOWLEDGMENT');}

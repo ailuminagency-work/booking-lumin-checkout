@@ -1,4 +1,4 @@
-import {OwnerPaymentAttention,AttentionCursor,type OwnerPaymentAttentionReader} from './owner-payment-attention';
+import {OwnerPaymentAttention,AttentionCursor,OwnerPaymentAttentionAcknowledgment,type OwnerPaymentAttentionAcknowledger,type OwnerPaymentAttentionReader} from './owner-payment-attention';
 import {SavePaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldDraftReceipt,PaidJourneyCustomerFieldDraft,type PaidJourneyCustomerFieldDraftReader,type PaidJourneyCustomerFieldDraftWriter} from './paid-journey-customer-field-draft';
 import {PublishPaidJourneyCustomerFieldDraft,PaidJourneyCustomerFieldPublicationReceipt,PaidJourneyCustomerFieldOwnerPublication,type createPaidJourneyCustomerFieldPublicationOperations} from './paid-journey-customer-field-publication';
 import type {createPaidJourneyCustomerFieldPublicReader} from './paid-journey-customer-field-public-reader';
@@ -87,6 +87,7 @@ export interface FlowHttpOptions{
  ownerBookingDetail?:OwnerBookingDetailReader;
  ownerPaymentReviews?:OwnerPaymentReviewsReader;
  ownerPaymentAttention?:OwnerPaymentAttentionReader;
+ ownerPaymentAttentionAcknowledger?:OwnerPaymentAttentionAcknowledger;
  ownerPaymentConnections?:OwnerPaymentConnectionsReader;
  ownerBookingCancel?:OwnerBookingCancelWriter;
  confirmationReceiptStatus?:ConfirmationReceiptStatusReader;
@@ -503,6 +504,16 @@ export function createFlowHttpServer(options:FlowHttpOptions){
     const tenantId=tenant.toLowerCase();
     const result=OwnerBookingsList.safeParse(await options.ownerBookings(actor,tenantId,{limit,before}));
     if(!result.success||result.data.tenantId!==tenantId)throw new FlowError('INTERNAL_ERROR');
+    send(res,200,{ok:true,data:result.data});return;
+   }
+   const acknowledgment=url.pathname.match(/^\/api\/payment-attention\/([^/]+)\/acknowledgment$/);
+   if(acknowledgment){
+    if(!options.ownerPaymentAttentionAcknowledger)throw new FlowError('UNSUPPORTED_CONFIG');
+    if(req.method!=='POST')throw new FlowError('NOT_AVAILABLE');
+    const receipt=Uuid.parse(acknowledgment[1]).toLowerCase(),tenantId=tenant.toLowerCase();
+    z.object({}).strict().parse(await jsonBody(req));
+    const result=OwnerPaymentAttentionAcknowledgment.safeParse(await options.ownerPaymentAttentionAcknowledger(actor,tenantId,receipt));
+    if(!result.success||result.data.tenantId!==tenantId||result.data.receiptId!==receipt)throw new FlowError('INTERNAL_ERROR');
     send(res,200,{ok:true,data:result.data});return;
    }
    if(url.pathname==='/api/payment-attention'){
