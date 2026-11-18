@@ -35,4 +35,38 @@ describe('create intent persistence authority',()=>{
  it('keeps the hold when a retry transport result is uncertain',async()=>{f.payment=authoritative();f.createError=Error('private transport');const r=await request();expect(r.status).toBe(502);expect(JSON.stringify(await r.json())).not.toContain('private');noRelease();expect(f.upsert).not.toHaveBeenCalled();});
  it('keeps the hold when local recording fails after provider response',async()=>{f.recordError={message:'private persistence'};const r=await request();expect(r.status).toBe(500);expect(JSON.stringify(await r.json())).not.toContain('private');noRelease();});
  it('does not expose a client capability when authoritative read fails',async()=>{f.readError={message:'private read'};const r=await request();expect(r.status).toBe(500);expect(await r.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'could not verify recorded payment'}});noRelease();});
+ it.each([
+  ['wrong amount',{amount:{amount:11999,currency:'USD'}}],
+  ['wrong currency',{amount:{amount:12000,currency:'EUR'}}],
+  ['missing currency',{amount:{amount:12000}}],
+  ['numeric string amount',{amount:{amount:'12000',currency:'USD'}}],
+  ['unsafe amount',{amount:{amount:Number.MAX_SAFE_INTEGER+1,currency:'USD'}}],
+  ['zero amount',{amount:{amount:0,currency:'USD'}}],
+  ['missing money',{amount:null}],
+  ['array money',{amount:[]}],
+  ['missing intent id',{intentId:undefined}],
+  ['numeric intent id',{intentId:123}],
+  ['blank intent id',{intentId:'  '}],
+  ['missing token',{clientToken:null}],
+  ['numeric token',{clientToken:123}],
+  ['blank token',{clientToken:'\t '}],
+  ['unknown state',{state:'mystery'}],
+ ])('rejects %s before payment persistence or capability disclosure',async(_label,change)=>{
+  f.payment={...authoritative(),reviewEvidence:'keep'};const before={...f.payment};
+  f.create.mockResolvedValueOnce({intentId:'pi_fixture',clientToken:'do-not-disclose-token',state:'requires_payment',amount:{amount:12000,currency:'USD'},...change});
+  const response=await request();expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'invalid payment provider response'}});
+  expect(f.upsert).not.toHaveBeenCalled();expect(f.payment).toEqual(before);noRelease();
+ });
+ it.each([{ref:null},{ref:undefined},{ref:[]},{ref:{}},{ref:'malformed'}])('rejects malformed ref %j',async ({ref})=>{
+  f.create.mockResolvedValueOnce(ref);const response=await request();expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'invalid payment provider response'}});
+  expect(f.upsert).not.toHaveBeenCalled();expect(f.payment).toBeNull();noRelease();
+ });
+ it('does not invent provider ID or token format restrictions',async()=>{
+  f.create.mockResolvedValueOnce({intentId:'opaque-id',clientToken:'opaque-token',state:'requires_payment',amount:{amount:12000,currency:'USD'}});
+  const response=await request();expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({clientSecret:'opaque-token',publishableKey:'fixture-only'});
+  expect(f.payment.provider_intent_id).toBe('opaque-id');
+ });
 });

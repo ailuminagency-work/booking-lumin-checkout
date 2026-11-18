@@ -237,6 +237,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return errorResponse(code, "could not create payment intent", 502);
   }
 
+  // The adapter's TypeScript return type is not runtime validation of a provider
+  // response. Never persist our requested price beside a different provider price,
+  // or expose a malformed client capability. Do not assume Stripe ID/token formats.
+  if (!intent || typeof intent !== "object" || Array.isArray(intent) ||
+      typeof intent.intentId !== "string" || intent.intentId.trim().length === 0 ||
+      typeof intent.clientToken !== "string" || intent.clientToken.trim().length === 0 ||
+      !intent.amount || typeof intent.amount !== "object" || Array.isArray(intent.amount) ||
+      !Number.isSafeInteger(intent.amount.amount) || intent.amount.amount <= 0 ||
+      intent.amount.amount !== charge.amount || intent.amount.currency !== charge.currency ||
+      !["requires_payment", "processing", "succeeded", "failed", "refunded", "partially_refunded"].includes(intent.state)) {
+    // A malformed/mismatched response leaves provider outcome uncertain. Keep the
+    // hold and do not record, disclose, refund or infer that the intent is absent.
+    return errorResponse("PROVIDER_UNAVAILABLE", "invalid payment provider response", 502);
+  }
+
   // Insert on the SI-3 anchor without updating an existing row. Webhooks and
   // review/refund authorities may have advanced it while createIntent was in flight.
   const { error: pErr } = await db.from("payments").upsert(
