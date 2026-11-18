@@ -9,7 +9,7 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0135_refund_receipt_facts_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0137_refund_source_association_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
  ["attention list unexpected role grant", "create role synthetic_attention_reader; grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to synthetic_attention_reader"],
@@ -273,6 +273,12 @@ changes.push(
  ['refund recorder foreign execute','create role refund_foreign;grant execute on function payment_internal.record_quarantined_event(jsonb) to refund_foreign'],
  ['refund recorder delegable execute','grant execute on function payment_internal.record_quarantined_event(jsonb) to service_role with grant option']
 );
+
+for(const table of ['charge_anchors','refund_anchors','charge_anchor_conflicts','refund_anchor_conflicts']){
+ changes.push([table+' service column insert','grant insert(created_at) on payment_internal.'+table+' to service_role'],[table+' foreign column read','create role association_column;grant select(created_at) on payment_internal.'+table+' to association_column']);
+ changes.push([table+' missing','drop table payment_internal.'+table+' cascade'],[table+' RLS','alter table payment_internal.'+table+' disable row level security'],[table+' forceRLS','alter table payment_internal.'+table+' no force row level security'],[table+' immutable','alter table payment_internal.'+table+' disable trigger '+table+'_immutable'],[table+' service read','grant select on payment_internal.'+table+' to service_role'],[table+' service write','grant insert on payment_internal.'+table+' to service_role'],[table+' foreign role','create role association_foreign;grant select on payment_internal.'+table+' to association_foreign'],[table+' timestamp default','alter table payment_internal.'+table+' alter created_at set default now()']);
+}
+changes.push(['association function missing','drop function payment_internal.associate_refund_receipt(uuid)'],['association client execute','grant execute on function payment_internal.associate_refund_receipt(uuid) to authenticated'],['association delegable','grant execute on function payment_internal.associate_refund_receipt(uuid) to service_role with grant option'],['association foreign execute','create role association_foreign;grant execute on function payment_internal.associate_refund_receipt(uuid) to association_foreign'],['association body replaced',"create or replace function payment_internal.associate_refund_receipt(p_receipt_id uuid) returns jsonb language plpgsql security definer set search_path='' as $$begin return '{}'::jsonb;end$$"]);
 
 try{
  const witness=await read();assert.equal(witness.migrationHead,MIGRATION_ATTESTATION_HEAD);
