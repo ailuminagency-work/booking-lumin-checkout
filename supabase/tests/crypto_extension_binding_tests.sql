@@ -42,8 +42,9 @@ select pg_temp.reserve_pair();
 select pg_temp.reject('select lumin.reserve_capacity_nonplanning(null,null,null,null,null,null,null)','42501');
 reset role;
 select pg_temp.assert((select count(*)=2 and bool_and(c.hold_key<>k.hold_key and c.hold_key~'^[0-9a-f]{32}$') from(select 'capacity' kind,id,hold_key from public.capacity_holds union all select 'resource',id,hold_key from public.resource_reservations)c join keys_before k using(kind,id)),'expired replacement new random keys same rows');
--- Body fidelity includes the 0025 entry guard and all prior capacity semantics.
-select pg_temp.assert((select count(*)=2 and bool_and(encode(sha256(convert_to(replace(replace(p.prosrc,'extensions.gen_random_bytes(16)','public.gen_random_bytes(16)'),chr(13)||chr(10),chr(10)),'UTF8')),'hex')=case p.proname when 'reserve_capacity_nonplanning' then 'e4f5a85efe087bd9988bf8f54ff6fb49007f4b026d14bed27d0786183228e232' else 'b4b09f7d27dc9f718606bdc70d37cf3aa3f131b7cc224201bf64c62c96f796f8' end) from pg_proc p where p.pronamespace='lumin'::regnamespace and p.proname in('reserve_capacity_nonplanning','reserve_resource_quantity')),'exact accepted bodies except binding');
+-- Full current body fidelity includes the 0025 guard and intentional 0128
+-- booking/review admission fence. The capacity kernel is unchanged.
+select pg_temp.assert((select count(*)=2 and bool_and(encode(sha256(convert_to(replace(replace(p.prosrc,'extensions.gen_random_bytes(16)','public.gen_random_bytes(16)'),chr(13)||chr(10),chr(10)),'UTF8')),'hex')=case p.proname when 'reserve_capacity_nonplanning' then 'e4f5a85efe087bd9988bf8f54ff6fb49007f4b026d14bed27d0786183228e232' else '123600ee5c3840d7b4770d69e02fccaae7e255c9bb14e3c18e7343b9e397f11b' end) from pg_proc p where p.pronamespace='lumin'::regnamespace and p.proname in('reserve_capacity_nonplanning','reserve_resource_quantity')),'exact accepted bodies except binding');
 select pg_temp.assert((select bool_and(state='draft') from public.bookings),'no confirmation');
 select pg_temp.assert((select count(*)=0 from public.payments),'no payment');
 rollback;
