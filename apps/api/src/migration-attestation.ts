@@ -1,7 +1,7 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Pool} from 'pg';
 
-export const MIGRATION_ATTESTATION_HEAD='0117_legacy_webhook_attestation' as const;
+export const MIGRATION_ATTESTATION_HEAD='0119_payment_identity_attestation' as const;
 export const MIGRATION_ATTESTATION_EVIDENCE='core_schema_contract' as const;
 export type MigrationAttestation=Readonly<{schemaVersion:1;migrationHead:typeof MIGRATION_ATTESTATION_HEAD;evidence:typeof MIGRATION_ATTESTATION_EVIDENCE}>;
 type IdentityVerifier=(token:string)=>Promise<{userId:string}|null>;
