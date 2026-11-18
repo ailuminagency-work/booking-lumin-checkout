@@ -9,9 +9,34 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0103_payment_readiness_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0105_payment_attempt_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['request table absent','alter table public.payment_attempt_requests rename to synthetic_missing_request'],
+ ['intent table absent','alter table public.payment_attempt_intents rename to synthetic_missing_intent'],
+ ['request RPC missing','drop function public.snapshot_payment_attempt_request(uuid,uuid,bigint,text)'],
+ ['intent RPC missing','drop function public.associate_payment_attempt_intent(uuid,uuid,text,text,text,boolean,bigint,text)'],
+ ['request body replaced',"create or replace function public.snapshot_payment_attempt_request(p_tenant_id uuid,p_attempt_id uuid,p_amount bigint,p_currency text) returns public.payment_attempt_requests language plpgsql security definer set search_path='' as $$begin return null;end$$"],
+ ['intent invoker drift','alter function public.associate_payment_attempt_intent(uuid,uuid,text,text,text,boolean,bigint,text) security invoker'],
+ ['request path drift','alter function public.snapshot_payment_attempt_request(uuid,uuid,bigint,text) set search_path=public'],
+ ['request client execute','grant execute on function public.snapshot_payment_attempt_request(uuid,uuid,bigint,text) to anon'],
+ ['intent client execute','grant execute on function public.associate_payment_attempt_intent(uuid,uuid,text,text,text,boolean,bigint,text) to authenticated'],
+ ['request RLS disabled','alter table public.payment_attempt_requests disable row level security'],
+ ['intent FORCE disabled','alter table public.payment_attempt_intents no force row level security'],
+ ['request policy added','create policy synthetic_request_policy on public.payment_attempt_requests for select to authenticated using(true)'],
+ ['request trigger disabled','alter table public.payment_attempt_requests disable trigger payment_attempt_requests_immutable'],
+ ['intent trigger missing','drop trigger payment_attempt_intents_immutable on public.payment_attempt_intents'],
+ ['intent scope uniqueness removed','alter table public.payment_attempt_intents drop constraint payment_attempt_intents_source_scope_id_provider_intent_id_key'],
+ ['request amount nullable','alter table public.payment_attempt_requests alter column amount drop not null'],
+ ['request version default drift','alter table public.payment_attempt_requests alter column schema_version set default 2'],
+ ['intent timestamp default drift','alter table public.payment_attempt_intents alter column created_at drop default'],
+ ['request service table read','grant select on public.payment_attempt_requests to service_role'],
+ ['intent service column read','grant select(provider_intent_id) on public.payment_attempt_intents to service_role'],
+ ['request service column read','grant select(amount) on public.payment_attempt_requests to service_role'],
+ ['request PUBLIC column read','grant select(amount) on public.payment_attempt_requests to public'],
+ ['intent client column read','grant select(provider_intent_id) on public.payment_attempt_intents to authenticated'],
+ ['request service column write','grant update(amount) on public.payment_attempt_requests to service_role'],
+ ['intent service column insert','grant insert(attempt_id) on public.payment_attempt_intents to service_role'],
  ['review guard disabled','alter table public.payment_reviews disable trigger payment_review_writer_guard'],
  ['review guard missing','drop trigger payment_review_writer_guard on public.payment_reviews'],
  ['success body replaced',"create or replace function public.succeed_payment_webhook(p_payment_id uuid,p_observed_amount bigint) returns jsonb language sql as $$select '{}'::jsonb$$"],
@@ -79,7 +104,15 @@ try{
   }finally{await c.query('rollback');c.release();}
   assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  }
+ const predecessor=await pool.connect();
+ try{
+  await predecessor.query('begin');
+  await assert.rejects(predecessor.query(guard),/MIGRATION_ATTESTATION_PREDECESSOR_MISMATCH/);
+ }finally{await predecessor.query('rollback');predecessor.release();}
+ assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
+ console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
+  ['unexpanded 0103 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0103_payment_readiness_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
