@@ -60,11 +60,11 @@ select pg_temp.assert((select state='draft' from public.bookings where id=pg_tem
 
 -- A review row records the evidence a person needs.
 insert into public.payment_reviews(payment_id,tenant_id,booking_id,reason,provider,provider_intent_id,expected_amount,observed_amount,currency)
- values(pg_temp.id(110),pg_temp.id(3),pg_temp.id(10),'amount_mismatch','stripe','pi_park_suite',100,99,'USD');
+ values(pg_temp.id(110),pg_temp.id(3),pg_temp.id(10),'amount_mismatch','park_suite',pg_temp.id(110)::text,100,99,'USD');
 select pg_temp.assert((select status='open' and resolved_at is null from public.payment_reviews where payment_id=pg_temp.id(110)),'a new review is open and unresolved');
 -- The webhook upserts on payment_id, so a Stripe retry must not duplicate a review.
 insert into public.payment_reviews(payment_id,tenant_id,booking_id,reason,provider,provider_intent_id,expected_amount,currency)
- values(pg_temp.id(110),pg_temp.id(3),pg_temp.id(10),'capacity_oversold','stripe','pi_park_suite',100,'USD')
+ values(pg_temp.id(110),pg_temp.id(3),pg_temp.id(10),'capacity_oversold','park_suite',pg_temp.id(110)::text,100,'USD')
  on conflict (payment_id) do nothing;
 select pg_temp.assert((select count(*)=1 from public.payment_reviews where payment_id=pg_temp.id(110)),'a replayed webhook does not duplicate the review');
 -- Resolution coherence: a resolved review must carry when, an open one must not.
