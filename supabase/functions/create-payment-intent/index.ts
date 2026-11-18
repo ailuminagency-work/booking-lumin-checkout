@@ -237,6 +237,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return errorResponse(code, "could not create payment intent", 502);
   }
 
+  // The adapter's TypeScript return type is not runtime validation of a provider
+  // response. Never persist our requested price beside a different provider price,
+  // even when no frontend capability exists. Do not assume Stripe ID formats.
+  if (!intent || typeof intent !== "object" || Array.isArray(intent) ||
+      typeof intent.intentId !== "string" || intent.intentId.trim().length === 0 ||
+      !intent.amount || typeof intent.amount !== "object" || Array.isArray(intent.amount) ||
+      !Number.isSafeInteger(intent.amount.amount) || intent.amount.amount <= 0 ||
+      intent.amount.amount !== charge.amount || intent.amount.currency !== charge.currency ||
+      !["requires_payment", "processing", "succeeded", "failed", "refunded", "partially_refunded"].includes(intent.state)) {
+    // A malformed/mismatched response leaves provider outcome uncertain. Keep the
+    // hold and do not record, disclose, refund or infer that the intent is absent.
+    return errorResponse("PROVIDER_UNAVAILABLE", "invalid payment provider response", 502);
+  }
+
   // Insert on the SI-3 anchor without updating an existing row. Webhooks and
   // review/refund authorities may have advanced it while createIntent was in flight.
   const { error: pErr } = await db.from("payments").upsert(
@@ -277,6 +291,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (recorded.state !== "requires_payment") {
     // In particular, never reopen a succeeded, parked, failed or refunded payment.
     return errorResponse("ILLEGAL_TRANSITION", "payment is not awaiting customer payment", 409);
+  }
+
+  // A valid financial anchor may have no client secret (for example a resolved
+  // provider intent). Persist/read that anchor first so recovery is not stranded.
+  // Only a still-payable intent needs a usable frontend capability.
+  if (typeof intent.clientToken !== "string" || intent.clientToken.trim().length === 0) {
+    return errorResponse("PROVIDER_UNAVAILABLE", "payment capability is unavailable", 502);
   }
 
   // Advance draft → pending_payment (idempotent; the DB trigger validates the
