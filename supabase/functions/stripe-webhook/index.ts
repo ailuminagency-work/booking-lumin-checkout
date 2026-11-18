@@ -6,7 +6,8 @@
 // verified against STRIPE_WEBHOOK_SECRET before anything is processed. An
 // unverifiable delivery is rejected 400 and NOTHING happens.
 //
-// Effects (all idempotent, all keyed on the SI-3 anchor payments.provider_intent_id):
+// Effects use the legacy-only transactional boundary. Scoped rows are rejected.
+// Existing provider/intent global uniqueness remains a required compatibility floor.
 //
 //   payment_intent.succeeded
 //     F3 (amount guard, FAIL-CLOSED): confirm ONLY when a POSITIVE Stripe amount
@@ -75,126 +76,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // irrelevant signed deliveries into database work or retry noise.
   if (event.kind === "unrecognized") return jsonResponse({ received: true, ignored: event.kind });
 
-  const db = serviceRoleClient();
-
-  const intentId = event.intentId;
-  if (!intentId) return jsonResponse({ received: true, note: "no intent id" });
-
-  const { data: payment, error: paymentLookupError } = await db
-    .from("payments")
-    .select("id, tenant_id, booking_id, amount, currency, state")
-    .eq("provider", "stripe_connect")
-    .eq("provider_intent_id", intentId)
-    .maybeSingle();
-  // A database outage is not proof that this intent is unknown. Acknowledge only
-  // a successful lookup; retry valid deliveries whose persistence is unavailable.
-  if (paymentLookupError) return errorResponse("PROVIDER_UNAVAILABLE", "payment lookup failed", 500);
-  // The event may have arrived before the create-intent writer committed, or
-  // after that writer lost its persistence response. Do not discard it as handled.
-  // Provider-managed retries are finite; this is not a durable inbox.
-  if (!payment) return errorResponse("PROVIDER_UNAVAILABLE", "payment is not available yet", 503);
-
+  // One legacy-only database transaction owns eligibility, locked amount and
+  // financial action. Never route a scoped row by bare intent ID.
+  if (!event.intentId) return errorResponse("PROVIDER_UNAVAILABLE", "payment is not available yet", 503);
   try {
-    if (event.kind === "payment_succeeded") {
-      return await handleSucceeded(db, event, payment);
-    }
-
-    if (event.kind === "payment_failed") {
-      // Stripe can deliver delayed/canceled events after a succeeded, parked, or
-      // refund event. The migration 0101 RPC locks the payment row, checks review
-      // provenance, and performs
-      // the compare-and-set, hold release, and booking transition atomically.
-      const { data: failure, error: failureError } = await db.rpc("fail_payment_webhook", {
-        p_payment_id: payment.id,
-      });
-      if (failureError) throw failureError;
-      if (!failure || failure.result !== "FAILED") {
-        return jsonResponse({ received: true, failed: false, note: "ignored stale failure" });
-      }
-      return jsonResponse({ received: true, failed: true });
-    }
-
-    if (event.kind === "refund_completed") {
-      return await handleRefund(db, event, payment, intentId);
-    }
-
-    return jsonResponse({ received: true, ignored: event.kind });
+    // The helper's full flag is deliberately ignored: only the locked database
+    // payment amount can supply that comparison. No separate payment read.
+    const refund = event.kind === "refund_completed" ? interpretRefundEvent(event.raw, 0) : null;
+    const { data: outcome, error } = await serviceRoleClient().rpc("process_legacy_payment_webhook", {
+      p_provider_intent_id: event.intentId,
+      p_kind: event.kind,
+      p_observed_amount: event.kind === "payment_succeeded" ? webhookIntentAmount(event.raw) : refund?.refundedTotal ?? null,
+      p_refund_id: refund?.refundId ?? null,
+      p_is_cumulative: refund?.isCumulative ?? false,
+    });
+    if (error) throw error;
+    if (outcome?.result === "UNAVAILABLE") return errorResponse("PROVIDER_UNAVAILABLE", "payment is not available yet", 503);
+    if (!outcome || outcome.received !== true) throw new Error("payment unavailable");
+    return jsonResponse(outcome);
   } catch {
-    // A processing error (not a signature failure): 500 so Stripe retries later.
     return errorResponse("PROVIDER_UNAVAILABLE", "processing error", 500);
   }
 });
-
-type Db = ReturnType<typeof serviceRoleClient>;
-interface PaymentRow {
-  id: string;
-  tenant_id: string;
-  booking_id: string;
-  amount: number;
-  currency: string;
-  state: string;
-}
-
-async function handleSucceeded(
-  db: Db,
-  event: { raw: unknown },
-  payment: PaymentRow,
-): Promise<Response> {
-  // Review provenance, payment/booking/hold authority and every mutation share
-  // one database transaction. The lookup above is routing, not state authority.
-  const { data: outcome, error } = await db.rpc("succeed_payment_webhook", {
-    p_payment_id: payment.id,
-    p_observed_amount: webhookIntentAmount(event.raw),
-  });
-  if (error) throw error;
-  if (!outcome || outcome.result === "NOT_FOUND") throw new Error("payment unavailable");
-  return jsonResponse({
-    received: true,
-    confirmed: outcome.result === "CONFIRMED",
-    ...(outcome.result === "CONFIRMED" ? { replayed: outcome.replayed === true } : {}),
-    ...(outcome.result === "PARKED" ? { parked: outcome.reason } : {}),
-  });
-}
-
-/**
- * F4 refund accounting. Charge events carry amount_refunded (cumulative), while
- * bare Refund events carry an individual amount. The server-side RPC receives
- * the event shape and derives the accumulated total under the payment lock.
- */
-async function handleRefund(
-  db: Db,
-  event: { raw: unknown },
-  payment: PaymentRow,
-  intentId: string,
-): Promise<Response> {
-  const outcome = interpretRefundEvent(event.raw, payment.amount);
-  // Never infer a full refund when Stripe omitted the amount. A missing amount
-  // is an acknowledged, non-mutating event until a later event contains a
-  // verifiable amount.
-  const refundedTotal = outcome.refundedTotal;
-  if (refundedTotal === null) {
-    return jsonResponse({ received: true, refunded: false, full: false, note: "refund amount unavailable" });
-  }
-  // Stable dedupe key: prefer the Stripe refund id; fall back to a synthetic
-  // (intent + event shape + amount) so a replay of an id-less event still
-  // dedupes without conflating cumulative Charge and individual Refund events.
-  const dedupeKey = outcome.refundId ?? `${intentId}:${outcome.isCumulative ? "cumulative" : "individual"}:${refundedTotal}`;
-
-  if (refundedTotal > 0) {
-    const { data: recorded, error: refundError } = await db.rpc("record_refund_webhook", {
-      p_payment_id: payment.id,
-      p_provider_refund_id: dedupeKey,
-      p_refunded_total: refundedTotal,
-      p_is_fully_refunded: outcome.isFullyRefunded,
-      p_is_cumulative: outcome.isCumulative,
-    });
-    if (refundError) throw refundError;
-    return jsonResponse({
-      received: true,
-      refunded: recorded?.result === "RECORDED" || recorded?.result === "IGNORED",
-      full: recorded?.full === true || outcome.isFullyRefunded,
-    });
-  }
-
-  return jsonResponse({ received: true, refunded: false, full: outcome.isFullyRefunded });
-}
