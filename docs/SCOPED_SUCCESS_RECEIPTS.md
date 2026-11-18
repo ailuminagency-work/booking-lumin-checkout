@@ -1,5 +1,7 @@
 # Dormant scoped succeeded receipt decisions
 
+Historical 0126 slice: the late-success ignore and hold-only parking limitations below are explicitly superseded by 0128. See LATE_SUCCESS_RESOURCE_RELEASE.md for the current corrective authority.
+
 This source-only slice adds a private, service-only receipt-ID boundary. It is not wired to ingress, does not authorize a webhook ACK, and makes no provider calls, refunds, retries, deployments or claims of signature verification inside SQL.
 
 ## Authority and lock order
