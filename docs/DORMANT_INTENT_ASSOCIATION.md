@@ -39,15 +39,24 @@ separate. Booking-first locking matches0102; unique scope/intent index resolves
 cross-booking competition. Cross-platform identity is checked too, not merely
 account and mode.
 
-## Attestation intentionally pending
+## Bounded attestation expansion (0105)
 
-0103 attests its existing contract and migration witness0103. 0104 does not change
-that witness or claim that its new objects are covered. Source-head0104 versus
-DB witness0103 MUST remain a readiness mismatch until a separately reviewed
-attestation expansion includes both new tables, privilege/trigger/function shapes
-and definitions. No production comparison is relaxed. PostgreSQL16 portability
-fix for0103 belongs to the parallel attestation work, not this change. Apply its
-reviewed correction before final integration and rerun all contract mutation tests.
+0104 alone deliberately left witness0103 unchanged. The separate additive0105
+preserves0103's checks and adds the two new RPCs, tables and immutable triggers.
+Function bodies/signatures/security/search_path/privileges, table columns and
+constraints, and new-table defaults/identity/generated expressions are pinned.
+All client access and direct service writes remain forbidden; the new ledgers
+also reject service SELECT, including column-only and PUBLIC/inherited grants.
+Constraint fingerprints use empty search_path and bytewise C ordering, preserving
+the reviewed PostgreSQL16 cross-locale portability correction.
+
+Only after the expanded contract passes and predecessor witness is exactly0103
+does0105 advance the witness. The actual reader expects0105 and keeps evidence
+`core_schema_contract`. This is not full historical-chain replay, provider-source
+verification, or activation approval. Tests mutate54 catalog properties through
+the actual reader AND guard, four witness cases, plus wrong predecessor refusal.
+No production comparison is relaxed and no witness is advanced simply because a
+new migration filename exists.
 
 ## Tests and activation gates
 
@@ -60,7 +69,7 @@ lumin_source_binding_ database and opt-in. CI creates and drops its own fixture 
 No external credentials are used. Existing source binding, tenant isolation,
 role-denial, payment provenance and RLS tests remain in the regression set.
 
-Before activation: expanded attestation, PostgreSQL16 CI, independent review,
+Before activation: exact-head PostgreSQL16 CI, independent review,
 source-aware payment attachment, complete request/response contract, scoped
 verified event parsing, durable retries/quarantine/alerts and explicit rollout
 controls are still required. External refunds may only be reconciled; no refund
