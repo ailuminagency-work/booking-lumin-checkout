@@ -134,8 +134,12 @@ try {
  }
  {const x=await consistent();const u=refund(x.f,x.ch.facts.chargeId);await receipt({...u,refundStatus:'succeeded'});await receipt({...u,eventId:eid(),refundAmount:u.refundAmount+1,refundStatus:'succeeded'});result(await readAssessment(x.ch.anchorId),'coverage_unknown');ok('unanchored conflicting amounts cannot become observed consistent');}
  {const x=await consistent(),other=await chargeEvidence(x.f,[{chargeAmountRefunded:0}]),r=await refundEvidence(x.f,other,0,['succeeded']);
-  await receipt({...r.facts,eventId:eid(),chargeId:null,refundStatus:'pending'});
+  const ambiguous={...r.facts,eventId:eid(),chargeId:null,refundStatus:'pending'};
+  await receipt(ambiguous);
   result(await readAssessment(x.ch.anchorId),'coverage_unknown');ok('null charge matching PI is uncertainty even when refund anchored to other charge');
+  await receipt({...ambiguous,refundAmount:ambiguous.refundAmount+1});
+  const conflicted=await readAssessment(x.ch.anchorId);result(conflicted,'authority_conflict');assert.equal(conflicted.reason,'refund_observation_conflict');
+  ok('selected ambiguous receipt conflict is evidence-integrity refusal, not charge attribution');
  }
  for(const role of ['anon','authenticated']){await db.query('begin');await db.query('set local role '+role);await assert.rejects(assess(base.ch.anchorId,db),e=>e.code==='42501');await db.query('rollback');ok(role+' private assessment denied');}
  for(const f of fixtures)assert.deepEqual(await snapshot(f),f.before);ok('all financial fixtures unchanged');
