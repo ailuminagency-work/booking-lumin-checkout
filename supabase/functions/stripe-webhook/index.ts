@@ -77,12 +77,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const intentId = event.intentId;
   if (!intentId) return jsonResponse({ received: true, note: "no intent id" });
 
-  const { data: payment } = await db
+  const { data: payment, error: paymentLookupError } = await db
     .from("payments")
     .select("id, tenant_id, booking_id, amount, currency, state")
     .eq("provider", "stripe_connect")
     .eq("provider_intent_id", intentId)
     .maybeSingle();
+  // A database outage is not proof that this intent is unknown. Acknowledge only
+  // a successful lookup; retry valid deliveries whose persistence is unavailable.
+  if (paymentLookupError) return errorResponse("PROVIDER_UNAVAILABLE", "payment lookup failed", 500);
   if (!payment) return jsonResponse({ received: true, note: "unknown intent" });
 
   try {
