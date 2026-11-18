@@ -9,9 +9,29 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0113_legacy_payment_writer_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0115_payment_provenance_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["scoped writer missing", "drop function payment_internal.record_scoped_payment_observation(uuid,text) cascade"],
+ ["scoped writer client grant", "grant execute on function payment_internal.record_scoped_payment_observation(uuid,text) to anon"],
+ ["scoped writer invoker", "alter function payment_internal.record_scoped_payment_observation(uuid,text) security invoker"],
+ ["scoped writer path", "alter function payment_internal.record_scoped_payment_observation(uuid,text) set search_path=public"],
+ ["receipt resolver missing", "drop function payment_internal.resolve_quarantined_payment_receipt(uuid) cascade"],
+ ["receipt resolver client grant", "grant execute on function payment_internal.resolve_quarantined_payment_receipt(uuid) to anon"],
+ ["receipt resolver invoker", "alter function payment_internal.resolve_quarantined_payment_receipt(uuid) security invoker"],
+ ["receipt resolver path", "alter function payment_internal.resolve_quarantined_payment_receipt(uuid) set search_path=public"],
+ ["provenance guard missing", "drop function lumin.guard_payment_provenance() cascade"],
+ ["provenance guard client grant", "grant execute on function lumin.guard_payment_provenance() to anon"],
+ ["provenance guard invoker", "alter function lumin.guard_payment_provenance() security invoker"],
+ ["provenance guard path", "alter function lumin.guard_payment_provenance() set search_path=public"],
+ ["provenance trigger disabled", "alter table payments disable trigger payment_provenance_guard"],
+ ["provenance pairing removed", "alter table payments drop constraint payments_provenance_pair"],
+ ["provenance attempt unique removed", "alter table payments drop constraint payments_attempt_unique"],
+ ["provenance source FK removed", "alter table payments drop constraint payments_source_scope_id_fkey"],
+ ["provenance intent FK removed", "alter table payments drop constraint payments_attempt_id_fkey"],
+ ["provenance default drift", "alter table payments alter column source_scope_id set default gen_random_uuid()"],
+ ["resolver volatile", "alter function payment_internal.resolve_quarantined_payment_receipt(uuid) volatile"],
+ ["scoped writer service revoked", "revoke execute on function payment_internal.record_scoped_payment_observation(uuid,text) from service_role"],
  ['legacy recording RPC missing','drop function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text)'],
  ['legacy RPC client grant','grant execute on function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) to anon'],
  ['legacy RPC service revoked','revoke execute on function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) from service_role'],
@@ -160,7 +180,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0111 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0111_payment_receipt_attestation'"],
+  ['unexpanded 0113 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0113_legacy_payment_writer_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
