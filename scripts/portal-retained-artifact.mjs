@@ -49,7 +49,7 @@ export function portalRetainedArtifact(){
  identity=selectIdentity(process.env,gitIdentity(c.root)); if(identity)disabledFlags(c.env,c.define);
  },
  buildEnd(error){failed=!!error;},
- generateBundle(_options,bundle){if(!identity)return;emitted={};for(const [name,item] of Object.entries(bundle)){if(name==='index.html'||name.startsWith('assets/')){if(name!=='index.html'&&!/^assets\/[-A-Za-z0-9_]+\.(js|css)$/.test(name))fail('PATH');emitted[name]=hash(item.type==='chunk'?item.code:item.source);}}},
+ writeBundle:{order:'post',sequential:true,handler(_options,bundle){if(!identity)return;emitted={};for(const [name,item] of Object.entries(bundle)){if(name==='index.html'||name.startsWith('assets/')){if(name!=='index.html'&&!/^assets\/[-A-Za-z0-9_]+\.(js|css)$/.test(name))fail('PATH');emitted[name]=hash(item.type==='chunk'?item.code:item.source);}}}},
  closeBundle:{order:'post',sequential:true,handler(){if(!identity||failed)return;if(!emitted)fail('INCOMPLETE');
  const manifest=collectManifest(out,identity,config.env,emitted);const serialized=JSON.stringify(manifest);if(serialized.length>16384)fail('SIZE');
  const target=join(out,NAME);writeFileSync(target,serialized+'\n',{flag:'wx'});
@@ -57,4 +57,5 @@ export function portalRetainedArtifact(){
  }}
  };
 }
+
 
