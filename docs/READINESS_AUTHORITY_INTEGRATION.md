@@ -62,3 +62,19 @@ passed. The registered integration harness receives its own fresh CI database.
 An ad hoc owner-reader run initially reused the40-case populated DB and failed
 its global count24 vs3; rerunning on its own freshly migrated0103 database passed,
 without weakening assertions. No full Windows suite retry, deployment or activation.
+
+### Column-ACL review correction
+Baseline28d2e65 reproduced: service_role column INSERT grants left table-level
+INSERT false while allowing a wrong connected-account row and contract=true.
+The corrected contract checks effective column privileges, including inherited
+and PUBLIC grants: all client SELECT/INSERT/UPDATE/REFERENCES denied; source
+service INSERT/UPDATE and source/review REFERENCES denied. Review service
+SELECT/INSERT/UPDATE remain intentionally permitted. Source SQL tests now pin
+these effective column boundaries too.
+
+Fresh corrected chain passes;29 catalog mutations plus3 witness cases pass.
+The column-INSERT regression actually demonstrates the wrong-account write under
+the injected grant, then requires real reader and migration guard to reject it.
+Full0103 with that grant also aborts leaving0100 and no helper.40 PG cases,
+156 focused API tests and typecheck pass. This detects current catalog drift;
+it does not scan/remediate historical rows written while a forbidden grant existed.

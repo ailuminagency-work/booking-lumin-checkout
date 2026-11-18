@@ -20,6 +20,14 @@ unnest(array['public.payment_source_scopes','public.booking_payment_attempt_sour
 unnest(array['INSERT','UPDATE','DELETE','TRUNCATE']) v;
 select pg_temp.assert(not has_table_privilege(r,t,'SELECT'),'client read denied') from unnest(array['anon','authenticated']) r,
 unnest(array['public.payment_source_scopes','public.booking_payment_attempt_sources']) t;
+-- Effective column grants are not reported by has_table_privilege.
+select pg_temp.assert(not has_any_column_privilege(r,t,v),'column mutation/reference privileges denied')
+ from unnest(array['anon','authenticated','service_role']) r,
+ unnest(array['public.payment_source_scopes','public.booking_payment_attempt_sources']) t,
+ unnest(array['INSERT','UPDATE','REFERENCES']) v;
+select pg_temp.assert(not has_any_column_privilege(r,t,'SELECT'),'client column read denied')
+ from unnest(array['anon','authenticated']) r,
+ unnest(array['public.payment_source_scopes','public.booking_payment_attempt_sources']) t;
 select pg_temp.assert(not has_function_privilege(r,f,'EXECUTE'),'client RPC denied') from unnest(array['anon','authenticated']) r,
 unnest(array['public.register_payment_source_scope(uuid,text,boolean)','public.bind_booking_payment_source(uuid,uuid,uuid)']) f;
 select pg_temp.assert(relrowsecurity and relforcerowsecurity,'forced RLS') from pg_class where oid in('public.payment_source_scopes'::regclass,'public.booking_payment_attempt_sources'::regclass);

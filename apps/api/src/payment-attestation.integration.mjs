@@ -1,6 +1,7 @@
 // Actual PostgreSQL catalog mutation tests. Synthetic transport, no provider calls.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {createMigrationAttestationReader,MIGRATION_ATTESTATION_HEAD} from './migration-attestation.ts';
 import {runHostedReadiness} from '../../../scripts/phase-a-hosted-readiness.mjs';
@@ -21,6 +22,14 @@ const changes=[
  ['source RLS disabled','alter table public.payment_source_scopes disable row level security'],
  ['source FORCE removed','alter table public.booking_payment_attempt_sources no force row level security'],
  ['source mutation granted','grant update on public.payment_source_scopes to service_role'],
+ ['source column insert granted','grant insert(tenant_id,connection_id,platform_account_id,connected_account_id,livemode) on public.payment_source_scopes to service_role'],
+ ['attempt column update granted','grant update(source_scope_id) on public.booking_payment_attempt_sources to service_role'],
+ ['source column references granted','grant references(id) on public.payment_source_scopes to service_role'],
+ ['review column references granted','grant references(payment_id) on public.payment_reviews to service_role'],
+ ['client column select granted','grant select(connected_account_id) on public.payment_source_scopes to authenticated'],
+ ['client column insert granted','grant insert(reason) on public.payment_reviews to anon'],
+ ['client column update granted','grant update(status) on public.payment_reviews to authenticated'],
+ ['client column references granted','grant references(id) on public.booking_payment_attempt_sources to anon'],
  ['review erase granted','grant delete on public.payment_reviews to service_role'],
  ['source client policy added','create policy synthetic_bypass on public.payment_source_scopes for select to authenticated using(true)'],
  ['immutable trigger disabled','alter table public.payment_source_scopes disable trigger payment_source_scopes_immutable'],
@@ -41,6 +50,19 @@ try{
  for(const [label,sql] of changes){
   const c=await pool.connect();try{
    await c.query('begin');await c.query(sql);
+   if(label==='source column insert granted'){
+    const tenant=randomUUID(),connection=randomUUID();
+    await c.query("insert into public.tenants(id,name,slug,timezone,currency) values($1,'ACL fixture',$1::uuid::text,'UTC','USD')",[tenant]);
+    await c.query("insert into public.payment_connections(id,tenant_id,provider,status,account_id,charges_enabled) values($1,$2,'stripe_connect','connected','acct_expectedAAA',true)",[connection,tenant]);
+    assert.equal((await c.query("select has_table_privilege('service_role','public.payment_source_scopes','INSERT') allowed")).rows[0].allowed,false);
+    await c.query('set local role service_role');
+    // This intentionally demonstrates the bypass created by the privileged
+    // column grant. The attestation must detect it, not pretend table ACLs deny it.
+    await c.query("insert into public.payment_source_scopes(tenant_id,connection_id,platform_account_id,connected_account_id,livemode) values($1,$2,'acct_platformAAA','acct_WRONGaccount',false)",[tenant,connection]);
+    await c.query('reset role');
+    const row=(await c.query('select s.connected_account_id,c.account_id from public.payment_source_scopes s join public.payment_connections c on c.id=s.connection_id where s.tenant_id=$1',[tenant])).rows[0];
+    assert.notEqual(row.connected_account_id,row.account_id);
+   }
    assert.equal((await c.query('select lumin.payment_readiness_contract() ok')).rows[0].ok,false,label);
    // Map only transaction boundaries to savepoints, so the production reader's
    // real SQL and SET ROLE observe rollback-only catalog corruption safely.

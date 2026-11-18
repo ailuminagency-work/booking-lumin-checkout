@@ -47,6 +47,15 @@ select coalesce(
    or exists(select 1 from unnest(array['anon','authenticated']) r,
        unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) v
        where has_table_privilege(r,c.oid,v))
+   -- Table ACLs alone miss column-only grants. Check effective privileges
+   -- (including inherited/PUBLIC grants) for every forbidden column verb.
+   or exists(select 1 from unnest(array['anon','authenticated']) r,
+       unnest(array['SELECT','INSERT','UPDATE','REFERENCES']) v
+       where has_any_column_privilege(r,c.oid,v))
+   or has_any_column_privilege('service_role',c.oid,'REFERENCES')
+   or (not review_writes and
+       (has_any_column_privilege('service_role',c.oid,'INSERT')
+        or has_any_column_privilege('service_role',c.oid,'UPDATE')))
    or not has_table_privilege('service_role',c.oid,'SELECT')
    or has_table_privilege('service_role',c.oid,'INSERT') is distinct from review_writes
    or has_table_privilege('service_role',c.oid,'UPDATE') is distinct from review_writes
