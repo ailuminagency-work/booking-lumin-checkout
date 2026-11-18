@@ -118,7 +118,10 @@ export async function runHostedReadiness(env = process.env, {
 
 async function selfTest() {
   const sha = '0123456789abcdef0123456789abcdef01234567';
-  const migrationHead = '0098_refund_event_shape_authority';
+  // Successful fixture follows this checkout; the drift fixture below remains
+  // deliberately different. Production comparison is unchanged.
+  const migrationHead = await activeMigrationHead(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
+  const driftedMigrationHead = `${migrationHead}_unexpected`;
   const env = {
     BOOKING_LUMIN_READINESS: '1',
     BOOKING_LUMIN_API_BASE_URL: 'https://api.example.test',
@@ -144,7 +147,7 @@ async function selfTest() {
   await assert.rejects(runHostedReadiness({ ...env, BOOKING_LUMIN_EDGE_FUNCTIONS: 'create-payment-intent' }, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: url.pathname.endsWith('stripe-webhook') ? 404 : 405 }) }), /EDGE_FUNCTION_MISSING/);
   await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 200 }) }), /EDGE_FUNCTION_UNVERIFIED/);
   await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /MIGRATION_STATUS_UNAVAILABLE/);
-  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead: '0097_confirmation_hold_deadline' }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /MIGRATION_DRIFT/);
+  await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: sha, migrationHead: driftedMigrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /MIGRATION_DRIFT/);
   await assert.rejects(runHostedReadiness(env, { fetchImpl: async (url, options) => url.pathname === '/version' ? Response.json({ schemaVersion: 1, service: 'booking-lumin-api', environment: 'staging', releaseSha: 'fedcba98765432100123456789abcdef01234567', migrationHead }, { headers: { 'content-type': 'application/json' } }) : new Response('', { status: 405 }) }), /RELEASE_MISMATCH/);
   console.log('PASS hosted-readiness self-test: opt-in, release binding, migration drift, missing Edge Function, bounded responses, no secret logging');
 }
