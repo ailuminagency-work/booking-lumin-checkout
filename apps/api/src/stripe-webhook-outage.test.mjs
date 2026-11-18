@@ -67,4 +67,3 @@ describe('Stripe webhook payment lookup outage',()=>{
   fixture.parse.mockRejectedValueOnce(Error('bad signature'));const response=await deliver();expect(response.status).toBe(400);expect(fixture.from).not.toHaveBeenCalled();
  });
 });
-

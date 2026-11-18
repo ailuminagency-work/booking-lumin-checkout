@@ -11,4 +11,3 @@ await assert.rejects(fetch('https://api.openai.com/v1/models'),/AUDIT_EXTERNAL_N
 assert.throws(()=>net.connect({host:'api.anthropic.com',port:443}),/AUDIT_EXTERNAL_NETWORK_DENIED/);
 console.log('PASS network-denial self-tests; external fetch/TCP blocked; synthetic probes=2');
 process.on('exit',()=>{if(denied!==2){console.error('FAIL unexpected external dependency attempts='+ (denied-2));process.exitCode=1;}else console.log('PASS no external dependency attempts during journey');});
-
