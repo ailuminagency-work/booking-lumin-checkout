@@ -132,6 +132,16 @@ jobs:
             exit 1
           fi
           psql -v ON_ERROR_STOP=1 -d postgres -c 'drop database lumin_migration_attestation_guard_ci;'
+      - name: Verify payment attestation under explicit English ICU collation
+        run: |
+          # Dedicated disposable database; default CI/local collations differ.
+          psql -X -v ON_ERROR_STOP=1 -d postgres -c "create database lumin_attestation_icu_ci template template0 encoding 'UTF8' locale_provider icu icu_locale 'en-US';"
+          trap 'psql -X -v ON_ERROR_STOP=1 -d postgres -c "drop database lumin_attestation_icu_ci;"' EXIT
+          psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f supabase/tests/local_harness.sql
+          for f in supabase/migrations/0*.sql; do
+            psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f "$f"
+          done
+          psql -X -v ON_ERROR_STOP=1 -d lumin_attestation_icu_ci -f supabase/tests/migration_attestation_tests.sql
       - name: Verify security-advisor hardening and intentional role boundaries
         run: psql -v ON_ERROR_STOP=1 -d lumin_test -f supabase/tests/security_advisor_hardening_tests.sql
       - name: Run RLS attack suite (fails on any FAIL)

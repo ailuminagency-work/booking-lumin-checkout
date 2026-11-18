@@ -78,3 +78,20 @@ the injected grant, then requires real reader and migration guard to reject it.
 Full0103 with that grant also aborts leaving0100 and no helper.40 PG cases,
 156 focused API tests and typecheck pass. This detects current catalog drift;
 it does not scan/remediate historical rows written while a forbidden grant existed.
+
+### Locale-dependent fingerprint correction (actual PostgreSQL16.16)
+The PR272 CI failure was reproduced with portable vendor PostgreSQL16.16:
+C-locale full chain passed unchanged; English ICU en-US failed0103. All function
+and column fingerprints matched. The identical payment_reviews constraint set
+hashed to b2fb849820e41b56c513c86673c4dd66 under C ordering but
+47f99aecb380ff47c70a94b16468128d under English linguistic ordering. Default
+collation reordered pg_get_constraintdef strings before string_agg.
+
+The fix pins only that aggregate ORDER BY to COLLATE "C". It does not accept
+extra hashes, omit constraints, or relax any privilege/security predicate. Both
+fresh PG16.16 locale chains now pass, including29 catalog/3 witness negatives,
+40 payment cases and all five SQL suites in each database. Actual reader and
+synthetic readiness transport pass in both. Explicit English-ICU replay is added
+to CI. PostgreSQL16.16 testing here is Windows vendor build; Linux CI remains the
+final platform confirmation. Vendor binaries/data are isolated in .test-temp;
+no system installation, service registration, live calls or provider activation.
