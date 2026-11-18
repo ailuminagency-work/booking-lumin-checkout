@@ -9,9 +9,15 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0119_payment_identity_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0121_legacy_financial_denial_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["confirmation absent", "drop function public.confirm_succeeded_payment(uuid)"],
+ ["confirmation client grant", "grant execute on function public.confirm_succeeded_payment(uuid) to anon"],
+ ["confirmation service revoked", "revoke execute on function public.confirm_succeeded_payment(uuid) from service_role"],
+ ["confirmation invoker", "alter function public.confirm_succeeded_payment(uuid) security invoker"],
+ ["confirmation path", "alter function public.confirm_succeeded_payment(uuid) set search_path=public"],
+ ["confirmation stable", "alter function public.confirm_succeeded_payment(uuid) stable"],
  ["admission absent", "drop function payment_internal.admit_payment_identity(text,boolean) cascade"],
  ["admission client grant", "grant execute on function payment_internal.admit_payment_identity(text,boolean) to anon"],
  ["admission service grant", "grant execute on function payment_internal.admit_payment_identity(text,boolean) to service_role"],
@@ -165,6 +171,13 @@ const changes=[
  ['source table absent','alter table public.booking_payment_attempt_sources rename to synthetic_missing_source_table'],
  ['review identity body altered',"create or replace function lumin.guard_payment_review_writer() returns trigger language plpgsql security definer set search_path='' as $$begin return NEW;end$$"],
 ];
+const denialMigration=fs.readFileSync(new URL('../../../supabase/migrations/0120_reject_scoped_legacy_financial_rpcs.sql',import.meta.url),'utf8');
+for(const name of ['confirm_succeeded_payment','succeed_payment_webhook','fail_payment_webhook','park_payment_webhook','record_refund_webhook']){
+ const definition=denialMigration.match(new RegExp('create or replace function public\\.'+name+'\\([\\s\\S]*?\\$fn\\$;'))[0];
+ const stripped=definition.replace(/\n  -- Legacy authority only: reject BEFORE terminal no-op, dedupe or effects\.\n  if (?:p|v_payment)\.source_scope_id is not null or (?:p|v_payment)\.attempt_id is not null then\n    raise exception 'SCOPED_PAYMENT_PROCESSING_DISABLED' using errcode='42501';\n  end if;/,'');
+ assert.notEqual(stripped,definition);changes.push([name+' scoped denial removed',stripped]);
+}
+
 try{
  const witness=await read();assert.equal(witness.migrationHead,MIGRATION_ATTESTATION_HEAD);
  const env={BOOKING_LUMIN_READINESS:'1',BOOKING_LUMIN_API_BASE_URL:'https://api.example.test',BOOKING_LUMIN_SUPABASE_URL:'https://project.example.test',BOOKING_LUMIN_MIGRATION_ATTESTATION_TOKEN:'test-only-fixture-token-no-credentials'};
@@ -210,7 +223,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0117 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0117_legacy_webhook_attestation'"],
+  ['unexpanded 0119 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0119_payment_identity_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
