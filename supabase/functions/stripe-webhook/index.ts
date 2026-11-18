@@ -72,6 +72,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return errorResponse("WEBHOOK_UNVERIFIED", "signature verification failed", 400);
   }
 
+  // Only verified financial event kinds need payment persistence. Do not turn
+  // irrelevant signed deliveries into database work or retry noise.
+  if (event.kind === "unrecognized") return jsonResponse({ received: true, ignored: event.kind });
+
   const db = serviceRoleClient();
 
   const intentId = event.intentId;
@@ -86,7 +90,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // A database outage is not proof that this intent is unknown. Acknowledge only
   // a successful lookup; retry valid deliveries whose persistence is unavailable.
   if (paymentLookupError) return errorResponse("PROVIDER_UNAVAILABLE", "payment lookup failed", 500);
-  if (!payment) return jsonResponse({ received: true, note: "unknown intent" });
+  // The event may have arrived before the create-intent writer committed, or
+  // after that writer lost its persistence response. Do not discard it as handled.
+  // Provider-managed retries are finite; this is not a durable inbox.
+  if (!payment) return errorResponse("PROVIDER_UNAVAILABLE", "payment is not available yet", 503);
 
   try {
     if (event.kind === "payment_succeeded") {
