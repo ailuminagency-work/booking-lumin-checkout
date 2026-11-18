@@ -127,18 +127,16 @@ describe("stripe idempotency — one charge (threat 8, 23)", () => {
     expect(fake.intents()).toHaveLength(1);
   });
 
-  it("threat 23: idempotency-key reuse with an ALTERED amount returns the ORIGINAL (altered amount ignored)", async () => {
+  it("threat 23: changed amount with retained key is rejected without a second intent", async () => {
     const { fake, provider } = makeProvider();
     const original = await provider.createIntent(intentInput({ amount: 12_600, key: "reuse-altered-000001" }));
     // Attacker retries the SAME key but with a tampered lower amount.
-    const replayed = await provider.createIntent(intentInput({ amount: 1, key: "reuse-altered-000001" }));
-    expect(replayed.intentId).toBe(original.intentId);
-    expect(replayed.amount.amount).toBe(12_600); // NOT 1
+    await expect(provider.createIntent(intentInput({ amount: 1, key: "reuse-altered-000001" }))).rejects.toThrow();
     expect(fake.getIntent(original.intentId)!.amount).toBe(12_600);
     expect(fake.intents()).toHaveLength(1);
   });
 
-  it("a DIFFERENT key mints a distinct intent (superseding retry after failure)", async () => {
+  it("a DIFFERENT key can create another intent, not permission to replace an uncertain one", async () => {
     const { fake, provider } = makeProvider();
     await provider.createIntent(intentInput({ key: "first-attempt-000001" }));
     await provider.createIntent(intentInput({ key: "first-attempt-000001#retry1" }));

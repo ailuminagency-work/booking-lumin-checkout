@@ -20,9 +20,9 @@
  *
  * Idempotency is Stripe-native: `createIntent` sends the caller's
  * `idempotencyKey` as the `Idempotency-Key` HTTP header, so a retried create
- * with the same key returns Stripe's ORIGINAL intent and never charges twice —
- * even if the retried request body was tampered with (Stripe replays the first
- * response; the altered amount is ignored).
+ * with unchanged parameters can replay a cached response within retention.
+ * Changed parameters are rejected; after key pruning, reuse can create another
+ * intent. This adapter does not implement a safe retry/replacement policy.
  */
 
 import { constantTimeEqual, hmacSha256Hex } from "./webhookCrypto";
@@ -222,8 +222,8 @@ export function createStripePaymentProvider(opts: StripePaymentProviderOptions):
 
       const res = await doFetch(`${apiBase}/v1/payment_intents`, {
         method: "POST",
-        // Stripe-native idempotency: the SAME key returns the ORIGINAL intent
-        // (no second charge), even if this retried body was altered (D8/D23).
+        // API-v1 idempotency requires unchanged parameters within retention;
+        // parameter drift errors and expired-key duplication remain possible.
         headers: authHeaders({ "Idempotency-Key": input.idempotencyKey }),
         body,
       });
