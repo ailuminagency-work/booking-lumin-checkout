@@ -15,6 +15,7 @@ const completeRow={
  resources:true,
  resourceReservations:true,
  confirmationAuthority:true,
+ paymentReadinessContract:true,
 };
 
 function poolFor(rows:unknown[],failure?:Error){
@@ -61,7 +62,7 @@ describe('server-side migration attestation',()=>{
   expect(fixture.release).toHaveBeenCalledOnce();
  });
  it('fails closed when a core object or confirmation authority is missing despite the current sentinel',async()=>{
-  for(const missing of ['services','confirmationAuthority'] as const){
+  for(const missing of ['services','confirmationAuthority','paymentReadinessContract'] as const){
    const fixture=poolFor([{...completeRow,[missing]:false}]);
    await expect(createMigrationAttestationReader(fixture.pool)()).rejects.toThrow('MIGRATION_ATTESTATION_SCHEMA_MISMATCH');
    expect(fixture.query).toHaveBeenCalledWith('rollback');

@@ -33,3 +33,32 @@ The legacy SQL attestation suite proves its0100 contract only; healthy self-test
 fixtures do not prove actual DB attestation. Proposed separate additive migration
 must validate newer authority objects, advance witness, and update reader/negative
 tests. Do not edit old applied migrations or weaken head equality to hide drift.
+
+## Additive0103 follow-up (supersedes blocker above, source-only)
+
+0103_payment_readiness_attestation validates the bounded0101/0102 contract and
+advances the witness in one transaction, requiring the prior0100 witness. It does
+not edit prior migrations. The reader requires0103 AND rechecks the live contract
+on each call, so a current-looking row alone is insufficient.
+
+The contract fingerprints the seven reviewed function bodies (CRLF normalized;
+independently matched to0101/0102 source), return/signature/security/language/
+volatility/default/search-path/execute boundaries, source/review table columns and
+constraints, enabled correctly bound trigger events, RLS/FORCE/policy absence and
+role privileges. Fingerprints intentionally fail closed on definition drift; they
+are equality checks, not malicious-superuser tamper resistance. NOT NULL catalog
+constraints introduced inPG18 are excluded from constraint hashes because column
+attnotnull is checked separately. SQL catalog rendering is version-sensitive:
+localPG18 passes; CI PostgreSQL16 still requires verification. This is a bounded
+live contract, not every historical migration or real payment-provider evidence.
+
+Verified: fresh full chain0103;21 rollback-only catalog corruptions rejected by
+actual reader AND original migration guard;3 actual missing/stale/forged witness
+rejections; healthy actual DB reader through synthetic readiness HTTP transport;
+complete0103 applied against disabled review guard aborts and leaves0100 witness
+with no new helper (atomic rollback).40 payment-authority cases and all named SQL
+suites passed.156 focused API tests, typecheck and offline readiness self-test
+passed. The registered integration harness receives its own fresh CI database.
+An ad hoc owner-reader run initially reused the40-case populated DB and failed
+its global count24 vs3; rerunning on its own freshly migrated0103 database passed,
+without weakening assertions. No full Windows suite retry, deployment or activation.

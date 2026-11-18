@@ -1,14 +1,14 @@
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import type {Pool} from 'pg';
 
-export const MIGRATION_ATTESTATION_HEAD='0100_security_advisor_hardening' as const;
+export const MIGRATION_ATTESTATION_HEAD='0103_payment_readiness_attestation' as const;
 export const MIGRATION_ATTESTATION_EVIDENCE='core_schema_contract' as const;
 export type MigrationAttestation=Readonly<{schemaVersion:1;migrationHead:typeof MIGRATION_ATTESTATION_HEAD;evidence:typeof MIGRATION_ATTESTATION_EVIDENCE}>;
 type IdentityVerifier=(token:string)=>Promise<{userId:string}|null>;
 
 /**
  * Reads the attestation row and a small core-schema contract through the
- * server-side service role. This proves the 0100 sentinel and the listed
+ * server-side service role. This proves the 0103 sentinel and the bounded 0101/0102 payment contract and the listed
  * booking/payment objects are present; it deliberately does NOT claim that
  * every historical migration is present or unmodified. Full-chain replay
  * remains a separate disposable-Postgres/CI evidence gate. No tenant,
@@ -33,6 +33,7 @@ export function createMigrationAttestationReader(pool:Pool):()=>Promise<Migratio
     resources:boolean;
     resourceReservations:boolean;
     confirmationAuthority:boolean;
+    paymentReadinessContract:boolean;
    }>(
     `select migration_head as "migrationHead"
           ,evidence
@@ -46,12 +47,13 @@ export function createMigrationAttestationReader(pool:Pool):()=>Promise<Migratio
           ,to_regclass('public.resources') is not null as "resources"
           ,to_regclass('public.resource_reservations') is not null as "resourceReservations"
           ,to_regprocedure('public.confirm_succeeded_payment(uuid)') is not null as "confirmationAuthority"
+          ,lumin.payment_readiness_contract() as "paymentReadinessContract"
        from public.booking_lumin_schema_attestation
       where id=true`,
    );
    const row=result.rows[0];
    if(row?.migrationHead!==MIGRATION_ATTESTATION_HEAD||row.evidence!==MIGRATION_ATTESTATION_EVIDENCE)throw new Error('MIGRATION_ATTESTATION_MISMATCH');
-   const coreSchema=[row.tenants,row.services,row.bookings,row.payments,row.availabilityRules,row.availabilityOverrides,row.capacityHolds,row.resources,row.resourceReservations,row.confirmationAuthority];
+   const coreSchema=[row.tenants,row.services,row.bookings,row.payments,row.availabilityRules,row.availabilityOverrides,row.capacityHolds,row.resources,row.resourceReservations,row.confirmationAuthority,row.paymentReadinessContract];
    if(coreSchema.some(value=>value!==true))throw new Error('MIGRATION_ATTESTATION_SCHEMA_MISMATCH');
    await client.query('commit');
    return Object.freeze({schemaVersion:1 as const,migrationHead:MIGRATION_ATTESTATION_HEAD,evidence:MIGRATION_ATTESTATION_EVIDENCE});
