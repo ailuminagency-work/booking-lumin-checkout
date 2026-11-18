@@ -18,6 +18,7 @@ export function PortalIcon({name}:{name:string}){return <svg width="18" height="
 export function PortalShell({children,tenantName,roleLabel,mode}:{children:ReactNode;tenantName:string;roleLabel?:string;mode:"demo"|"connected"}){
  const [navOpen,setNavOpen]=useState(false),toggle=useRef<HTMLButtonElement>(null);
  const path=useLocation().pathname;
+ const navigateFromDrawer=()=>{setNavOpen(false);if(navOpen)requestAnimationFrame(()=>document.getElementById('main-content')?.focus());};
  const title=NAV_ITEMS.find(item=>item.to==='/'?path==='/':path.startsWith(item.to))?.label??'Workspace';
  return <div className="shell booking-studio">
   <a className="skip-link" href="#main-content">Skip to content</a>
@@ -26,8 +27,8 @@ export function PortalShell({children,tenantName,roleLabel,mode}:{children:React
     <div className="sidebar-brand"><span className="sidebar-wordmark">Lumin<span className="brand-dot">.</span></span><small>Booking workspace</small></div>
     <button type="button" className="nav-close" onClick={()=>{setNavOpen(false);toggle.current?.focus();}}>Close menu <span aria-hidden="true">×</span></button>
     <p className="nav-section-label">WORKSPACE</p>
-    <ul>{NAV_ITEMS.filter(item=>item.to!=='/settings').map(item=><li key={item.to}><NavLink to={item.to} end={'end'in item?item.end:false} title={item.label} className={({isActive})=>isActive?'nav-link active':'nav-link'} onClick={()=>setNavOpen(false)}><PortalIcon name={item.glyph}/><span className="nav-label">{item.label}</span></NavLink></li>)}</ul>
-    <div className="sidebar-footer"><NavLink to="/settings" title="Settings" className={({isActive})=>isActive?'nav-link active':'nav-link'} onClick={()=>setNavOpen(false)}><PortalIcon name="settings"/><span className="nav-label">Settings</span></NavLink><div className="sidebar-identity"><span className="role-badge">{roleLabel??'Signed out'}</span><span className="sidebar-tenant" title={tenantName}>{tenantName}</span></div></div>
+    <ul>{NAV_ITEMS.filter(item=>item.to!=='/settings').map(item=><li key={item.to}><NavLink to={item.to} end={'end'in item?item.end:false} title={item.label} className={({isActive})=>isActive?'nav-link active':'nav-link'} onClick={navigateFromDrawer}><PortalIcon name={item.glyph}/><span className="nav-label">{item.label}</span></NavLink></li>)}</ul>
+    <div className="sidebar-footer"><NavLink to="/settings" title="Settings" className={({isActive})=>isActive?'nav-link active':'nav-link'} onClick={navigateFromDrawer}><PortalIcon name="settings"/><span className="nav-label">Settings</span></NavLink><div className="sidebar-identity"><span className="role-badge">{roleLabel??'Signed out'}</span><span className="sidebar-tenant" title={tenantName}>{tenantName}</span></div></div>
    </nav>
    <div className="workspace-frame">
     <header className="topbar"><button ref={toggle} type="button" className="nav-toggle" aria-expanded={navOpen} aria-controls="portal-nav" onClick={()=>{setNavOpen(v=>!v);if(!navOpen)requestAnimationFrame(()=>{if(toggle.current?.getAttribute('aria-expanded')==='true')document.querySelector<HTMLAnchorElement>('#portal-nav a')?.focus();});}}><svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" fill="none" strokeWidth="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Menu</span></button><div className="workspace-heading"><span className="topbar-brand">Booking Lumin</span><span className="workspace-divider" aria-hidden="true">/</span><span>{title}</span></div><span className="workspace-mode">{mode==='demo'?'Demo':'Connected workspace'}</span></header>
