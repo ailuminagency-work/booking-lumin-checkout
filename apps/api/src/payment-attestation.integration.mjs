@@ -9,9 +9,13 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0123_scoped_failure_receipt_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0125_success_receipt_facts_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['v2 closed version/facts removed','alter table payment_internal.event_receipts drop constraint event_receipts_version_facts_check'],
+ ['v2 received default inferred','alter table payment_internal.event_receipts alter column amount_received set default 0'],
+ ['v2 status service column read','grant select(intent_status) on payment_internal.event_receipts to service_role'],
+ ['v2 received service column write','grant update(amount_received) on payment_internal.event_receipts to service_role'],
  ['core arbitrary nonowner grant','create role synthetic_failure_core_reader; grant execute on function payment_internal.apply_payment_failure(uuid) to synthetic_failure_core_reader'],
  ["private failure core missing", "drop function payment_internal.apply_payment_failure(uuid)"],
  ["private failure core PUBLIC execute", "grant execute on function payment_internal.apply_payment_failure(uuid) to public"],
@@ -236,7 +240,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0121 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0121_legacy_financial_denial_attestation'"],
+  ['unexpanded 0123 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0123_scoped_failure_receipt_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
