@@ -100,6 +100,7 @@ TSX="${ROOT}/node_modules/.bin/tsx"
 status=0
 n=0
 for harness in \
+  src/provider-processing-authority.integration.mjs \
   src/pg-http.integration.ts \
   src/roster-http.integration.ts \
   src/phase-a-golden.integration.ts \
