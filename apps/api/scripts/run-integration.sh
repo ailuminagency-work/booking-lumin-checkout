@@ -106,6 +106,7 @@ for harness in \
   src/payment-request-envelope.integration.mjs \
   src/payment-event-receipts.integration.mjs \
   src/quarantined-receipt-crash.integration.mjs \
+  src/scoped-financial-denial.integration.mjs \
   src/payment-identity-cutover.integration.mjs \
   src/legacy-webhook-transaction.integration.mjs \
   src/payment-provenance.integration.mjs \
