@@ -16,7 +16,7 @@ beforeEach(async()=>{
  vi.resetModules();vi.clearAllMocks();
  fixture.parse.mockImplementation(async()=>fixture.event);
  fixture.db.mockImplementation(()=>({from:fixture.from,rpc:fixture.rpc}));
- fixture.rpc.mockResolvedValue({data:{result:'RECORDED',full:false},error:null});
+ fixture.rpc.mockResolvedValue({data:{received:true,refunded:true,full:false},error:null});
  fixture.amount.mockReturnValue(100);
  fixture.refund.mockReturnValue({refundedTotal:50,refundId:'re_fixture',isCumulative:false,isFullyRefunded:false});
  fixture.from.mockImplementation(()=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>fixture.lookup};return q;});
@@ -25,68 +25,22 @@ beforeEach(async()=>{
 });
 afterEach(()=>vi.unstubAllGlobals());
 async function deliver(){return fixture.handler(new Request('http://localhost/webhook',{method:'POST',headers:{'Stripe-Signature':'fixture-verified-by-mock'},body:'{}'}));}
-describe('Stripe webhook payment lookup outage',()=>{
- it.each(['payment_succeeded','payment_failed','refund_completed'])('does not acknowledge %s when payment read fails',async kind=>{
-  fixture.event={kind,intentId:'pi_test_outage',raw:{}};
-  fixture.lookup={data:null,error:{message:'private database detail'}};
-  const response=await deliver();expect(response.status).toBe(500);
-  expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'payment lookup failed'}});
-  expect(fixture.parse).toHaveBeenCalledTimes(1);expect(fixture.from).toHaveBeenCalledExactlyOnceWith('payments');expect(fixture.rpc).not.toHaveBeenCalled();
+describe('legacy-only transactional webhook boundary',()=>{
+ it.each(['payment_succeeded','payment_failed','refund_completed'])('retries database error for %s without lookup',async kind=>{
+  fixture.event={kind,intentId:'pi_fixture',raw:{}};fixture.rpc.mockResolvedValue({data:null,error:{message:'private database detail'}});
+  const response=await deliver();expect(response.status).toBe(500);expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'processing error'}});expect(fixture.from).not.toHaveBeenCalled();expect(fixture.rpc).toHaveBeenCalledTimes(1);
  });
- it.each(['payment_succeeded','payment_failed','refund_completed'])('retries missing payment for %s without side effects',async kind=>{
-  fixture.event={kind,intentId:'pi_test_missing',raw:{}};fixture.lookup={data:null,error:null};
-  const response=await deliver();expect(response.status).toBe(503);
-  expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'payment is not available yet'}});
-  expect(fixture.from).toHaveBeenCalledExactlyOnceWith('payments');expect(fixture.rpc).not.toHaveBeenCalled();
+ it.each(['payment_succeeded','payment_failed','refund_completed'])('missing or scoped %s stays retryable',async kind=>{
+  fixture.event={kind,intentId:'pi_fixture',raw:{}};fixture.rpc.mockResolvedValue({data:{result:'UNAVAILABLE'},error:null});const response=await deliver();expect(response.status).toBe(503);expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'payment is not available yet'}});expect(fixture.from).not.toHaveBeenCalled();
  });
- it.each(['pi_irrelevant',null])('acknowledges irrelevant verified event without database access (%s)',async intentId=>{
-  fixture.event={kind:'unrecognized',intentId,raw:{}};
-  const response=await deliver();expect(response.status).toBe(200);expect(await response.json()).toEqual({received:true,ignored:'unrecognized'});
-  expect(fixture.parse).toHaveBeenCalledTimes(1);expect(fixture.db).not.toHaveBeenCalled();expect(fixture.from).not.toHaveBeenCalled();expect(fixture.rpc).not.toHaveBeenCalled();
+ it.each(['payment_succeeded','payment_failed','refund_completed'])('missing intent %s retries without DB',async kind=>{fixture.event={kind,intentId:null,raw:{}};expect((await deliver()).status).toBe(503);expect(fixture.db).not.toHaveBeenCalled();});
+ it.each(['pi_irrelevant',null])('irrelevant verified event has no database access %s',async intentId=>{fixture.event={kind:'unrecognized',intentId,raw:{}};expect(await(await deliver()).json()).toEqual({received:true,ignored:'unrecognized'});expect(fixture.db).not.toHaveBeenCalled();});
+ it('bad signature never reaches database',async()=>{fixture.parse.mockRejectedValue(Error('private signature detail'));expect((await deliver()).status).toBe(400);expect(fixture.db).not.toHaveBeenCalled();});
+ it.each(['payment_succeeded','payment_failed','refund_completed'])('healthy redelivery %s uses one atomic RPC',async kind=>{
+  fixture.event={kind,intentId:'pi_fixture',raw:{synthetic:true}};fixture.rpc.mockResolvedValueOnce({data:{result:'UNAVAILABLE'},error:null});expect((await deliver()).status).toBe(503);fixture.rpc.mockResolvedValueOnce({data:{received:true},error:null});expect((await deliver()).status).toBe(200);
+  expect(fixture.rpc).toHaveBeenLastCalledWith('process_legacy_payment_webhook',{p_provider_intent_id:'pi_fixture',p_kind:kind,p_observed_amount:kind==='payment_succeeded'?100:kind==='refund_completed'?50:null,p_refund_id:kind==='refund_completed'?'re_fixture':null,p_is_cumulative:false});expect(fixture.from).not.toHaveBeenCalled();
  });
- it.each(['payment_succeeded','payment_failed','refund_completed'])('processes healthy redelivery of %s when the payment arrives',async kind=>{
-  fixture.event={kind,intentId:'pi_test_late',raw:{}};fixture.lookup={data:null,error:null};
-  expect((await deliver()).status).toBe(503);expect(fixture.rpc).not.toHaveBeenCalled();
-  fixture.lookup={data:{id:'payment-test',state:kind==='payment_failed'?'requires_payment':'processing',amount:100},error:null};
-  if(kind==='payment_failed')fixture.rpc.mockResolvedValueOnce({data:{result:'FAILED'},error:null});
-  const response=await deliver();expect(response.status).toBe(200);
-  const body=await response.json();expect(body.received).toBe(true);
-  if(kind==='payment_succeeded'){expect(body.confirmed).toBe(false);expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('succeed_payment_webhook',{p_payment_id:'payment-test',p_observed_amount:100});}
-  if(kind==='payment_failed'){expect(body.failed).toBe(true);expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('fail_payment_webhook',{p_payment_id:'payment-test'});}
-  if(kind==='refund_completed'){expect(body.refunded).toBe(true);expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('record_refund_webhook',{p_payment_id:'payment-test',p_provider_refund_id:'re_fixture',p_refunded_total:50,p_is_fully_refunded:false,p_is_cumulative:false});}
- });
- it('healthy redelivery preserves an already parked payment after the outage',async()=>{
-  fixture.event={kind:'payment_succeeded',intentId:'pi_test_retry',raw:{}};
-  fixture.lookup={data:null,error:{message:'database unavailable'}};
-  expect((await deliver()).status).toBe(500);
-  fixture.lookup={data:{id:'payment-test',state:'processing'},error:null};
-  fixture.rpc.mockResolvedValueOnce({data:{result:'IGNORED'},error:null});
-  const response=await deliver();expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({received:true,confirmed:false});
-  expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('succeed_payment_webhook',{p_payment_id:'payment-test',p_observed_amount:100});
- });
- it('still rejects unverified deliveries before database access',async()=>{
-  fixture.parse.mockRejectedValueOnce(Error('bad signature'));const response=await deliver();expect(response.status).toBe(400);expect(fixture.from).not.toHaveBeenCalled();
- });
-});
-
-describe('database-authoritative processing delivery',()=>{
- it.each(['requires_payment','processing','succeeded','failed','refunded','partially_refunded'])('delegates success despite stale routing state %s',async state=>{
-  fixture.event={kind:'payment_succeeded',intentId:'pi_fixture',raw:{}};fixture.lookup={data:{id:'payment-test',state},error:null};
-  fixture.rpc.mockResolvedValueOnce({data:{result:'CONFIRMED',replayed:false},error:null});
-  const response=await deliver();expect(await response.json()).toEqual({received:true,confirmed:true,replayed:false});
-  expect(fixture.from).toHaveBeenCalledExactlyOnceWith('payments');expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('succeed_payment_webhook',{p_payment_id:'payment-test',p_observed_amount:100});
- });
- it.each(['processing','succeeded','refunded'])('delegates failure despite stale routing state %s',async state=>{
-  fixture.event={kind:'payment_failed',intentId:'pi_fixture',raw:{}};fixture.lookup={data:{id:'payment-test',state},error:null};
-  fixture.rpc.mockResolvedValueOnce({data:{result:'IGNORED'},error:null});expect((await deliver()).status).toBe(200);expect(fixture.rpc).toHaveBeenCalledExactlyOnceWith('fail_payment_webhook',{p_payment_id:'payment-test'});
- });
- it.each(['amount_mismatch','capacity_oversold'])('returns authoritative park %s without refund',async reason=>{
-  fixture.event={kind:'payment_succeeded',intentId:'pi_fixture',raw:{}};fixture.lookup={data:{id:'payment-test',state:'processing'},error:null};
-  fixture.rpc.mockResolvedValueOnce({data:{result:'PARKED',reason},error:null});expect(await (await deliver()).json()).toEqual({received:true,confirmed:false,parked:reason});expect(fixture.refund).not.toHaveBeenCalled();
- });
- it.each([{data:null,error:{code:'55P03'}},{data:null,error:null},{data:{result:'NOT_FOUND'},error:null}])('retries RPC failure or disappearing anchor',async result=>{
-  fixture.event={kind:'payment_succeeded',intentId:'pi_fixture',raw:{}};fixture.lookup={data:{id:'payment-test',state:'processing'},error:null};fixture.rpc.mockResolvedValueOnce(result);
-  expect((await deliver()).status).toBe(500);
- });
+ it.each([{received:true,confirmed:true,replayed:false},{received:true,confirmed:true,replayed:true},{received:true,confirmed:false},{received:true,confirmed:false,parked:'amount_mismatch'},{received:true,confirmed:false,parked:'capacity_oversold'},{received:true,failed:true},{received:true,failed:false,note:'ignored stale failure'},{received:true,refunded:true,full:true},{received:true,refunded:false,full:false,note:'refund amount unavailable'}])('returns authoritative response unchanged %j',async data=>{fixture.event={kind:'payment_succeeded',intentId:'pi_fixture',raw:{}};fixture.rpc.mockResolvedValue({data,error:null});expect(await(await deliver()).json()).toEqual(data);expect(fixture.refund).not.toHaveBeenCalled();});
+ it.each([null,{}, {result:'NOT_FOUND'}])('invalid RPC result %j cannot acknowledge',async data=>{fixture.event={kind:'payment_succeeded',intentId:'pi_fixture',raw:{}};fixture.rpc.mockResolvedValue({data,error:null});expect((await deliver()).status).toBe(500);});
+ it.each([null,0,-1,30,100])('refund amount %s passes shape only, never helper full flag',async amount=>{fixture.event={kind:'refund_completed',intentId:'pi_fixture',raw:{synthetic:true}};fixture.refund.mockReturnValue({refundedTotal:amount,refundId:null,isCumulative:true,isFullyRefunded:true});expect((await deliver()).status).toBe(200);expect(fixture.refund).toHaveBeenCalledWith(fixture.event.raw,0);expect(fixture.rpc).toHaveBeenCalledWith('process_legacy_payment_webhook',{p_provider_intent_id:'pi_fixture',p_kind:'refund_completed',p_observed_amount:amount,p_refund_id:null,p_is_cumulative:true});expect(fixture.from).not.toHaveBeenCalled();});
 });

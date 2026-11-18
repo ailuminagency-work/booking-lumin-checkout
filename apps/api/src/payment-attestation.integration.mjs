@@ -9,9 +9,21 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0115_payment_provenance_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0117_legacy_webhook_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ["legacy webhook absent", "drop function public.process_legacy_payment_webhook(text,text,bigint,text,boolean)"],
+ ["legacy webhook client grant", "grant execute on function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) to anon"],
+ ["legacy webhook service revoked", "revoke execute on function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) from service_role"],
+ ["legacy webhook invoker", "alter function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) security invoker"],
+ ["legacy webhook path", "alter function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) set search_path=public"],
+ ["legacy webhook stable", "alter function public.process_legacy_payment_webhook(text,text,bigint,text,boolean) stable"],
+ ["refund dependency absent", "drop function public.record_refund_webhook(uuid,text,bigint,boolean,boolean)"],
+ ["refund dependency client grant", "grant execute on function public.record_refund_webhook(uuid,text,bigint,boolean,boolean) to anon"],
+ ["refund dependency service revoked", "revoke execute on function public.record_refund_webhook(uuid,text,bigint,boolean,boolean) from service_role"],
+ ["refund dependency invoker", "alter function public.record_refund_webhook(uuid,text,bigint,boolean,boolean) security invoker"],
+ ["refund dependency path", "alter function public.record_refund_webhook(uuid,text,bigint,boolean,boolean) set search_path=public"],
+ ["refund dependency stable", "alter function public.record_refund_webhook(uuid,text,bigint,boolean,boolean) stable"],
  ["scoped writer missing", "drop function payment_internal.record_scoped_payment_observation(uuid,text) cascade"],
  ["scoped writer client grant", "grant execute on function payment_internal.record_scoped_payment_observation(uuid,text) to anon"],
  ["scoped writer invoker", "alter function payment_internal.record_scoped_payment_observation(uuid,text) security invoker"],
@@ -180,7 +192,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0113 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0113_legacy_payment_writer_attestation'"],
+  ['unexpanded 0115 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0115_payment_provenance_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],
