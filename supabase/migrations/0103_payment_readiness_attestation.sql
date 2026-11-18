@@ -41,7 +41,7 @@ select coalesce(
        from pg_catalog.pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped) is distinct from columns_hash
    -- PG18 adds NOT NULL catalog constraints; attnotnull above covers these on
    -- all supported versions, so exclude their representation from this digest.
-   or (select md5(string_agg(pg_get_constraintdef(k.oid),',' order by pg_get_constraintdef(k.oid)))
+   or (select md5(string_agg(pg_get_constraintdef(k.oid),',' order by pg_get_constraintdef(k.oid) collate "C"))
        from pg_catalog.pg_constraint k where k.conrelid=c.oid and k.contype<>'n') is distinct from constraints_hash
    or exists(select 1 from pg_catalog.pg_constraint k where k.conrelid=c.oid and not k.convalidated)
    or exists(select 1 from unnest(array['anon','authenticated']) r,
