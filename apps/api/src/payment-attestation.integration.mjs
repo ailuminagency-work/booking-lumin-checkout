@@ -9,7 +9,7 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0133_owner_attention_acknowledgment_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0135_refund_receipt_facts_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
  ["attention list unexpected role grant", "create role synthetic_attention_reader; grant execute on function payment_internal.list_payment_attention(uuid,timestamptz,uuid,integer) to synthetic_attention_reader"],
@@ -256,6 +256,22 @@ changes.push(
  ['ack function foreign grant','create role ack_foreign;grant execute on function payment_internal.acknowledge_payment_attention(uuid,uuid,uuid) to ack_foreign'],
  ['ack body replaced',"create or replace function payment_internal.acknowledge_payment_attention(p_actor uuid,p_selected_tenant uuid,p_receipt uuid) returns jsonb language plpgsql security definer set search_path='' as $$begin return '{}'::jsonb;end$$"],
  ['ack owner helper replaced',"create or replace function lumin.flow_actor(p_actor uuid,p_tenant uuid,p_owner boolean) returns void language plpgsql security definer set search_path=pg_catalog as $$begin return;end$$"]
+);
+
+changes.push(
+ ['refund amount constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_refund_amount_check'],
+ ['refund status constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_refund_status_check'],
+ ['charge ID constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_charge_id_check'],
+ ['refund ID constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_refund_id_check'],
+ ['charge amount constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_charge_amount_check'],
+ ['charge captured amount constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_charge_amount_captured_check'],
+ ['charge cumulative constraint absent','alter table payment_internal.event_receipts drop constraint event_receipts_charge_amount_refunded_check'],
+ ['refund status default inferred',"alter table payment_internal.event_receipts alter refund_status set default 'succeeded'"],
+ ['refund amount default inferred','alter table payment_internal.event_receipts alter refund_amount set default 0'],
+ ['refund service column read','grant select(refund_status) on payment_internal.event_receipts to service_role'],
+ ['refund service column write','grant update(refund_amount) on payment_internal.event_receipts to service_role'],
+ ['refund recorder foreign execute','create role refund_foreign;grant execute on function payment_internal.record_quarantined_event(jsonb) to refund_foreign'],
+ ['refund recorder delegable execute','grant execute on function payment_internal.record_quarantined_event(jsonb) to service_role with grant option']
 );
 
 try{
