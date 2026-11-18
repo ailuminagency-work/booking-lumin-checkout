@@ -9,19 +9,21 @@ insert into public.tenants(id,name,slug,timezone,currency) values
 insert into public.payment_connections(tenant_id,provider,status,account_id,charges_enabled) values
 (pg_temp.id(1),'stripe_connect','connected','acct_intentAAA',true),(pg_temp.id(2),'stripe_connect','connected','acct_intentBBB',true);
 insert into public.bookings(id,tenant_id,reference,slot_start,slot_end,idempotency_key)
-select pg_temp.id(n),pg_temp.id(case when n=24 then 2 else 1 end),'INTENT'||n,now(),now()+interval '1 hour','intent-request-booking-'||n from generate_series(20,25) n;
+select pg_temp.id(n),pg_temp.id(case when n=24 then 2 else 1 end),'INTENT'||n,now(),now()+interval '1 hour','intent-request-booking-'||n from generate_series(20,27) n;
 create temp table fixture(n int primary key,attempt uuid);
 grant select on fixture to service_role;
 insert into fixture select n,(public.bind_booking_payment_source(pg_temp.id(case when n=24 then 2 else 1 end),pg_temp.id(n),
- (public.register_payment_source_scope(pg_temp.id(case when n=24 then 2 else 1 end),'acct_platformA',n=23)).id)).id from generate_series(20,25) n;
+ (public.register_payment_source_scope(pg_temp.id(case when n=24 then 2 else 1 end),'acct_platformA',n=23)).id)).id from generate_series(20,27) n;
 select pg_temp.assert(not has_table_privilege(r,t,v),'no direct ledger access') from unnest(array['anon','authenticated','service_role']) r,
 unnest(array['public.payment_attempt_requests','public.payment_attempt_intents']) t,unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE']) v;
 select pg_temp.assert(relrowsecurity and relforcerowsecurity,'forced RLS') from pg_class where oid in('public.payment_attempt_requests'::regclass,'public.payment_attempt_intents'::regclass);
 select pg_temp.assert(count(*)=0,'no policies') from pg_policy where polrelid in('public.payment_attempt_requests'::regclass,'public.payment_attempt_intents'::regclass);
 set local role anon;
 select pg_temp.reject($q$select public.snapshot_payment_attempt_request(null,null,100,'USD')$q$,'permission denied');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(null,null,'x',null,null,false,100,'USD')$q$,'permission denied');
 reset role;
 set local role authenticated;
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(null,null,100,'USD')$q$,'permission denied');
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(null,null,'x',null,null,false,100,'USD')$q$,'permission denied');
 reset role;
 set local role service_role;
@@ -31,7 +33,18 @@ select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.
 select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),9007199254740992,'USD')$q$,'INVALID_PAYMENT_REQUEST');
 select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'usd')$q$,'INVALID_PAYMENT_REQUEST');
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,100,'USD')$q$,'PAYMENT_REQUEST_REQUIRED');
-select public.snapshot_payment_attempt_request(pg_temp.id(case when n=24 then 2 else 1 end),attempt,100,'USD') from fixture where n<>25;
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),null,'USD')$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),-1,'USD')$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,null)$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'US')$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'USD ')$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'USDD')$q$,'INVALID_PAYMENT_REQUEST');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),null,'acct_platformA','acct_intentAAA',false,100,'USD')$q$,'INVALID_PAYMENT_INTENT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'','acct_platformA','acct_intentAAA',false,100,'USD')$q$,'INVALID_PAYMENT_INTENT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),' pi_whitespace','acct_platformA','acct_intentAAA',false,100,'USD')$q$,'INVALID_PAYMENT_INTENT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),repeat('x',256),'acct_platformA','acct_intentAAA',false,100,'USD')$q$,'INVALID_PAYMENT_INTENT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),E'pi\ncontrol','acct_platformA','acct_intentAAA',false,100,'USD')$q$,'INVALID_PAYMENT_INTENT');
+select public.snapshot_payment_attempt_request(pg_temp.id(case when n=24 then 2 else 1 end),attempt,100,'USD') from fixture where n not in(25,26);
 select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'USD');
 select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),101,'USD')$q$,'PAYMENT_REQUEST_CONFLICT');
 select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=20),100,'EUR')$q$,'PAYMENT_REQUEST_CONFLICT');
@@ -42,6 +55,8 @@ select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',true,100,'USD')$q$,'PAYMENT_SOURCE_CONFLICT');
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,101,'USD')$q$,'PAYMENT_REQUEST_CONFLICT');
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,100,'EUR')$q$,'PAYMENT_REQUEST_CONFLICT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,null,'USD')$q$,'PAYMENT_REQUEST_CONFLICT');
+select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,100,null)$q$,'PAYMENT_REQUEST_CONFLICT');
 select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,100,'USD');
 select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_same','acct_platformA','acct_intentAAA',false,100,'USD');
 select pg_temp.reject($q$select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=20),'pi_changed','acct_platformA','acct_intentAAA',false,100,'USD')$q$,'PAYMENT_INTENT_CONFLICT');
@@ -54,6 +69,15 @@ select pg_temp.assert(count(*)=3,'three scoped associations, not global intent c
 select pg_temp.reject($q$update public.payment_attempt_requests set amount=102$q$,'PAYMENT_SOURCE_IMMUTABLE');
 select pg_temp.reject($q$delete from public.payment_attempt_intents$q$,'PAYMENT_SOURCE_IMMUTABLE');
 update public.payment_connections set status='revoked',charges_enabled=false,blocked_reason='credentials_invalid' where tenant_id=pg_temp.id(1);
+update public.bookings set state='failed' where id in(pg_temp.id(26),pg_temp.id(27));
+set local role service_role;
+select pg_temp.reject($q$select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=26),100,'USD')$q$,'PAYMENT_SOURCE_LEGACY_OR_TERMINAL');
+-- Previously snapshotted facts remain retrievable by exact replay; recording an
+-- observed intent after failure/revocation is not permission to charge again.
+select public.snapshot_payment_attempt_request(pg_temp.id(1),(select attempt from fixture where n=27),100,'USD');
+select public.associate_payment_attempt_intent(pg_temp.id(1),(select attempt from fixture where n=27),'pi_terminal_observation','acct_platformA','acct_intentAAA',false,100,'USD');
+reset role;
+select pg_temp.assert(state='failed','observation never revives terminal booking') from public.bookings where id=pg_temp.id(27);
 update public.payment_connections set account_id='acct_reconnectA',status='connected',charges_enabled=true,blocked_reason=null where tenant_id=pg_temp.id(1);
 set local role service_role;
 -- Observation of original attempt remains valid after reconnect, never re-routed.
