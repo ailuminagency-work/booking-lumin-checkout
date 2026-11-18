@@ -26,6 +26,8 @@ jobs:
         run: |
           node scripts/validate-staging-frontend-config.test.mjs
           node scripts/validate-staging-frontend-config.mjs --self-test
+      - name: Read-only portal release smoke safety regressions
+        run: node --test scripts/portal-release-smoke.test.mjs
       - name: Hosted readiness preflight safety regressions
         run: npm run readiness:phase-a:self-test
       - name: Mock-only staging observability verifier regressions
