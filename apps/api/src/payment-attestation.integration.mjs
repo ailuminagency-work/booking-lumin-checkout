@@ -9,9 +9,16 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0111_payment_receipt_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0113_legacy_payment_writer_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['legacy recording RPC missing','drop function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text)'],
+ ['legacy RPC client grant','grant execute on function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) to anon'],
+ ['legacy RPC service revoked','revoke execute on function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) from service_role'],
+ ['legacy RPC invoker','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) security invoker'],
+ ['legacy RPC path','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) set search_path=public'],
+ ['legacy RPC stable','alter function public.record_legacy_payment_observation(uuid,uuid,text,text,bigint,text) stable'],
+ ['global intent uniqueness removed','alter table public.payments drop constraint payments_provider_provider_intent_id_key'],
  ['receipt event identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_id_check'],
  ['receipt intent identifier constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_intent_id_check'],
  ['receipt supported type constraint removed','alter table payment_internal.event_receipts drop constraint event_receipts_event_type_check'],
@@ -153,7 +160,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0109 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0109_payment_envelope_attestation'"],
+  ['unexpanded 0111 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0111_payment_receipt_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],

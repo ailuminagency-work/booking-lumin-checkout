@@ -1,0 +1,45 @@
+// Synthetic local PostgreSQL evidence, never provider capture evidence.
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import pg from 'pg';
+if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^lumin_/.test(process.env.PGDATABASE??'')) throw Error('Disposable loopback database required');
+for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS']) if(process.env[k]) throw Error(`Unexpected ${k}`);
+const config={host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,statement_timeout:5000};
+const db=new pg.Client(config), a=new pg.Client(config),b=new pg.Client(config);await Promise.all([db.connect(),a.connect(),b.connect()]);
+let passed=0;const ok=label=>{passed++;console.log('PASS',label)};
+async function seed(state='processing',hold='active'){
+ const t=randomUUID(),s=randomUUID(),booking=randomUUID(),payment=randomUUID();
+ await db.query("insert into tenants(id,name,slug,timezone,currency) values($1::uuid,'Synthetic processing authority',$1::uuid::text,'UTC','USD')",[t]);
+ await db.query("insert into services(id,tenant_id,name,archetype,currency,base_price,duration_minutes) values($1::uuid,$2,'Test','simple','USD',100,60)",[s,t]);
+ await db.query(`insert into bookings(id,tenant_id,reference,idempotency_key,selection,pricing,slot_start,slot_end,state) values($1::uuid,$2,$1::uuid::text,$1::uuid::text,$3,'{"total":{"amount":100,"currency":"USD"}}','2035-05-01T10:00Z','2035-05-01T11:00Z','pending_payment')`,[booking,t,JSON.stringify({serviceId:s})]);
+ await db.query("insert into payments(id,tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1::uuid,$2,$3,'stripe_connect',$1::uuid::text,$4,100,'USD')",[payment,t,booking,state]);
+ if(hold!=='missing')await db.query("insert into capacity_holds(tenant_id,service_id,booking_id,slot_start,slot_end,hold_key,status,expires_at) values($1::uuid,$2,$3,'2035-05-01T10:00Z','2035-05-01T11:00Z',$3::uuid::text,$4,clock_timestamp()+$5::interval)",[t,s,booking,hold==='expired'?'active':hold,hold==='expired'?'-1 minute':'10 minutes']);
+ return {t,s,booking,payment};
+}
+const record=async(c,f,state='requires_payment',extra={})=>{const x={tenant:f.t,booking:f.booking,intent:f.payment,amount:100,currency:'USD',...extra};return(await c.query('select public.record_legacy_payment_observation($1,$2,$3,$4,$5,$6) result',[x.tenant,x.booking,x.intent,state,x.amount,x.currency])).rows[0].result;};
+const payment=async f=>(await db.query("select * from payments where provider='stripe_connect' and provider_intent_id=$1",[f.payment])).rows[0];
+const financial=(c,name,f)=>name==='park'?c.query("select public.park_payment_webhook($1,'amount_mismatch',99)",[f.payment]):c.query(`select public.${name}_payment_webhook($1${name==='succeed'?',100':''})`,[f.payment]);
+const pid=async c=>(await c.query('select pg_backend_pid() pid')).rows[0].pid;
+async function waitLock(id){for(let i=0;i<150;i++){if((await db.query('select wait_event_type from pg_stat_activity where pid=$1',[id])).rows[0]?.wait_event_type==='Lock')return;await new Promise(r=>setTimeout(r,20));}throw Error('contender did not block');}
+const oldUpsert=(c,f,state)=>c.query("insert into public.payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1,$2,'stripe_connect',$3,$4,100,'USD') on conflict(provider,provider_intent_id) do nothing",[f.t,f.booking,f.payment,state]);
+try{
+ await a.query('set role service_role');await b.query('set role service_role');
+ for(const state of ['requires_payment','processing','succeeded','failed','refunded','partially_refunded']){
+  const f=await seed(state),before=await payment(f);assert.equal((await record(a,f)).state,state);assert.deepEqual(await payment(f),before);ok('existing '+state+' preserved byte-for-byte');
+  const n=await seed();await db.query('delete from payments where id=$1',[n.payment]);assert.equal((await record(a,n,state)).state,state);assert.equal((await payment(n)).state,state);assert.equal((await db.query('select state from bookings where id=$1',[n.booking])).rows[0].state,'pending_payment');ok('new '+state+' observation commits without booking effects');
+ }
+ for(const name of ['succeed','fail','park']){
+  const f=await seed('requires_payment');await a.query('begin');await financial(a,name,f);const bp=await pid(b),pending=record(b,f);await waitLock(bp);await a.query('commit');const observed=await pending;assert.equal(observed.state,name==='succeed'?'succeeded':name==='fail'?'failed':'processing');ok(name+' wins gated concurrent recorder, advanced state retained');
+  const g=await seed('requires_payment');await a.query('begin');await record(a,g);const pidB=await pid(b),next=financial(b,name,g);await waitLock(pidB);await a.query('commit');await next;assert.equal((await payment(g)).state,name==='succeed'?'succeeded':name==='fail'?'failed':'processing');ok('recorder wins gated '+name+' without deadlock or regression');
+ }
+ {const f=await seed();await a.query('begin');await a.query('select 1 from payments where id=$1 for update',[f.payment]);const bp=await pid(b),pending=record(b,f);await waitLock(bp);await a.query('select 1 from bookings where id=$1 for update nowait',[f.booking]);await a.query('commit');await pending;ok('existing-row recorder waits on payment before explicit booking lock');}
+ // New INSERT still waits on FK's booking KEY SHARE; compare old SQL path.
+ for(const oldPath of [false,true]){const f=await seed();await db.query('delete from payments where id=$1',[f.payment]);await a.query('begin');await a.query('select 1 from bookings where id=$1 for update',[f.booking]);const ap=await pid(a),bp=await pid(b),pending=oldPath?oldUpsert(b,f,'processing'):record(b,f,'processing');await waitLock(bp);assert.ok((await db.query('select pg_blocking_pids($1) blockers',[bp])).rows[0].blockers.includes(ap));assert.equal(await payment(f),undefined);await a.query('commit');await pending;assert.equal((await payment(f)).state,'processing');ok('new insert FK contention matches old path='+oldPath);}
+ for(const oldFirst of [true,false]){const f=await seed();await db.query('delete from payments where id=$1',[f.payment]);await a.query('begin');if(oldFirst)await oldUpsert(a,f,'succeeded');else await record(a,f,'processing');const bp=await pid(b),pending=oldFirst?record(b,f):oldUpsert(b,f,'requires_payment');await waitLock(bp);await a.query('commit');await pending;assert.equal((await payment(f)).state,oldFirst?'succeeded':'processing');assert.equal((await db.query('select count(*) n from payments where provider_intent_id=$1',[f.payment])).rows[0].n,'1');ok('old two-column upsert compatibility, oldFirst='+oldFirst);}
+ {const f=await seed();await db.query('delete from payments where id=$1',[f.payment]);const results=await Promise.all([record(a,f,'processing'),record(b,f,'requires_payment')]);assert.equal(results[0].state,results[1].state);ok('simultaneous new writers converge without overwrite');}
+ {const f=await seed(),other=await seed();const before=await payment(f);for(const change of [{tenant:other.t},{booking:other.booking},{amount:101},{currency:'EUR'}])await assert.rejects(record(a,f,'requires_payment',change),/PAYMENT_RECORDING_CONFLICT/);assert.deepEqual(await payment(f),before);ok('foreign identity/money replay conflicts preserve original');const unknown='new-'+randomUUID();await assert.rejects(record(a,f,'requires_payment',{tenant:other.t,intent:unknown}),/PAYMENT_RECORDING_CONFLICT/);assert.equal((await db.query('select count(*) n from payments where provider_intent_id=$1',[unknown])).rows[0].n,'0');ok('new mismatched booking tenant rolls insertion back');}
+ {const f=await seed();for(const args of [{amount:0},{amount:-1},{currency:'usd'},{intent:' '}])await assert.rejects(record(a,f,'requires_payment',args),/INVALID_PAYMENT_RECORDING/);await assert.rejects(record(a,f,'unrecognized'),/INVALID_PAYMENT_RECORDING/);ok('invalid input fails closed');}
+ for(const role of ['anon','authenticated']){const f=await seed();await db.query('begin');await db.query(`set local role ${role}`);await assert.rejects(record(db,f),e=>e.code==='42501');await db.query('rollback');ok(role+' denied');}
+ {const f=await seed();await db.query("insert into payments(tenant_id,booking_id,provider,provider_intent_id,state,amount,currency) values($1,$2,'staging_mock',$3,'succeeded',100,'USD') on conflict(provider,provider_intent_id) do nothing",[f.t,f.booking,f.payment]);assert.equal((await db.query("select count(*) n from payments where provider_intent_id=$1",[f.payment])).rows[0].n,'2');ok('mock provider retains old global-key behavior');}
+ console.log(`${passed} actual PostgreSQL legacy recording checks passed; no provider calls`);
+}finally{await Promise.all([a.query('rollback').catch(()=>{}),b.query('rollback').catch(()=>{})]);await Promise.all([db.end(),a.end(),b.end()]);}
