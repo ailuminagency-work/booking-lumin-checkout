@@ -4,7 +4,7 @@ import {readReleaseMetadata,serveReleaseMetadata,type ReleaseEnvironment} from '
 import {createFlowHttpServer} from './http';
 
 const sha='0123456789abcdef0123456789abcdef01234567';
-const migrationHead='0098_refund_event_shape_authority';
+const migrationHead='0099_migration_attestation';
 const owner='https://portal.staging.example.test';
 describe('safe optional release metadata',()=>{
  it.each(['staging','demo','production'] as const)('allows exact %s only',environment=>{
@@ -70,4 +70,3 @@ describe('public release HTTP boundary',()=>{
   const foreign=await fetch(base+'/version',{method:'OPTIONS',headers:{origin:'https://foreign.example','access-control-request-method':'GET'}});expect(foreign.status).toBe(403);expect(call).not.toHaveBeenCalled();
  });
 });
-
