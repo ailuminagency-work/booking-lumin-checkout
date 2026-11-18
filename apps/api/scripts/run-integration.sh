@@ -109,6 +109,7 @@ for harness in \
   src/success-receipt-v2-upgrade.integration.mjs \
   src/success-receipt-facts-v2.integration.mjs \
   src/scoped-failure-crash.integration.mjs \
+  src/scoped-success-crash.integration.mjs \
   src/owner-payment-attention.integration.mjs \
   src/late-success-resource-release.integration.mjs \
   src/scoped-success-receipts.integration.mjs \
