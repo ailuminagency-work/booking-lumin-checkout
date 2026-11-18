@@ -39,7 +39,7 @@ try {
     [other, id(22), id(32), 'LMN-CCC333', 2],
   ] as Array<[string, string, string, string, number]>) {
     await pool.query(
-      "insert into public.bookings(id,tenant_id,reference,state,selection,pricing,slot_start,slot_end,idempotency_key) values($1,$2,$3,'confirmed','{}','{}',now()+interval '1 day',now()+interval '1 day 1 hour',$4)",
+      "insert into public.bookings(id,tenant_id,reference,state,selection,pricing,slot_start,slot_end,idempotency_key) values($1,$2,$3,'pending_payment','{}','{}',now()+interval '1 day',now()+interval '1 day 1 hour',$4)",
       [b, t, ref, 'parked-review-fixture-' + ref],
     );
     await pool.query(
@@ -50,9 +50,15 @@ try {
       `insert into public.payment_reviews(payment_id,tenant_id,booking_id,reason,provider,provider_intent_id,expected_amount,observed_amount,currency,status,resolved_at,resolution_note)
        values($1,$2,$3,$4,'stripe_connect',$5,12500,$6,'USD',$7,$8,$9)`,
       [p, t, b, n === 1 ? 'capacity_oversold' : 'amount_mismatch', 'pi_' + ref,
-        n === 1 ? null : 12000, n === 2 ? 'resolved_honoured' : 'open', n === 2 ? new Date() : null,
-        n === 2 ? 'honoured by hand' : null],
+        n === 1 ? null : 12000, 'open', null, null],
     );
+    if (n === 2) {
+      // Synthetic human-resolution fixture: evidence is recorded while open,
+      // before the terminal outcome. This is reader coverage, not payment proof.
+      await pool.query("update public.payments set state='succeeded' where id=$1", [p]);
+      await pool.query("update public.bookings set state='confirmed',payment_id=$2 where id=$1", [b, p]);
+      await pool.query("update public.payment_reviews set status='resolved_honoured',resolved_at=now(),resolution_note='honoured by hand' where payment_id=$1", [p]);
+    }
   }
 
   const read = createOwnerPaymentReviewsReader(pool);
