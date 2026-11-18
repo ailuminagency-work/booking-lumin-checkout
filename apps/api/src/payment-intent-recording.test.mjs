@@ -47,9 +47,6 @@ describe('create intent persistence authority',()=>{
   ['missing intent id',{intentId:undefined}],
   ['numeric intent id',{intentId:123}],
   ['blank intent id',{intentId:'  '}],
-  ['missing token',{clientToken:null}],
-  ['numeric token',{clientToken:123}],
-  ['blank token',{clientToken:'\t '}],
   ['unknown state',{state:'mystery'}],
  ])('rejects %s before payment persistence or capability disclosure',async(_label,change)=>{
   f.payment={...authoritative(),reviewEvidence:'keep'};const before={...f.payment};
@@ -68,5 +65,20 @@ describe('create intent persistence authority',()=>{
   const response=await request();expect(response.status).toBe(200);
   expect(await response.json()).toEqual({clientSecret:'opaque-token',publishableKey:'fixture-only'});
   expect(f.payment.provider_intent_id).toBe('opaque-id');
+ });
+ it.each(['processing','succeeded','failed','refunded','partially_refunded'].flatMap(state=>[false,true].flatMap(existing=>[undefined,null,''].map(clientToken=>({state,existing,clientToken})))))('recovers valid $state financial anchor without frontend token (existing=$existing, token=$clientToken)',async({state,existing,clientToken})=>{
+  if(existing)f.payment={...authoritative(state),reviewEvidence:'keep'};
+  const before=f.payment?{...f.payment}:null;
+  f.create.mockResolvedValueOnce({intentId:'pi_fixture',clientToken,state,amount:{amount:12000,currency:'USD'}});
+  const response=await request();expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({error:{code:'ILLEGAL_TRANSITION',message:'payment is not awaiting customer payment'}});
+  expect(f.payment).toEqual(before??authoritative(state));expect(f.upsert).toHaveBeenCalledTimes(1);noRelease();
+ });
+ it.each([false,true].flatMap(existing=>[undefined,null,'','\t ',123].map(clientToken=>({existing,clientToken}))))('retains payable financial anchor but refuses invalid capability (existing=$existing, token=$clientToken)',async({existing,clientToken})=>{
+  if(existing)f.payment={...authoritative(),reviewEvidence:'keep'};const before=f.payment?{...f.payment}:null;
+  f.create.mockResolvedValueOnce({intentId:'pi_fixture',clientToken,state:'requires_payment',amount:{amount:12000,currency:'USD'}});
+  const response=await request();expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({error:{code:'PROVIDER_UNAVAILABLE',message:'payment capability is unavailable'}});
+  expect(f.payment).toEqual(before??authoritative());expect(f.upsert).toHaveBeenCalledTimes(1);noRelease();
  });
 });

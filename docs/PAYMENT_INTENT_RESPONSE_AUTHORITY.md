@@ -1,27 +1,30 @@
 # Provider PaymentIntent response authority
 
-Before recording a provider intent or returning its client capability, the Edge
-handler validates the normalized adapter response at runtime. It requires:
+Before recording an intent, the Edge handler validates the adapter's normalized
+financial reference at runtime: a non-array object, nonblank opaque intent ID,
+money with a safe positive integer amount equal to the server-computed charge,
+currency exactly equal to that charge, and an existing PaymentIntentRef state.
+The adapter normalizes currency to uppercase. No ID prefix or length is assumed.
 
-- A non-array object with nonblank string intent ID and client token. No provider
-  ID prefix, token length, or secret format is assumed.
-- A money object with a safe positive integer amount equal to the server-computed
-  charge, and currency exactly equal to that charge. The existing Stripe adapter
-  normalizes currency to uppercase; this check consumes that normalized contract.
-- A state within the existing PaymentIntentRef state contract.
+Financial-reference validation is separate from frontend-capability validation.
+Stripe client_secret may legitimately be null, which the adapter normalizes to an
+empty token. A valid financial anchor must still be persisted/read so processing
+and resolved payments can be reconciled even without a frontend token. Existing
+anchors are never overwritten. Authoritative stored state gates further action:
+processing/resolved/failed/refunded states return409, with or without a token.
+Only a stored requires_payment row reaches capability validation; a missing,
+non-string or blank token returns generic502 without disclosure, retaining its
+financial anchor for recovery. Usable opaque tokens have no invented format rule.
 
-Malformed/mismatched responses yield generic HTTP502 before any payment-row write
-or client-capability disclosure. Existing rows are not rewritten, no refund is
-initiated, and the hold is not released solely because provider outcome is unknown.
+Malformed/mismatched financial references yield generic502 before payment writes.
+No error path in this change releases a hold solely because the provider outcome
+is uncertain, and no refund is initiated. The guard validates the adapter ref,
+not every raw Stripe wire field; raw decoding errors remain handled by the existing
+catch. Raw-status normalization remains unchanged.
 
-The guard validates the adapter reference, not every raw Stripe wire field. The
-adapter may already throw while decoding malformed raw responses; the existing
-catch continues to return a safe failure without payment persistence. Its existing
-raw-status normalization remains unchanged. A valid provider-reference state is
-still subject to the authoritative stored-state check before a capability returns.
-
-Tests exercise the actual handler with mocked provider/DB boundaries. They include
-mismatched amount/currency, numeric or missing fields, empty objects/arrays, unknown
-states, and valid opaque IDs/tokens, plus existing valid replay and resolved-state
-protection. These are not real-provider, hosted or database-concurrency evidence.
-No production or provider configuration changes are included.
+Actual-handler tests mock provider/DB boundaries. They cover bad financial fields,
+valid opaque values, existing replay protection and new/existing state/token
+matrices, including processing, succeeded, failed, refunded and partially_refunded
+with undefined/null/empty tokens. Payable missing-token anchors are persisted but
+no capability is returned. These are not live-provider, hosted or database-race
+certification. Independent review and exact-head CI remain required.

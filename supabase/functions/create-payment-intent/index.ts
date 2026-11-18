@@ -239,10 +239,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // The adapter's TypeScript return type is not runtime validation of a provider
   // response. Never persist our requested price beside a different provider price,
-  // or expose a malformed client capability. Do not assume Stripe ID/token formats.
+  // even when no frontend capability exists. Do not assume Stripe ID formats.
   if (!intent || typeof intent !== "object" || Array.isArray(intent) ||
       typeof intent.intentId !== "string" || intent.intentId.trim().length === 0 ||
-      typeof intent.clientToken !== "string" || intent.clientToken.trim().length === 0 ||
       !intent.amount || typeof intent.amount !== "object" || Array.isArray(intent.amount) ||
       !Number.isSafeInteger(intent.amount.amount) || intent.amount.amount <= 0 ||
       intent.amount.amount !== charge.amount || intent.amount.currency !== charge.currency ||
@@ -292,6 +291,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (recorded.state !== "requires_payment") {
     // In particular, never reopen a succeeded, parked, failed or refunded payment.
     return errorResponse("ILLEGAL_TRANSITION", "payment is not awaiting customer payment", 409);
+  }
+
+  // A valid financial anchor may have no client secret (for example a resolved
+  // provider intent). Persist/read that anchor first so recovery is not stranded.
+  // Only a still-payable intent needs a usable frontend capability.
+  if (typeof intent.clientToken !== "string" || intent.clientToken.trim().length === 0) {
+    return errorResponse("PROVIDER_UNAVAILABLE", "payment capability is unavailable", 502);
   }
 
   // Advance draft → pending_payment (idempotent; the DB trigger validates the
