@@ -9,9 +9,22 @@ if(process.env.FLOW_TEST_DISPOSABLE!=='1'||process.env.PGHOST!=='127.0.0.1'||!/^
 for(const k of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])if(process.env[k])throw Error(`Unexpected ${k}`);
 const pool=new pg.Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER??'postgres',database:process.env.PGDATABASE,max:2});
 const read=createMigrationAttestationReader(pool);
-const migration=fs.readFileSync(new URL('../../../supabase/migrations/0121_legacy_financial_denial_attestation.sql',import.meta.url),'utf8');
+const migration=fs.readFileSync(new URL('../../../supabase/migrations/0123_scoped_failure_receipt_attestation.sql',import.meta.url),'utf8');
 const guard=migration.match(/do \$check\$[\s\S]*?end \$check\$;/)[0];
 const changes=[
+ ['core arbitrary nonowner grant','create role synthetic_failure_core_reader; grant execute on function payment_internal.apply_payment_failure(uuid) to synthetic_failure_core_reader'],
+ ["private failure core missing", "drop function payment_internal.apply_payment_failure(uuid)"],
+ ["private failure core PUBLIC execute", "grant execute on function payment_internal.apply_payment_failure(uuid) to public"],
+ ["private failure core path", "alter function payment_internal.apply_payment_failure(uuid) set search_path=public"],
+ ["private failure core stable", "alter function payment_internal.apply_payment_failure(uuid) stable"],
+ ["scoped failure processor missing", "drop function payment_internal.process_scoped_failure_receipt(uuid)"],
+ ["scoped failure processor PUBLIC execute", "grant execute on function payment_internal.process_scoped_failure_receipt(uuid) to public"],
+ ["scoped failure processor path", "alter function payment_internal.process_scoped_failure_receipt(uuid) set search_path=public"],
+ ["scoped failure processor stable", "alter function payment_internal.process_scoped_failure_receipt(uuid) stable"],
+ ["core service execute", "grant execute on function payment_internal.apply_payment_failure(uuid) to service_role"],
+ ["core definer", "alter function payment_internal.apply_payment_failure(uuid) security definer"],
+ ["processor invoker", "alter function payment_internal.process_scoped_failure_receipt(uuid) security invoker"],
+ ["processor service revoked", "revoke execute on function payment_internal.process_scoped_failure_receipt(uuid) from service_role"],
  ["confirmation absent", "drop function public.confirm_succeeded_payment(uuid)"],
  ["confirmation client grant", "grant execute on function public.confirm_succeeded_payment(uuid) to anon"],
  ["confirmation service revoked", "revoke execute on function public.confirm_succeeded_payment(uuid) from service_role"],
@@ -171,7 +184,7 @@ const changes=[
  ['source table absent','alter table public.booking_payment_attempt_sources rename to synthetic_missing_source_table'],
  ['review identity body altered',"create or replace function lumin.guard_payment_review_writer() returns trigger language plpgsql security definer set search_path='' as $$begin return NEW;end$$"],
 ];
-const denialMigration=fs.readFileSync(new URL('../../../supabase/migrations/0120_reject_scoped_legacy_financial_rpcs.sql',import.meta.url),'utf8');
+const denialMigration=fs.readFileSync(new URL('../../../supabase/migrations/0120_reject_scoped_legacy_financial_rpcs.sql',import.meta.url),'utf8').replace(/\r/g,'');
 for(const name of ['confirm_succeeded_payment','succeed_payment_webhook','fail_payment_webhook','park_payment_webhook','record_refund_webhook']){
  const definition=denialMigration.match(new RegExp('create or replace function public\\.'+name+'\\([\\s\\S]*?\\$fn\\$;'))[0];
  const stripped=definition.replace(/\n  -- Legacy authority only: reject BEFORE terminal no-op, dedupe or effects\.\n  if (?:p|v_payment)\.source_scope_id is not null or (?:p|v_payment)\.attempt_id is not null then\n    raise exception 'SCOPED_PAYMENT_PROCESSING_DISABLED' using errcode='42501';\n  end if;/,'');
@@ -223,7 +236,7 @@ try{
  assert.equal((await read()).migrationHead,MIGRATION_ATTESTATION_HEAD);
  console.log('PASS healthy contract cannot blindly advance from wrong predecessor');
  const witnessChanges=[
-  ['unexpanded 0119 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0119_payment_identity_attestation'"],
+  ['unexpanded 0121 witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0121_legacy_financial_denial_attestation'"],
   ['missing witness','delete from public.booking_lumin_schema_attestation'],
   ['stale witness',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_migration_head_check; update public.booking_lumin_schema_attestation set migration_head='0100_security_advisor_hardening'"],
   ['forged evidence',"alter table public.booking_lumin_schema_attestation drop constraint booking_lumin_schema_attestation_evidence_check; update public.booking_lumin_schema_attestation set evidence='full_chain'"],

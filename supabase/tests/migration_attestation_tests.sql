@@ -1,4 +1,4 @@
--- Disposable PostgreSQL contract checks through additive migration 0121.
+-- Disposable PostgreSQL contract checks through additive migration 0123.
 -- The authenticated HTTP reader has additional forged/stale-row coverage in
 -- apps/api/src/migration-attestation.test.ts; this SQL suite proves the
 -- checked-in migration ran against the complete disposable chain and that
@@ -13,7 +13,7 @@ begin
    into actual_head,actual_evidence
    from public.booking_lumin_schema_attestation
   where id=true;
- if actual_head is distinct from '0121_legacy_financial_denial_attestation' then
+ if actual_head is distinct from '0123_scoped_failure_receipt_attestation' then
   raise exception 'MIGRATION_ATTESTATION_HEAD_MISMATCH';
  end if;
  if not lumin.payment_readiness_contract() then
