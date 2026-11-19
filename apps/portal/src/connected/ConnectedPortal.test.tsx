@@ -13,6 +13,27 @@ function setup(role:string,publish:()=>Promise<Response>,readCatalog:()=>Promise
  vi.stubGlobal('fetch',fetcher);render(<MemoryRouter initialEntries={['/embed']}><ConnectedPortal config={config} staging/></MemoryRouter>);return fetcher;
 }
 async function login(){fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.change(screen.getByLabelText('Password'),{target:{value:'fixture-only'}});fireEvent.click(screen.getByText('Sign in'));await screen.findByText('Sign out');}
+it('refreshes connected bookings when the owner returns from another portal section',async()=>{
+ let showBooking=false;
+ const reference='LMN-RETURNED-BOOKING',bookingId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ const fetcher=vi.fn<typeof fetch>(async(input)=>{
+  const url=String(input);
+  if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});
+  if(url.includes('/auth/v1/user'))return json({id:user});
+  if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role:'BUSINESS_OWNER'}]);
+  if(url.includes('/services?'))return catalog();
+  if(url.includes('/bookings?'))return showBooking?json([{id:bookingId,tenant_id:tenant,reference,state:'confirmed',slot_start:'2026-11-20T17:00:00.000Z',created_at:'2026-11-19T02:26:54.235Z'}]):json([]);
+  throw Error('unexpected');
+ });
+ vi.stubGlobal('fetch',fetcher);
+ render(<MemoryRouter initialEntries={['/embed']}><ConnectedPortal config={config} staging/></MemoryRouter>);
+ await login();
+ showBooking=true;
+ fireEvent.click(screen.getByRole('link',{name:'Bookings'}));
+ await screen.findByRole('link',{name:reference});
+ expect(screen.queryByText('No bookings found.')).toBeNull();
+ expect(fetcher.mock.calls.filter(([url])=>String(url).includes('/bookings?')).length).toBeGreaterThanOrEqual(2);
+});
 async function showPublication(){
  // Await the actual lazy module before the default DOM assertion deadline.
  // Compilation speed is not the owner/token behavior this integration asserts.

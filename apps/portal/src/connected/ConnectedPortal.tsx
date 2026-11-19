@@ -29,11 +29,12 @@ function removeGoogleOAuthValue(key:string):void{
 }
 export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
  const attentionAcknowledgmentEnabled=import.meta.env.VITE_PAYMENT_ATTENTION_ACKNOWLEDGMENT==='true';
- const setupRoute=useLocation().pathname.replace(/\/+$/,'')==='/settings/business-type';
+ const location=useLocation();
+ const setupRoute=location.pathname.replace(/\/+$/,'')==='/settings/business-type';
  const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId,config.bookingApiOrigin]);
  const [,setCreationRevision]=useState(0);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
- const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0);
+ const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0),lastPath=useRef(location.pathname);
  useEffect(()=>{generation.current++;sessionGeneration.current++;setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false);return()=>{generation.current++;sessionGeneration.current++;client?.signOut();}},[client]);
  // Defer consuming the one-use callback until the effect survives StrictMode's setup/cleanup probe.
  useEffect(()=>{
@@ -69,6 +70,11 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
   return()=>{active=false;};
  },[client,signedIn,staging,config.bookingApiOrigin]);
  async function load(id:string){if(!client)return;const current=++generation.current;setBusy(true);setError('');setDrafts([]);setServices([]);try{const [d,s]=await Promise.all([client.bookings(id),client.services(id,true)]);if(current===generation.current){setDrafts(d);setServices(s)}}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to refresh.')}finally{if(current===generation.current)setBusy(false)}}
+ useEffect(()=>{
+  const previous=lastPath.current;lastPath.current=location.pathname;
+  if(!signedIn||!tenant||location.pathname!=='/bookings'||previous==='/bookings')return;
+  void load(tenant);
+ },[location.pathname,signedIn,tenant]);
  async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;const at=++sessionGeneration.current;setBusy(true);setError('');try{await client.signIn(email,password);const own=await client.memberships();if(at!==sessionGeneration.current)return;setMembers(own);setSignedIn(true);const recovery=staging&&config.bookingApiOrigin?client.simpleOfferRecoveryTenant():undefined;const first=(recovery&&own.some(member=>member.tenant_id===recovery&&member.role==='BUSINESS_OWNER')?recovery:own[0]?.tenant_id)??'';setTenant(first);if(first)await load(first)}catch(e){if(at===sessionGeneration.current){client.signOut();setError(e instanceof Error?e.message:'Unable to sign in.')}}finally{if(at===sessionGeneration.current){setPassword('');setBusy(false)}}}
  async function googleLogin(){
   if(!client||busy)return;
