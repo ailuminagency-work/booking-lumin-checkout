@@ -11,7 +11,7 @@ import {ConnectedBookingDetail} from './ConnectedBookingDetail';
 import {ConnectedBookingFormLoader} from './ConnectedBookingFormLoader';
 import {ConnectedBusinessOnboarding} from './ConnectedBusinessOnboarding';
 import type {BusinessProfile} from '@lumin/contracts';
-const googleOAuthStateKey='booking-lumin-google-oauth-state',googleOAuthVerifierKey='booking-lumin-google-oauth-verifier';
+const googleOAuthStateKey='booking-lumin-google-oauth-state',googleOAuthVerifierKey='booking-lumin-google-oauth-verifier',googleOAuthRedirectStateParam='booking_lumin_google_oauth_state';
 function readGoogleOAuthValue(key:string):string|null{
  try{return sessionStorage.getItem(key)??localStorage.getItem(key)}catch{
   try{return localStorage.getItem(key)}catch{return null}
@@ -41,12 +41,16 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
   let active=true;
   queueMicrotask(()=>{
    if(!active)return;
-   const query=new URLSearchParams(window.location.search),code=query.get('code'),state=query.get('state'),oauthError=query.get('error');
+   const query=new URLSearchParams(window.location.search),code=query.get('code'),providerState=query.get('state'),redirectState=query.get(googleOAuthRedirectStateParam),oauthError=query.get('error');
    if(!code&&!oauthError)return;
    window.history.replaceState(null,'',window.location.pathname);
    let expected:string|null=null,verifier:string|null=null;
    expected=readGoogleOAuthValue(googleOAuthStateKey);verifier=readGoogleOAuthValue(googleOAuthVerifierKey);
-   const bound=!!state&&!!expected&&state===expected;
+   // Supabase/Google may replace the provider state with its own UUID. The app-owned
+   // binding travels inside the exact redirect URL so it remains verifiable without
+   // trusting a provider-generated state value.
+   const returnedState=redirectState??providerState;
+   const bound=!!returnedState&&!!expected&&returnedState===expected;
    // An unbound error must not cancel another pending authorization.
    if(oauthError&&!bound){setError('Google sign-in could not be verified. Start again.');return;}
    removeGoogleOAuthValue(googleOAuthStateKey);removeGoogleOAuthValue(googleOAuthVerifierKey);
@@ -75,7 +79,7 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
    const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));
    if(at!==sessionGeneration.current)return;
    const challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-   const redirect=new URL(window.location.href);redirect.search='';redirect.hash='';
+   const redirect=new URL(window.location.href);redirect.search='';redirect.hash='';redirect.searchParams.set(googleOAuthRedirectStateParam,state);
    const authorize=client.googleAuthorizeUrl(redirect.href,{state,codeChallenge:challenge,allowedOrigins:[window.location.origin]});
    writeGoogleOAuthValue(googleOAuthStateKey,state);writeGoogleOAuthValue(googleOAuthVerifierKey,verifier);
    window.location.assign(authorize);
