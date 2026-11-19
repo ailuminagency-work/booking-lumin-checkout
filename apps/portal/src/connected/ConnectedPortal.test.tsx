@@ -1,17 +1,39 @@
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import {ConnectedPortal} from './ConnectedPortal';
 const tenant='11111111-1111-4111-8111-111111111111',user='22222222-2222-4222-8222-222222222222',service='33333333-3333-4333-8333-333333333333';
 const config={url:'https://example.supabase.co',publishableKey:'sb_publishable_synthetic',tenantId:'',bookingApiOrigin:'https://api.example.test'};
 const json=(value:unknown)=>new Response(JSON.stringify(value));
-afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+beforeEach(()=>{window.sessionStorage.clear();window.localStorage.clear();});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();window.sessionStorage.clear();window.localStorage.clear();});
 const catalog=()=>json([{id:service,tenant_id:tenant,name:'Housekeeping',currency:'USD',duration_minutes:60,base_price:12500,active:true}]);
 function setup(role:string,publish:()=>Promise<Response>,readCatalog:()=>Promise<Response>=async()=>catalog()){
  const fetcher=vi.fn(async(input:RequestInfo|URL,_options?:RequestInit)=>{const url=String(input);if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});if(url.includes('/auth/v1/user'))return json({id:user});if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role}]);if(url.includes('/services?'))return readCatalog();if(url.includes('/bookings?'))return json([]);if(url.includes('/publish?'))return publish();throw Error('unexpected');});
  vi.stubGlobal('fetch',fetcher);render(<MemoryRouter initialEntries={['/embed']}><ConnectedPortal config={config} staging/></MemoryRouter>);return fetcher;
 }
 async function login(){fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.change(screen.getByLabelText('Password'),{target:{value:'fixture-only'}});fireEvent.click(screen.getByText('Sign in'));await screen.findByText('Sign out');}
+it('refreshes connected bookings when the owner returns from another portal section',async()=>{
+ let showBooking=false;
+ const reference='LMN-RETURNED-BOOKING',bookingId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ const fetcher=vi.fn<typeof fetch>(async(input)=>{
+  const url=String(input);
+  if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});
+  if(url.includes('/auth/v1/user'))return json({id:user});
+  if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role:'BUSINESS_OWNER'}]);
+  if(url.includes('/services?'))return catalog();
+  if(url.includes('/bookings?'))return showBooking?json([{id:bookingId,tenant_id:tenant,reference,state:'confirmed',slot_start:'2026-11-20T17:00:00.000Z',created_at:'2026-11-19T02:26:54.235Z'}]):json([]);
+  throw Error('unexpected');
+ });
+ vi.stubGlobal('fetch',fetcher);
+ render(<MemoryRouter initialEntries={['/embed']}><ConnectedPortal config={config} staging/></MemoryRouter>);
+ await login();
+ showBooking=true;
+ fireEvent.click(screen.getByRole('link',{name:'Bookings'}));
+ await screen.findByRole('link',{name:reference});
+ expect(screen.queryByText('No bookings found.')).toBeNull();
+ expect(fetcher.mock.calls.filter(([url])=>String(url).includes('/bookings?')).length).toBeGreaterThanOrEqual(2);
+});
 async function showPublication(){
  // Await the actual lazy module before the default DOM assertion deadline.
  // Compilation speed is not the owner/token behavior this integration asserts.
@@ -42,9 +64,15 @@ it('connects canonical /embed publication to the closure-held signed-in owner to
  await waitFor(()=>expect(finishCatalog).toBeTypeOf('function'));finishCatalog(catalog());
  await fillReadyPublication();fireEvent.click(publish);await screen.findByText('Staging form published');const call=fetcher.mock.calls.find(([url])=>String(url).includes('/publish?'));expect(call).toBeDefined();expect(call?.[1]?.headers).toMatchObject({Authorization:'Bearer synthetic-owner-private-token'});expect(document.body.textContent).not.toContain('synthetic-owner-private-token');expect(screen.queryByText('This section is not available yet.')).toBeNull();
 });
+it('recovers from a replayed or mismatched Google callback without wedging the sign-in screen',async()=>{
+ window.history.replaceState(null,'','/?code=stale-code&state=wrong-state');window.sessionStorage.setItem('booking-lumin-google-oauth-state','expected-state');window.sessionStorage.removeItem('booking-lumin-google-oauth-verifier');const calls=vi.fn<typeof fetch>(async()=>{throw Error('OAuth exchange must not run');});vi.stubGlobal('fetch',calls);render(<MemoryRouter initialEntries={['/']}><ConnectedPortal config={config} staging/></MemoryRouter>);await screen.findByText('Google sign-in could not be verified. Start again.');expect(screen.getByRole('button',{name:'Continue with Google'})).toBeEnabled();expect(calls).not.toHaveBeenCalled();});
+it('does not let an unverified OAuth error callback cancel a pending flow',async()=>{
+ window.history.replaceState(null,'','/?error=access_denied&error_description=spoofed&state=wrong-state');window.sessionStorage.setItem('booking-lumin-google-oauth-state','expected-state');window.sessionStorage.setItem('booking-lumin-google-oauth-verifier','v'.repeat(64));vi.stubGlobal('fetch',vi.fn());render(<MemoryRouter initialEntries={['/']}><ConnectedPortal config={config} staging/></MemoryRouter>);await screen.findByText('Google sign-in could not be verified. Start again.');expect(window.sessionStorage.getItem('booking-lumin-google-oauth-state')).toBe('expected-state');expect(window.sessionStorage.getItem('booking-lumin-google-oauth-verifier')).toBe('v'.repeat(64));});
 it('keeps staff out of publication and clears pending publication on sign-out',async()=>{
  const staff=setup('BUSINESS_STAFF',async()=>{throw Error('unexpected');});await login();await screen.findByText('Only a business owner can publish a staging paid form.');expect(staff.mock.calls.some(([url])=>String(url).includes('/publish?'))).toBe(false);cleanup();let resolve!:(response:Response)=>void;setup('BUSINESS_OWNER',()=>new Promise<Response>(r=>resolve=r));await login();await fillReadyPublication();fireEvent.click(screen.getByRole('button',{name:'Publish staging test form'}));await waitFor(()=>expect(resolve).toBeTypeOf('function'));fireEvent.click(screen.getByText('Sign out'));resolve(json({ok:true,data:{versionId:user,installationId:service,renderSchemaVersion:3,hostedPath:'/checkout/flow/'+service}}));await screen.findByText('Sign in to your business');expect(screen.queryByText('Staging form published')).toBeNull();expect(screen.queryByRole('link',{name:'Open staging booking form'})).toBeNull();
 });
+it('rejects a forged app-owned redirect binding even when a provider state is present',async()=>{
+ window.history.replaceState(null,'','/?code=stale-code&state=provider-state&booking_lumin_google_oauth_state=wrong-state');window.sessionStorage.setItem('booking-lumin-google-oauth-state','expected-state');window.sessionStorage.setItem('booking-lumin-google-oauth-verifier','v'.repeat(64));const calls=vi.fn<typeof fetch>(async()=>{throw Error('OAuth exchange must not run');});vi.stubGlobal('fetch',calls);render(<MemoryRouter initialEntries={['/']}><ConnectedPortal config={config} staging/></MemoryRouter>);await screen.findByText('Google sign-in could not be verified. Start again.');expect(calls).not.toHaveBeenCalled();});
 
 function businessSetup(memberAfterCreate:'owner'|'staff'|'missing'='owner'){
  let created=false;const business='44444444-4444-4444-8444-444444444444';

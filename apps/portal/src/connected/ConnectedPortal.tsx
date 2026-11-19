@@ -11,16 +11,86 @@ import {ConnectedBookingDetail} from './ConnectedBookingDetail';
 import {ConnectedBookingFormLoader} from './ConnectedBookingFormLoader';
 import {ConnectedBusinessOnboarding} from './ConnectedBusinessOnboarding';
 import type {BusinessProfile} from '@lumin/contracts';
+const googleOAuthStateKey='booking-lumin-google-oauth-state',googleOAuthVerifierKey='booking-lumin-google-oauth-verifier',googleOAuthRedirectStateParam='booking_lumin_google_oauth_state';
+function readGoogleOAuthValue(key:string):string|null{
+ try{return sessionStorage.getItem(key)??localStorage.getItem(key)}catch{
+  try{return localStorage.getItem(key)}catch{return null}
+ }
+}
+function writeGoogleOAuthValue(key:string,value:string):void{
+ let wrote=false;
+ try{sessionStorage.setItem(key,value);wrote=true}catch{}
+ try{localStorage.setItem(key,value);wrote=true}catch{}
+ if(!wrote)throw Error('OAuth storage unavailable.');
+}
+function removeGoogleOAuthValue(key:string):void{
+ try{sessionStorage.removeItem(key)}catch{}
+ try{localStorage.removeItem(key)}catch{}
+}
 export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
  const attentionAcknowledgmentEnabled=import.meta.env.VITE_PAYMENT_ATTENTION_ACKNOWLEDGMENT==='true';
- const setupRoute=useLocation().pathname.replace(/\/+$/,'')==='/settings/business-type';
+ const location=useLocation();
+ const setupRoute=location.pathname.replace(/\/+$/,'')==='/settings/business-type';
  const client=useMemo(()=>{try{return createRuntimeClient({...config,allowMembershipDiscovery:true})}catch{return null}},[config.url,config.publishableKey,config.tenantId,config.bookingApiOrigin]);
  const [,setCreationRevision]=useState(0);
  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[members,setMembers]=useState<Membership[]>([]),[tenant,setTenant]=useState('');
- const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0);
+ const [drafts,setDrafts]=useState<BookingRow[]>([]),[services,setServices]=useState<ServiceRow[]>([]),[signedIn,setSignedIn]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');const generation=useRef(0),sessionGeneration=useRef(0),lastPath=useRef(location.pathname);
  useEffect(()=>{generation.current++;sessionGeneration.current++;setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false);return()=>{generation.current++;sessionGeneration.current++;client?.signOut();}},[client]);
+ // Defer consuming the one-use callback until the effect survives StrictMode's setup/cleanup probe.
+ useEffect(()=>{
+  if(!client||signedIn)return;
+  let active=true;
+  queueMicrotask(()=>{
+   if(!active)return;
+   const query=new URLSearchParams(window.location.search),code=query.get('code'),providerState=query.get('state'),redirectState=query.get(googleOAuthRedirectStateParam),oauthError=query.get('error');
+   if(!code&&!oauthError)return;
+   window.history.replaceState(null,'',window.location.pathname);
+   let expected:string|null=null,verifier:string|null=null;
+   expected=readGoogleOAuthValue(googleOAuthStateKey);verifier=readGoogleOAuthValue(googleOAuthVerifierKey);
+   // Supabase/Google may replace the provider state with its own UUID. The app-owned
+   // binding travels inside the exact redirect URL so it remains verifiable without
+   // trusting a provider-generated state value.
+   const returnedState=redirectState??providerState;
+   const bound=!!returnedState&&!!expected&&returnedState===expected;
+   // An unbound error must not cancel another pending authorization.
+   if(oauthError&&!bound){setError('Google sign-in could not be verified. Start again.');return;}
+   removeGoogleOAuthValue(googleOAuthStateKey);removeGoogleOAuthValue(googleOAuthVerifierKey);
+   if(oauthError){setError('Google sign-in was cancelled or rejected.');return;}
+   if(!bound||!verifier){setError('Google sign-in could not be verified. Start again.');return;}
+   const at=++sessionGeneration.current;setBusy(true);setError('');
+   void client.finishOAuthCode(code!,verifier).then(async()=>{
+    if(!active||at!==sessionGeneration.current)return;
+    const own=await client.memberships();if(!active||at!==sessionGeneration.current)return;
+    setMembers(own);setSignedIn(true);
+    const recovery=staging&&config.bookingApiOrigin?client.simpleOfferRecoveryTenant():undefined;
+    const first=(recovery&&own.some(member=>member.tenant_id===recovery&&member.role==='BUSINESS_OWNER')?recovery:own[0]?.tenant_id)??'';
+    setTenant(first);if(first)await load(first);
+   }).catch(()=>{if(active&&at===sessionGeneration.current){client.signOut();setError('Google sign-in was not completed. Start again.');}}).finally(()=>{if(at===sessionGeneration.current)setBusy(false);});
+  });
+  return()=>{active=false;};
+ },[client,signedIn,staging,config.bookingApiOrigin]);
  async function load(id:string){if(!client)return;const current=++generation.current;setBusy(true);setError('');setDrafts([]);setServices([]);try{const [d,s]=await Promise.all([client.bookings(id),client.services(id,true)]);if(current===generation.current){setDrafts(d);setServices(s)}}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to refresh.')}finally{if(current===generation.current)setBusy(false)}}
+ useEffect(()=>{
+  const previous=lastPath.current;lastPath.current=location.pathname;
+  if(!signedIn||!tenant||location.pathname!=='/bookings'||previous==='/bookings')return;
+  void load(tenant);
+ },[location.pathname,signedIn,tenant]);
  async function login(e:FormEvent){e.preventDefault();if(!client||busy)return;const at=++sessionGeneration.current;setBusy(true);setError('');try{await client.signIn(email,password);const own=await client.memberships();if(at!==sessionGeneration.current)return;setMembers(own);setSignedIn(true);const recovery=staging&&config.bookingApiOrigin?client.simpleOfferRecoveryTenant():undefined;const first=(recovery&&own.some(member=>member.tenant_id===recovery&&member.role==='BUSINESS_OWNER')?recovery:own[0]?.tenant_id)??'';setTenant(first);if(first)await load(first)}catch(e){if(at===sessionGeneration.current){client.signOut();setError(e instanceof Error?e.message:'Unable to sign in.')}}finally{if(at===sessionGeneration.current){setPassword('');setBusy(false)}}}
+ async function googleLogin(){
+  if(!client||busy)return;
+  const at=++sessionGeneration.current;setBusy(true);setError('');
+  try{
+   const state=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+   const verifier=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));
+   if(at!==sessionGeneration.current)return;
+   const challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+   const redirect=new URL(window.location.href);redirect.search='';redirect.hash='';redirect.searchParams.set(googleOAuthRedirectStateParam,state);
+   const authorize=client.googleAuthorizeUrl(redirect.href,{state,codeChallenge:challenge,allowedOrigins:[window.location.origin]});
+   writeGoogleOAuthValue(googleOAuthStateKey,state);writeGoogleOAuthValue(googleOAuthVerifierKey,verifier);
+   window.location.assign(authorize);
+  }catch{if(at===sessionGeneration.current){removeGoogleOAuthValue(googleOAuthStateKey);removeGoogleOAuthValue(googleOAuthVerifierKey);setError('Google sign-in is unavailable.');setBusy(false);}}
+ }
  function logout(){generation.current++;sessionGeneration.current++;client?.signOut();setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false)}
  async function toggle(s:ServiceRow){if(!client||busy||creationLocked)return;const current=generation.current;setBusy(true);setError('');try{await client.setServiceActive(tenant,s.id,!s.active);if(current===generation.current)await load(tenant)}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to update service.')}finally{if(current===generation.current)setBusy(false)}}
  const creation=signedIn&&staging&&config.bookingApiOrigin?client?.businessCreationState():undefined,creationLocked=creation?.phase==='checking'||creation?.phase==='creating'||creation?.phase==='unknown'||(creation&&client?.simpleOfferLocked());
@@ -45,7 +115,7 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
      <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
      <button>{busy ? "Signing in…" : "Sign in"}</button>
     </fieldset>
-   </form><p>Use an existing authorized account. A verified staging account with no memberships can create its first business. Sessions stay in memory and end when this page reloads.</p></section> :
+   </form><button type="button" className="google-signin" onClick={()=>void googleLogin()} disabled={busy}>Continue with Google</button><p>Use an existing authorized account. A verified staging account with no memberships can create its first business. Sessions stay in memory and end when this page reloads.</p></section> :
    <><div className="workspace-session"><span className="workspace-session-label">Business workspace</span><button className="btn btn-secondary" onClick={logout}>Sign out</button>
     {members.length > 0 && <><label>Business<select disabled={busy||creationLocked} value={tenant} onChange={e => {setTenant(e.target.value); void load(e.target.value)}}>
      {members.map(m => <option key={m.tenant_id} value={m.tenant_id}>{m.tenant_id}  -  {m.role}</option>)}
