@@ -29,13 +29,13 @@ const defaultHistory = [
 
 function fakePool(opts: {core?: unknown[]; receipts?: unknown[]; refunds?: unknown[]; history?: unknown[]; forbid?: boolean} = {}): Pool {
   const client = {
-    async query(sql: string) {
+    async query(sql: string, values?: unknown[]) {
       if (sql.includes('flow_actor')) {
         if (opts.forbid) throw Object.assign(new Error('forbidden'), {code: '42501'});
         return {rows: [{}]};
       }
       if (sql.startsWith('select jsonb_build_object')) return {rows: opts.core ?? [{result: core}]};
-      if (sql.startsWith('select channel')) return {rows: opts.receipts ?? []};
+      if (sql.startsWith('select channel')) { expect(sql).toContain('public.outbox_confirmation_receipt_history($1::uuid,$2::uuid)'); expect(sql).not.toContain('from public.confirmation_delivery_receipts'); expect(values).toEqual([TENANT, BOOKING]); return {rows: opts.receipts ?? []}; }
       if (sql.startsWith('select amount')) return {rows: opts.refunds ?? []};
       if (sql.includes('booking_state_history')) return {rows: opts.history ?? defaultHistory};
       return {rows: []};

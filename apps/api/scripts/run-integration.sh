@@ -129,6 +129,8 @@ for harness in \
   src/roster-http.integration.ts \
   src/phase-a-golden.integration.ts \
   src/phase-a-http-golden.integration.ts \
+  src/housekeeping-owner-customer.integration.ts \
+  src/housekeeping-standard-owner-customer.integration.ts \
   src/phase-a-health.integration.ts \
   src/phase-a-rental-concurrency.integration.ts \
   src/phase-a-detailing-flow.integration.ts \
@@ -144,17 +146,18 @@ for harness in \
 do
   n=$((n + 1))
   DB="lumin_r2a_$$_${n}"
+  if [[ "$harness" == src/housekeeping-*.integration.ts ]]; then DB="lumin_housekeeping_proof_$$_$n"; fi
   CREATED+=("${DB}")
   psql -q -d postgres -c "create database ${DB} template ${TEMPLATE}"
   echo "== running ${harness} on ${DB} =="
   # Every harness runs to completion even after one fails, so a single red
   # harness still reports the others.
   runner=("${TSX}")
-  if [[ "$harness" == src/phase-a-http-golden.integration.ts ]]; then
+  if [[ "$harness" == src/phase-a-http-golden.integration.ts || "$harness" == src/housekeeping-*.integration.ts ]]; then
     # Guard only this fresh-process journey. Authentication and payment remain synthetic.
     runner=(node --import "${ROOT}/apps/api/scripts/deny-external-network.mjs" --import tsx)
   fi
-  if ! PGDATABASE="${DB}" "${runner[@]}" "${harness}"; then
+  if ! HOUSEKEEPING_NO_PAYMENT_LOCAL_TEST=1 HOUSEKEEPING_STANDARD_NO_PAYMENT_LOCAL_TEST=1 PGDATABASE="${DB}" "${runner[@]}" "${harness}"; then
     echo "FAIL: ${harness}"
     status=1
   fi

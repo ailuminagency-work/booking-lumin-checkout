@@ -207,9 +207,10 @@ const DETAIL_SQL = `select jsonb_build_object(
  left join public.customers c on c.id = b.customer_id and c.tenant_id = b.tenant_id
  left join public.payments p on p.id = b.payment_id and p.tenant_id = b.tenant_id
  where b.tenant_id = $1::uuid and b.id = $2::uuid`;
-const RECEIPTS_SQL = `select channel, to_char(delivered_at at time zone 'UTC',${ISO}) as delivered_at
- from public.confirmation_delivery_receipts where tenant_id = $1::uuid and booking_id = $2::uuid
- order by delivered_at, channel limit 10`;
+// Raw receipt-table access is revoked; use the existing bounded scoped projection.
+const RECEIPTS_SQL = `select channel, to_char(recorded_at at time zone 'UTC',${ISO}) as delivered_at
+ from public.outbox_confirmation_receipt_history($1::uuid,$2::uuid)
+ order by recorded_at, channel limit 10`;
 const REFUNDS_SQL = `select amount, currency, reason, provider, to_char(created_at at time zone 'UTC',${ISO}) as created_at
  from public.refunds where tenant_id = $1::uuid and booking_id = $2::uuid
  order by created_at, id limit 50`;
