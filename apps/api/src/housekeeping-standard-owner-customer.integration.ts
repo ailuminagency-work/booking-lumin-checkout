@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
+import {housekeepingDatabaseTarget} from './housekeeping-test-target';
 import {createFlowHttpServer} from './http';
 import {createFlowRepository} from './repository';
 import {createBusinessApi} from './business';
@@ -13,10 +14,7 @@ import {createCustomerHoldWriter} from './customer-hold';
 import {createOwnerBookingsListReader,createOwnerBookingDetailReader} from './owner-bookings';
 
 assert.equal(process.env.HOUSEKEEPING_STANDARD_NO_PAYMENT_LOCAL_TEST,'1');
-assert.equal(process.env.PGHOST,'127.0.0.1');assert.equal(process.env.PGUSER,'postgres');
-assert.match(process.env.PGPORT??'',/^\d{4,5}$/);
-assert.match(process.env.PGDATABASE??'',/^lumin_housekeeping_proof_[a-z0-9_]+$/);
-for(const key of ['DATABASE_URL','PGHOSTADDR','PGSERVICE','PGSERVICEFILE','PGPASSFILE','PGOPTIONS'])assert.equal(process.env[key],undefined);
+const expectedDatabase=housekeepingDatabaseTarget(process.env);
 let stage='isolation';
 const pool=new Pool({max:4}),owner=randomUUID(),other=randomUUID(),flow=randomUUID();
 const origin='https://owner.example.test',customer='https://customer.example.test';
@@ -39,7 +37,7 @@ async function ok(path:string,body?:unknown,token?:string,o?:string){const r=awa
 const pass=(s:string)=>{console.log('PASS HOUSEKEEPING_STANDARD_'+s);};
 try{
  const actual=(await pool.query('select current_database() db,current_user actor,host(inet_server_addr()) host,inet_server_port() port')).rows[0];
- assert.deepEqual(actual,{db:process.env.PGDATABASE,actor:'postgres',host:'127.0.0.1',port:Number(process.env.PGPORT)});
+ assert.deepEqual(actual,expectedDatabase);
  for(const table of ['tenants','bookings','payments','durable_outbox'])assert.equal(Number((await pool.query(`select count(*) n from public.${table}`)).rows[0].n),0,'fresh disposable database required');
  await pool.query("insert into auth.users(id,email) values($1,'proof-owner@example.test'),($2,'proof-other@example.test')",[owner,other]);
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
