@@ -1,11 +1,12 @@
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {MemoryRouter} from 'react-router-dom';
 import {ConnectedPortal} from './ConnectedPortal';
 const tenant='11111111-1111-4111-8111-111111111111',user='22222222-2222-4222-8222-222222222222',service='33333333-3333-4333-8333-333333333333';
 const config={url:'https://example.supabase.co',publishableKey:'sb_publishable_synthetic',tenantId:'',bookingApiOrigin:'https://api.example.test'};
 const json=(value:unknown)=>new Response(JSON.stringify(value));
-afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+beforeEach(()=>{window.sessionStorage.clear();window.localStorage.clear();});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();window.sessionStorage.clear();window.localStorage.clear();});
 const catalog=()=>json([{id:service,tenant_id:tenant,name:'Housekeeping',currency:'USD',duration_minutes:60,base_price:12500,active:true}]);
 function setup(role:string,publish:()=>Promise<Response>,readCatalog:()=>Promise<Response>=async()=>catalog()){
  const fetcher=vi.fn(async(input:RequestInfo|URL,_options?:RequestInit)=>{const url=String(input);if(url.includes('/auth/v1/token'))return json({access_token:'synthetic-owner-private-token'});if(url.includes('/auth/v1/user'))return json({id:user});if(url.includes('/tenant_members'))return json([{tenant_id:tenant,role}]);if(url.includes('/services?'))return readCatalog();if(url.includes('/bookings?'))return json([]);if(url.includes('/publish?'))return publish();throw Error('unexpected');});

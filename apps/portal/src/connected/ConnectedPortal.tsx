@@ -11,6 +11,22 @@ import {ConnectedBookingDetail} from './ConnectedBookingDetail';
 import {ConnectedBookingFormLoader} from './ConnectedBookingFormLoader';
 import {ConnectedBusinessOnboarding} from './ConnectedBusinessOnboarding';
 import type {BusinessProfile} from '@lumin/contracts';
+const googleOAuthStateKey='booking-lumin-google-oauth-state',googleOAuthVerifierKey='booking-lumin-google-oauth-verifier';
+function readGoogleOAuthValue(key:string):string|null{
+ try{return sessionStorage.getItem(key)??localStorage.getItem(key)}catch{
+  try{return localStorage.getItem(key)}catch{return null}
+ }
+}
+function writeGoogleOAuthValue(key:string,value:string):void{
+ let wrote=false;
+ try{sessionStorage.setItem(key,value);wrote=true}catch{}
+ try{localStorage.setItem(key,value);wrote=true}catch{}
+ if(!wrote)throw Error('OAuth storage unavailable.');
+}
+function removeGoogleOAuthValue(key:string):void{
+ try{sessionStorage.removeItem(key)}catch{}
+ try{localStorage.removeItem(key)}catch{}
+}
 export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;staging?:boolean}){
  const attentionAcknowledgmentEnabled=import.meta.env.VITE_PAYMENT_ATTENTION_ACKNOWLEDGMENT==='true';
  const setupRoute=useLocation().pathname.replace(/\/+$/,'')==='/settings/business-type';
@@ -29,11 +45,11 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
    if(!code&&!oauthError)return;
    window.history.replaceState(null,'',window.location.pathname);
    let expected:string|null=null,verifier:string|null=null;
-   try{expected=sessionStorage.getItem('booking-lumin-google-oauth-state');verifier=sessionStorage.getItem('booking-lumin-google-oauth-verifier');}catch{setError('Google sign-in could not be verified. Start again.');return;}
+   expected=readGoogleOAuthValue(googleOAuthStateKey);verifier=readGoogleOAuthValue(googleOAuthVerifierKey);
    const bound=!!state&&!!expected&&state===expected;
    // An unbound error must not cancel another pending authorization.
    if(oauthError&&!bound){setError('Google sign-in could not be verified. Start again.');return;}
-   try{sessionStorage.removeItem('booking-lumin-google-oauth-state');sessionStorage.removeItem('booking-lumin-google-oauth-verifier');}catch{setError('Google sign-in could not be verified. Start again.');return;}
+   removeGoogleOAuthValue(googleOAuthStateKey);removeGoogleOAuthValue(googleOAuthVerifierKey);
    if(oauthError){setError('Google sign-in was cancelled or rejected.');return;}
    if(!bound||!verifier){setError('Google sign-in could not be verified. Start again.');return;}
    const at=++sessionGeneration.current;setBusy(true);setError('');
@@ -61,9 +77,9 @@ export function ConnectedPortal({config,staging=false}:{config:RuntimeConfig;sta
    const challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
    const redirect=new URL(window.location.href);redirect.search='';redirect.hash='';
    const authorize=client.googleAuthorizeUrl(redirect.href,{state,codeChallenge:challenge,allowedOrigins:[window.location.origin]});
-   sessionStorage.setItem('booking-lumin-google-oauth-state',state);sessionStorage.setItem('booking-lumin-google-oauth-verifier',verifier);
+   writeGoogleOAuthValue(googleOAuthStateKey,state);writeGoogleOAuthValue(googleOAuthVerifierKey,verifier);
    window.location.assign(authorize);
-  }catch{if(at===sessionGeneration.current){try{sessionStorage.removeItem('booking-lumin-google-oauth-state');sessionStorage.removeItem('booking-lumin-google-oauth-verifier');}catch{}setError('Google sign-in is unavailable.');setBusy(false);}}
+  }catch{if(at===sessionGeneration.current){removeGoogleOAuthValue(googleOAuthStateKey);removeGoogleOAuthValue(googleOAuthVerifierKey);setError('Google sign-in is unavailable.');setBusy(false);}}
  }
  function logout(){generation.current++;sessionGeneration.current++;client?.signOut();setSignedIn(false);setMembers([]);setTenant('');setDrafts([]);setServices([]);setEmail('');setPassword('');setError('');setBusy(false)}
  async function toggle(s:ServiceRow){if(!client||busy||creationLocked)return;const current=generation.current;setBusy(true);setError('');try{await client.setServiceActive(tenant,s.id,!s.active);if(current===generation.current)await load(tenant)}catch(e){if(current===generation.current)setError(e instanceof Error?e.message:'Unable to update service.')}finally{if(current===generation.current)setBusy(false)}}
